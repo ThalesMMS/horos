@@ -78,14 +78,16 @@
 	}
 	
 	if ([[e name] isEqualToString:@"string"]) {
-		return [[e stringValue] xmlUnescapedString];
+		// NSXMLDocument already decoded entities. A second pass corrupts
+		// literal strings such as "&amp;" received from standard clients.
+		return [e stringValue];
 	}
 	
 	if ([[e name] isEqualToString:@"struct"]) {
 		NSArray* members = [e nodesForXPath:@"member" error:NULL];
 		NSMutableDictionary* returnMembers = [NSMutableDictionary dictionaryWithCapacity:[members count]];
         for (NSXMLElement* m in members)
-            [returnMembers setObject:[N2XMLRPC ParseElement:[[m nodesForXPath:@"value" error:NULL] objectAtIndex:0]] forKey:[[[[m nodesForXPath:@"name" error:NULL] objectAtIndex:0] stringValue] xmlUnescapedString]];
+            [returnMembers setObject:[N2XMLRPC ParseElement:[[m nodesForXPath:@"value" error:NULL] objectAtIndex:0]] forKey:[[[m nodesForXPath:@"name" error:NULL] objectAtIndex:0] stringValue]];
         return [NSDictionary dictionaryWithDictionary:returnMembers];
 	}
 	
@@ -96,7 +98,7 @@
     if ([[e name] isEqualToString:@"value"]) {
         if (e.childCount)
             return [N2XMLRPC ParseElement:[e childAtIndex:0]];
-        else return [[e stringValue] xmlUnescapedString];
+        else return [e stringValue];
     }
 	
 	[NSException raise:NSGenericException format:@"unhandled XMLRPC data type: %@", [e name]]; return NULL;
@@ -110,7 +112,7 @@
 		NSMutableString* s = [NSMutableString stringWithCapacity:512];
 		[s appendString:@"<struct>"];
 		for (NSString* k in (NSDictionary*)o)
-			[s appendFormat:@"<member><name>%@</name><value>%@</value></member>", k, [N2XMLRPC FormatElement:[(NSDictionary*)o objectForKey:k] options:options]];
+			[s appendFormat:@"<member><name>%@</name><value>%@</value></member>", [k xmlEscapedString], [N2XMLRPC FormatElement:[(NSDictionary*)o objectForKey:k] options:options]];
 		[s appendString:@"</struct>"];
 		return [NSString stringWithString:s];
 	}
@@ -208,7 +210,7 @@
 }*/
 
 +(NSString*)requestWithMethodName:(NSString*)methodName arguments:(NSArray*)args {
-    NSMutableString* request = [NSMutableString stringWithFormat:@"<?xml version=\"1.0\" encoding=\"UTF-8\"?><methodCall><methodName>%@</methodName><params>", methodName];
+    NSMutableString* request = [NSMutableString stringWithFormat:@"<?xml version=\"1.0\" encoding=\"UTF-8\"?><methodCall><methodName>%@</methodName><params>", [methodName xmlEscapedString]];
     for (id arg in args)
 		[request appendFormat:@"<param><value>%@</value></param>", [[self class] FormatElement:arg]];
     [request appendFormat:@"</params></methodCall>"];
@@ -224,7 +226,6 @@
 }
 
 @end
-
 
 
 

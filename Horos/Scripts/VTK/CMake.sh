@@ -3,10 +3,13 @@
 export PATH="$PATH:/opt/local/bin:/opt/local/sbin:/opt/homebrew/bin/"
 
 path="$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )/$(basename "${BASH_SOURCE[0]}")"
+# Backport of https://github.com/eigenteam/eigen-git-mirror/commit/a1292395d
+eigen_patch="$(dirname "$path")/Eigen-3.3.4-Clang-21.patch"
 cd "$TARGET_NAME"; pwd
 
-env=$(env|sort|grep -v 'LLBUILD_BUILD_ID=\|LLBUILD_LANE_ID=\|LLBUILD_TASK_ID=\|Apple_PubSub_Socket_Render=\|DISPLAY=\|SHLVL=\|SSH_AUTH_SOCK=\|SECURITYSESSIONID=')
-hash="$(git describe --always --tags --dirty) $(md5 -q "$path")-$(md5 -qs "$env")"
+# One narrow hash for every dependency; see Horos/Scripts/dependency-hash.sh.
+. "$(dirname "$path")/../dependency-hash.sh"
+dependency_hash "$path" "$eigen_patch"
 
 set -e; set -o xtrace
 
@@ -34,8 +37,28 @@ mv "$cmake_dir" "$cmake_dir.tmp"
 rm -Rf "$cmake_dir.tmp" "$install_dir.tmp"
 mkdir -p "$cmake_dir"; cd "$cmake_dir"
 
+eigen_compat_dir="$cmake_dir/compat-eigen"
+mkdir -p "$eigen_compat_dir"
+ditto "$PROJECT_DIR/$TARGET_NAME/ThirdParty/eigen/vtkeigen/eigen" "$eigen_compat_dir/Eigen"
+/usr/bin/patch --silent -d "$eigen_compat_dir" -p0 < "$eigen_patch"
+
 args=("$PROJECT_DIR/$TARGET_NAME") # -G Xcode
+cfs=( -w -fvisibility=default )
 cxxfs=( -w -fvisibility=default )
+
+# VTK 8.2 vendors a libpng that selects the removed Carbon <fp.h> header
+# once modern Apple Clang predefines TARGET_OS_MAC.  Pre-including its replacement makes
+# the legacy guard take the supported <math.h> path without modifying VTK.
+cfs+=( -include math.h )
+# The vendored freetype compiles its Carbon font path whenever __APPLE__ is
+# defined and the deployment target is above 10.4, which reaches
+# ATSFontFindFromName and ATSFontGetFileReference. Those are unavailable at a
+# macOS 26 minimum, not merely deprecated as they were at 11.0, so the build
+# stops there. freetype provides this switch for exactly that case: it selects
+# the non-Carbon path and compiles ftmac.c to nothing.
+cfs+=( -DDARWIN_NO_CARBON )
+args+=(-DVTK_USE_SYSTEM_EIGEN=ON)
+args+=(-DEIGEN3_INCLUDE_DIR="$eigen_compat_dir")
 args+=(-DVTK_USE_X:BOOL=OFF)
 args+=(-DVTK_USE_COCOA:BOOL=ON)
 #args+=(-DVTK_USE_64BITS_IDS=ON) 
@@ -48,6 +71,8 @@ args+=(-DCMAKE_OSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET")
 args+=(-DCMAKE_OSX_ARCHITECTURES="$ARCHS")
 
 args+=(-DVTK_USE_SYSTEM_ZLIB:BOOL=ON)
+args+=(-DVTK_USE_SYSTEM_PNG:BOOL=ON)
+args+=(-DVTK_USE_SYSTEM_TIFF:BOOL=ON)
 args+=(-DVTK_USE_SYSTEM_EXPAT=ON)
 args+=(-DVTK_USE_SYSTEM_LIBXML2=ON)
 
@@ -93,15 +118,19 @@ for i in "${!cxxfs[@]}"; do
         unset 'cxxfs[$i]'
     fi
 done
-cxxfs+=( -std=c++11 )
+cxxfs+=( -std=c++14 )
 
 if [ ${#cxxfs[@]} -ne 0 ]; then
     cxxfss="${cxxfs[@]}"
     args+=(-DCMAKE_CXX_FLAGS="$cxxfss")
 fi
+if [ ${#cfs[@]} -ne 0 ]; then
+    cfss="${cfs[@]}"
+    args+=(-DCMAKE_C_FLAGS="$cfss")
+fi
 
 # Force a modern C++ standard for VTK/eigen compatibility
-args+=(-DCMAKE_CXX_STANDARD=11)
+args+=(-DCMAKE_CXX_STANDARD=14)
 args+=(-DCMAKE_CXX_STANDARD_REQUIRED=ON)
 
 cmake "${args[@]}"

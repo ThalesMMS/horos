@@ -100,7 +100,7 @@
         return;
     }
     
-    NSColor *deviceColor = [self.fillColor colorUsingColorSpaceName:NSDeviceRGBColorSpace];
+    NSColor *deviceColor = [self.fillColor colorUsingColorSpaceName:NSCalibratedRGBColorSpace];
     
     double dicomToPixGLTransform[16];
 	    
@@ -112,6 +112,7 @@
     glEnable(GL_LINE_SMOOTH);
     glEnable(GL_POLYGON_SMOOTH);
     glEnable(GL_BLEND);
+    glBlendEquation(GL_FUNC_ADD);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     
     glMatrixMode(GL_MODELVIEW);

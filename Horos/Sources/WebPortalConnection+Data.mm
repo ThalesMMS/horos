@@ -36,6 +36,8 @@
  ============================================================================*/
 
 #import "WebPortalConnection+Data.h"
+#import "Horos-Swift.h"
+#import "HorosBoundedTask.h"
 #import "WebPortal+Email+Log.h"
 #import "WebPortalResponse.h"
 #import "DicomAlbum.h"
@@ -196,9 +198,44 @@ ss
     return returnedStudy;
 }
 
+- (BOOL)federatedUser:(WebPortalUser *)user mayAccessStudy:(DicomStudy *)study
+{
+    if (user == nil || [HorosFederatedSearch isUnrestrictedPermission:user.studyPredicate])
+        return YES;
+    NSPredicate *permission = [DicomDatabase predicateForSmartAlbumFilter:user.studyPredicate];
+    if (permission && [permission evaluateWithObject:study])
+        return YES;
+    for (WebPortalStudy *specific in user.studies)
+    {
+        if ([specific.studyInstanceUID isEqualToString:study.studyInstanceUID]
+            && study.patientUID
+            && specific.patientUID
+            && [study.patientUID rangeOfString:specific.patientUID options:NSCaseInsensitiveSearch|NSDiacriticInsensitiveSearch].location == 0)
+            return YES;
+    }
+    return NO;
+}
+
 - (id)objectWithXID:(NSString*)xid
 {
     NSManagedObject* o = nil;
+
+    if ([HorosFederatedSearch isFederatedXID:xid])
+    {
+        NSString *origin = [HorosFederatedSearch originPathFromFederatedXID:xid];
+        NSString *studyXID = [HorosFederatedSearch studyXIDFromFederatedXID:xid];
+        if (origin.length && studyXID.length)
+        {
+            DicomDatabase *db = [DicomDatabase databaseAtPath:origin];
+            DicomDatabase *idb = db.independentDatabase ?: db;
+            o = [idb objectWithID:[NSManagedObject UidForXid:studyXID]];
+            if (user && [o isKindOfClass:[DicomStudy class]] && [self federatedUser:user mayAccessStudy:(DicomStudy *)o] == NO)
+                return nil;
+            if (user && [o isKindOfClass:[DicomSeries class]] && [self federatedUser:user mayAccessStudy:[(DicomSeries *)o study]] == NO)
+                return nil;
+        }
+        return o;
+    }
     
     if( [xid hasPrefix: @"POD:"]) // PACS On Demand object
     {
@@ -526,6 +563,40 @@ ss
             }
         }
         
+        if (([parameters objectForKey:@"search"] || [parameters objectForKey:@"searchID"] || [parameters objectForKey:@"searchAccessionNumber"]) && browsePredicate)
+        {
+            NSArray *federated = [BrowserController federatedStudiesMatchingPredicate:browsePredicate
+                                                               excludingDatabasePath:self.independentDicomDatabase.baseDirPath
+                                                                       applyingUser:user];
+            if (federated.count)
+            {
+                NSMutableArray *merged = [NSMutableArray arrayWithArray:result];
+                NSMutableSet *seen = [NSMutableSet set];
+                for (id study in merged)
+                {
+                    DicomDatabase *origin = [study isKindOfClass:[NSManagedObject class]] ? [DicomDatabase databaseForContext:[study managedObjectContext]] : nil;
+                    NSString *key = [HorosFederatedSearch identityKeyWithPatientUID:[study valueForKey:@"patientUID"]
+                                                                          studyUID:[study valueForKey:@"studyInstanceUID"]
+                                                                        originPath:origin.baseDirPath ?: self.independentDicomDatabase.baseDirPath];
+                    if (key)
+                        [seen addObject:key];
+                }
+                for (id study in federated)
+                {
+                    DicomDatabase *origin = [DicomDatabase databaseForContext:[study managedObjectContext]];
+                    NSString *key = [HorosFederatedSearch identityKeyWithPatientUID:[study valueForKey:@"patientUID"]
+                                                                          studyUID:[study valueForKey:@"studyInstanceUID"]
+                                                                        originPath:origin.baseDirPath];
+                    if (key && [seen containsObject:key] == NO)
+                    {
+                        [merged addObject:study];
+                        [seen addObject:key];
+                    }
+                }
+                result = merged;
+            }
+        }
+
         NSString *sortValue = [self.session objectForKey:@"StudiesSortKey"];
         
         if( [sortValue length])
@@ -1885,6 +1956,9 @@ const NSString* const GenerateMovieDicomImagesParamKey = @"dicomImageArray";
 			[s setObject:N2NonNullString(stateText) forKey:@"stateText"];
             
 			[s setObject:N2NonNullString(study.studyInstanceUID) forKey:@"studyInstanceUID"];
+            DicomDatabase *origin = [DicomDatabase databaseForContext:study.managedObjectContext];
+            [s setObject:N2NonNullString([HorosFederatedSearch displayOriginWithName:origin.name path:origin.baseDirPath]) forKey:@"origin"];
+            [s setObject:N2NonNullString([HorosFederatedSearch permissionLabelForPredicate:user.studyPredicate]) forKey:@"permission"];
             
 			[r addObject:s];
 		}
@@ -2085,7 +2159,11 @@ const NSString* const GenerateMovieDicomImagesParamKey = @"dicomImageArray";
 			destFile = [destFile stringByAppendingPathComponent: [[[allImages lastObject] valueForKeyPath:@"series.study.name"] filenameString]];
             
             destFile = [destFile stringByAppendingFormat:@"-%d", uniqueInc++];
-			destFile = [destFile stringByAppendingPathExtension:@"osirixzip"];
+			
+			// The archive itself has always been a plain zip; only the label was
+			// application specific, and it was sent to every client.
+			HorosWebPortalArchiveFormat *archiveFormat = [HorosWebPortalArchiveFormat formatForRequestedPath: self.requestedPath parameters: parameters clientIsMacOS: self.requestIsMacOS];
+			destFile = [destFile stringByAppendingPathExtension: archiveFormat.pathExtension];
 			
 			if (srcFolder)
 				[NSFileManager.defaultManager removeItemAtPath:srcFolder error:nil];
@@ -2096,9 +2174,14 @@ const NSString* const GenerateMovieDicomImagesParamKey = @"dicomImageArray";
 			
 			[BrowserController encryptFiles: [allImages valueForKey:@"completePath"] inZIPFile:destFile password: user.encryptedZIP.boolValue? user.password : NULL ];
             
+			NSString *archiveStudyName = [[allImages lastObject] valueForKeyPath:@"series.study.name"];
+			
 			self.response.data = [NSData dataWithContentsOfFile:destFile];
 			self.response.statusCode = 0;
-			[self.response setMimeType: @"application/osirixzip"];
+			[self.response setMimeType: archiveFormat.mimeType];
+			// Without this the client saved the archive under the last path
+			// component of the URL, whatever the study is called.
+			[self.response.httpHeaders setObject: [archiveFormat contentDispositionForStudyName: archiveStudyName] forKey: @"Content-Disposition"];
 			
 			if (srcFolder)
 				[NSFileManager.defaultManager removeItemAtPath:srcFolder error:nil];
@@ -2770,11 +2853,9 @@ const NSString* const GenerateMovieDicomImagesParamKey = @"dicomImageArray";
 			[aTask setEnvironment:[NSDictionary dictionaryWithObject:[[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"dicom.dic"] forKey:@"DCMDICTPATH"]];
 			[aTask setLaunchPath:[[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"dsr2html"]];
 			[aTask setArguments:[NSArray arrayWithObjects: @"+X1", @"--unknown-relationship", @"--ignore-constraints", @"--ignore-item-errors", @"--skip-invalid-items", [series.images.anyObject valueForKey:@"completePath"], htmlpath, nil]];
-			[aTask launch];
-			while( [aTask isRunning])
-                [NSThread sleepForTimeInterval: 0.1];
-            
-            //[aTask waitUntilExit];		// <- This is VERY DANGEROUS : the main runloop is continuing...
+			NSError *taskError = nil;
+			if( HorosRunTaskUntilExit( aTask, 60, &taskError) == NO)
+				NSLog( @"****** dsr2html failed: %@", taskError.localizedDescription);
 		}
 		
 		NSString* pdfpath = [htmlpath stringByAppendingPathExtension:@"pdf"];
@@ -2783,12 +2864,9 @@ const NSString* const GenerateMovieDicomImagesParamKey = @"dicomImageArray";
 			NSTask* aTask = [[[NSTask alloc] init] autorelease];
 			[aTask setLaunchPath:[[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"Decompress"]];
 			[aTask setArguments:[NSArray arrayWithObjects:htmlpath, @"pdfFromURL", nil]];
-			[aTask launch];
-            NSTimeInterval start = [NSDate timeIntervalSinceReferenceDate];
-			while( [aTask isRunning] && [NSDate timeIntervalSinceReferenceDate] - start < 10)
-                [NSThread sleepForTimeInterval: 0.1];
-            
-            //[aTask waitUntilExit];		// <- This is VERY DANGEROUS : the main runloop is continuing...
+			NSError *taskError = nil;
+			if( HorosRunTaskUntilExit( aTask, 10, &taskError) == NO)
+				NSLog( @"****** Decompress pdfFromURL failed: %@", taskError.localizedDescription);
 		}
 		
 		response.data = [NSData dataWithContentsOfFile:pdfpath];
@@ -2826,9 +2904,11 @@ const NSString* const GenerateMovieDicomImagesParamKey = @"dicomImageArray";
 		srcFolder = [srcFolder stringByAppendingPathComponent: [[[images lastObject] valueForKeyPath:@"series.study.name"] filenameString]];
 		destFile = [destFile stringByAppendingPathComponent: [[[images lastObject] valueForKeyPath:@"series.study.name"] filenameString]];
 		destFile = [destFile stringByAppendingFormat:@"-%d", uniqueInc++];
-		if (self.requestIsMacOS)
-			destFile = [destFile stringByAppendingPathExtension:@"osirixzip"];
-		else destFile = [destFile stringByAppendingPathExtension:@"zip"];
+		
+		// The requested path already says which archive the link asked for; the
+		// user agent only decides when nothing else does.
+		HorosWebPortalArchiveFormat *archiveFormat = [HorosWebPortalArchiveFormat formatForRequestedPath: self.requestedPath parameters: parameters clientIsMacOS: self.requestIsMacOS];
+		destFile = [destFile stringByAppendingPathExtension: archiveFormat.pathExtension];
 		
 		if (srcFolder)
 			[NSFileManager.defaultManager removeItemAtPath:srcFolder error:nil];
@@ -2842,6 +2922,11 @@ const NSString* const GenerateMovieDicomImagesParamKey = @"dicomImageArray";
         //		[self.portal.dicomDatabase.managedObjectContext lock];
         
 		response.data = [NSData dataWithContentsOfFile:destFile];
+		
+		// This route sent no content type and no file name at all, so a client
+		// had to guess both from the URL.
+		[response setMimeType: archiveFormat.mimeType];
+		[response.httpHeaders setObject: [archiveFormat contentDispositionForStudyName: [[images lastObject] valueForKeyPath:@"series.study.name"]] forKey: @"Content-Disposition"];
 		
 		if (srcFolder)
 			[NSFileManager.defaultManager removeItemAtPath:srcFolder error:nil];

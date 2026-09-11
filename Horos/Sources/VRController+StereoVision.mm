@@ -36,6 +36,7 @@
  ============================================================================*/
 #ifdef _STEREO_VISION_
 
+#import "Horos-Swift.h"
 #import "VRController+StereoVision.h"
 #import "VRView+StereoVision.h"
 
@@ -502,6 +503,8 @@ static NSString*	CLUTEditorsViewToolbarItemIdentifier = @"CLUTEditors";
 		[toolbarItem release];
 		toolbarItem = nil;
 	}
+	
+	[HorosToolbarPolicy prepareItem: toolbarItem];
 	
 	return [toolbarItem autorelease];
 }

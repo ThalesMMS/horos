@@ -35,7 +35,7 @@
      PURPOSE.
  ============================================================================*/
 
-#include <cocoa/cocoa.h>
+#include <Cocoa/Cocoa.h>
 
 double HorosAPIVersionNumber = 100;
 const unsigned char HorosAPIVersionString[] = "1.0.0";

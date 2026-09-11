@@ -20,14 +20,13 @@
 
 #undef verify
 
-#include "osconfig.h"    /* make sure OS specific configuration is included first */
-#include "ofstream.h"
-#include "dsrdoc.h"
-#include "dcuid.h"
-#include "dcfilefo.h"
-#include "dsrtypes.h"
-#include "dsrimgtn.h"
-#include "dsrdoctr.h"
+#include "HorosDCMTKCompatibility.h"
+#include <dcmtk/config/osconfig.h>    /* make sure OS specific configuration is included first */
+#include <dcmtk/ofstd/ofstream.h>
+#include "HorosStructuredReportBridge.h"
+#include <dcmtk/dcmdata/dcuid.h>
+#include <dcmtk/dcmdata/dcfilefo.h>
+#include <dcmtk/dcmsr/dsrtypes.h>
 
 @implementation StructuredReport
 
@@ -37,7 +36,7 @@
 
 - (id)initWithStudy:(id)study contentsOfFile:(NSString *)file{
 	if (self = [super init]){
-		_doc = new DSRDocument();
+		_doc = new HorosSRDocument();
 		_study = [study retain];
 		_reportHasChanged = NO;
 		_isEditable = YES;
@@ -52,7 +51,7 @@
 
 			// If we are the manfacturer we can edit.
 			const char *manf = _doc->getManufacturer();
-			//_doc->print(cout, NULL);
+			//_doc->print(std::cout, 0);
 			if (manf != NULL && strcmp("OsiriX", manf) == 0){
 				
 				//completion flag
@@ -559,7 +558,7 @@
 					_doc->getTree().addContentItem(DSRTypes::RT_contains, DSRTypes::VT_Image);
 				}
 				
-				_doc->getTree().getCurrentContentItem().setImageReference(DSRImageReferenceValue(sopClassUID, instanceUID));
+				_doc->getTree().getCurrentContentItem().setImageReference(HorosSRImageReference(sopClassUID, instanceUID));
 				_doc->getCurrentRequestedProcedureEvidence().addItem(studyUID, seriesUID, sopClassUID, instanceUID);
 			}
 			//go back up in tree
@@ -602,13 +601,13 @@
 	else if ([extension isEqualToString:@"xml"]){
 		size_t writeFlags = 0;		
 		[self checkCharacterSet];
-		ofstream stream([path UTF8String]);
+		std::ofstream stream([path UTF8String]);
 		_doc->writeXML(stream, writeFlags);
 	}
 	else if ([extension isEqualToString:@"htm"] || [extension isEqualToString:@"html"]){
 		[self checkCharacterSet];
 		size_t renderFlags = DSRTypes::HF_renderDcmtkFootnote;		
-		ofstream stream([path UTF8String]);
+		std::ofstream stream([path UTF8String]);
 		_doc->renderHTML(stream, renderFlags, NULL);
 	}
 }
@@ -616,8 +615,8 @@
 - (void)convertXMLToSR{
 	if (_doc)
 		delete _doc;
-	_doc = new DSRDocument();
-	_doc->readXML([[self xmlPath] UTF8String], nil);
+	_doc = new HorosSRDocument();
+	_doc->readXML([[self xmlPath] UTF8String], 0);
 }
 
 - (void)writeHTML{
@@ -626,14 +625,14 @@
 	}
 	[self checkCharacterSet];
 	size_t renderFlags = DSRTypes::HF_renderDcmtkFootnote;		
-	ofstream stream([[self htmlPath] UTF8String]);
+	std::ofstream stream([[self htmlPath] UTF8String]);
 	_doc->renderHTML(stream, renderFlags, NULL);	
 }
 
 - (void)writeXML{
 	size_t writeFlags = 0;		
 	[self checkCharacterSet];
-	ofstream stream([[self xmlPath] UTF8String]);
+	std::ofstream stream([[self xmlPath] UTF8String]);
 	_doc->writeXML(stream, writeFlags);
 }
 
@@ -641,7 +640,7 @@
 	[_xmlDoc release];
 	NSURL *url = [NSURL fileURLWithPath:[self xmlPath]]; 
 	NSError *error;
-	_xmlDoc = [[NSXMLDocument alloc] initWithContentsOfURL:(NSURL *)url options:nil error:(NSError **)error];
+	_xmlDoc = [[NSXMLDocument alloc] initWithContentsOfURL:(NSURL *)url options:0 error:(NSError **)error];
 }
 
 - (NSString *)xmlPath{
@@ -672,16 +671,13 @@
 	NSMutableArray *references = [NSMutableArray array];
 	NSArray *imagesArray = nil;
 	NS_DURING
-	DSRDocumentTreeNode *node = NULL; 
-	//_doc->getTree().print(cout, 0);
+	//_doc->getTree().print(std::cout, 0);
 	_doc->getTree().gotoRoot ();
 		/* iterate over all nodes */ 
-	do { 
-		node = OFstatic_cast(DSRDocumentTreeNode *, _doc->getTree().getNode());			
-		if (node != NULL && node->getValueType() == DSRTypes::VT_Image) {
+	do {
+		if (!_doc->getTree().currentImageSOPInstanceUID().empty()) {
 			//image node get SOPCInstance
-			DSRImageTreeNode *imageNode = OFstatic_cast(DSRImageTreeNode *, node);
-			OFString sopInstance = imageNode->getSOPInstanceUID();
+			OFString sopInstance = _doc->getTree().currentImageSOPInstanceUID();
 			if (!sopInstance.empty()) {
 				NSString *uid = [NSString stringWithUTF8String:sopInstance.c_str()];
 				if (uid)

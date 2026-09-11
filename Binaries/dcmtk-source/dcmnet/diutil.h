@@ -79,21 +79,34 @@ char* DU_stripTrailingSpaces(char *s);
 char* DU_stripLeadingSpaces(char *s);
 char* DU_stripLeadingAndTrailingSpaces(char *s);
 
-OFBool DU_getStringDOElement(DcmItem *obj, DcmTagKey t, char *s);
+/* These three take the destination size, as DCMTK 3.6.7 and later do. Without
+ * it the value read out of a DICOM element was copied into the caller's buffer
+ * unbounded, and the SOP Class and Instance UIDs go into 65 byte buffers on the
+ * stack of the C-STORE sender.
+ *
+ * The sample applications in this tree still call the old three and four
+ * argument forms. They are in no target; adding one to a target now needs the
+ * call updated first.
+ */
+OFBool DU_getStringDOElement(DcmItem *obj, DcmTagKey t, char *s, size_t sSize);
 OFBool DU_putStringDOElement(DcmItem *obj, DcmTagKey t, const char *s);
 OFBool DU_getShortDOElement(DcmItem *obj, DcmTagKey t, Uint16 *us);
 OFBool DU_putShortDOElement(DcmItem *obj, DcmTagKey t, Uint16 us);
 
 OFBool DU_findSOPClassAndInstanceInDataSet(
   DcmItem *obj,
-  char* sopClass, 
+  char* sopClass,
+  size_t sopClassSize,
   char* sopInstance,
+  size_t sopInstanceSize,
   OFBool tolerateSpacePaddedUIDs = OFFalse);
 
 OFBool DU_findSOPClassAndInstanceInFile(
   const char *fname,
-  char* sopClass, 
+  char* sopClass,
+  size_t sopClassSize,
   char* sopInstance,
+  size_t sopInstanceSize,
   OFBool tolerateSpacePaddedUIDs = OFFalse);
  
 unsigned int DU_fileSize(const char *fname);

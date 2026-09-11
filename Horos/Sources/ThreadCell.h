@@ -54,6 +54,7 @@ The Horos Project was based originally upon the OsiriX Project which at the time
 
 @property(retain) NSProgressIndicator* progressIndicator;
 @property(retain) NSButton* cancelButton;
+@property(retain) NSAccessibilityElement *activityAccessibilityRow;
 @property(nonatomic, retain) NSThread* thread;
 @property(assign, readonly) ThreadsManager* manager;
 @property(assign, readonly) NSTableView* view;

@@ -51,6 +51,7 @@ protected:
     
     vtkHorosFixedPointVolumeRayCastMapper();
     void DisplayRenderedImage( vtkRenderer *ren, vtkVolume   *vol );
+    void SanitizeRayCastZBuffer();
     
 private:
     

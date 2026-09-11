@@ -87,7 +87,7 @@
 
 /** Returns the fill color of the receiver.
  
- This value is equal to nil if the ROI should not be drawn, or if this OSI ROI is backed by multiple osirix ROIs with different colors.
+ This value is equal to nil if there are no fill ROIs, or if the backing fill ROIs have different colors or opacities. Stroke ROIs do not affect this value.
  
  @return The fill color of the receiver
  */
@@ -102,7 +102,7 @@
 
 /** Returns the stroke color of the receiver.
  
- This value is equal to nil if the outline of the ROI should not be drawn, or if this OSI ROI is backed by multiple osirix ROIs with different colors.
+ This value is equal to nil if there are no stroke ROIs, or if the backing stroke ROIs have different colors or opacities. Fill ROIs do not affect this value.
  
  @return The stroke color of the receiver
  */

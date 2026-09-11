@@ -70,14 +70,14 @@
 @property (retain) NSString *serieID;
 
 // file functions
-+ (BOOL) isTiffFile:(NSString *) file; /**< Test for TIFF file format */
++ (BOOL) isTiffFile:(NSString *) file;
++ (BOOL) isImageFile:(NSString *) file; /**< The extensions the raster reader handles */
 + (BOOL) isFVTiffFile:(NSString *) file; /**< Test for FV TIFF file format */
 + (BOOL) isDICOMFile:(NSString *) file; /**< Test for DICOM file format */
 + (BOOL) isDICOMFile:(NSString *) file compressed:(BOOL*) compressed; /**< Test for DICOM file format, returns YES for compressed BOOL if Transfer syntax is compressed. */
 + (BOOL) isDICOMFile:(NSString *) file compressed:(BOOL*) compressed image:(BOOL*) image;
 + (BOOL) isXMLDescriptedFile:(NSString *) file; /**< Test for XML descripted  file format */
 + (BOOL) isXMLDescriptorFile:(NSString *) file; /**< Test for XML descriptor file format. Fake DICOM for other files with XML descriptor*/
-+ (void) setFilesAreFromCDMedia: (BOOL) f; /**< Set flag for filesAreFromCDMedia */
 + (void) setDefaults;  /**< Set DEFAULTSSET flag to NO */
 + (void) resetDefaults; /**< Resets to user defaults */
 /**  Return string with invalid characters replaced

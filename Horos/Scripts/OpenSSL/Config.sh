@@ -3,14 +3,22 @@
 export PATH="$PATH:/opt/local/bin:/opt/local/sbin:/opt/homebrew/bin/"
 
 path="$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )/$(basename "${BASH_SOURCE[0]}")"
+revision_file="$(dirname "$path")/UPSTREAM_REVISION"
 cd "$TARGET_NAME"; pwd
 
-env=$(env|sort|grep -v 'LLBUILD_BUILD_ID=\|LLBUILD_LANE_ID=\|LLBUILD_TASK_ID=\|Apple_PubSub_Socket_Render=\|DISPLAY=\|SHLVL=\|SSH_AUTH_SOCK=\|SECURITYSESSIONID=')
-hash="$(git describe --always --tags --dirty) $(md5 -q "$path")-$(md5 -qs "$env")"
+# One narrow hash for every dependency; see Horos/Scripts/dependency-hash.sh.
+. "$(dirname "$path")/../dependency-hash.sh"
+dependency_hash "$path" "$revision_file" "$(dirname "$path")/Make.sh"
 
 set -e; set -o xtrace; set -o pipefail
 
-source_dir="$PROJECT_DIR/$TARGET_NAME"
+source_dir="$PROJECT_DIR/$TARGET_NAME/upstream"
+expected_revision="$(cat "$revision_file")"
+if [ "$(git -C "$source_dir" rev-parse HEAD)" != "$expected_revision" ] || \
+   [ -n "$(git -C "$source_dir" status --porcelain --untracked-files=normal)" ]; then
+    echo "error: OpenSSL must be the clean upstream revision $expected_revision. Local changes were preserved." >&2
+    exit 1
+fi
 cmake_dir="$TARGET_TEMP_DIR/Config"
 install_dir="$TARGET_TEMP_DIR/Install"
 
@@ -34,20 +42,13 @@ rm -Rf "$cmake_dir.tmp" "$install_dir.tmp"
 mkdir -p "$cmake_dir"
 
 cd "$cmake_dir"
-set +e
-rsync -a --delete "$source_dir/" . 2>&1 | tee "$cmake_dir/rsync.log"
-rsync_status=${PIPESTATUS[0]}
-set -e
-if [ $rsync_status -ne 0 ]; then
-    echo "OpenSSL rsync failed with exit code $rsync_status" >&2
-    exit $rsync_status
-fi
+ditto "$source_dir" "$cmake_dir"
 
 export CC=clang
 export CXX=clang
 export PERL=/usr/bin/perl
 
-configure_args=( --prefix="$TARGET_TEMP_DIR/Install" --openssldir="$TARGET_TEMP_DIR/Install" -w -mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET )
+configure_args=( --prefix="$TARGET_TEMP_DIR/Install" --openssldir="$TARGET_TEMP_DIR/Install" --libdir=lib -w -mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET )
 #cfs=($OTHER_CFLAGS)
 #cxxfs=($OTHER_CPLUSPLUSFLAGS)
 
@@ -86,10 +87,10 @@ fi
 
 set +e
 if [ "$CONFIGURATION" = 'Debug' ]; then
-    ./Configure "${configure_args[@]}" debug-darwin64-$arch-cc no-shared no-engine no-tests 2>&1 | tee "$cmake_dir/configure.log"
+    ./Configure "${configure_args[@]}" --debug darwin64-$arch-cc no-shared no-module no-engine no-tests 2>&1 | tee "$cmake_dir/configure.log"
     configure_status=${PIPESTATUS[0]}
 else
-    ./Configure "${configure_args[@]}" darwin64-$arch-cc no-shared no-engine no-tests 2>&1 | tee "$cmake_dir/configure.log"
+    ./Configure "${configure_args[@]}" darwin64-$arch-cc no-shared no-module no-engine no-tests 2>&1 | tee "$cmake_dir/configure.log"
     configure_status=${PIPESTATUS[0]}
 fi
 set -e

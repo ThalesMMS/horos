@@ -42,7 +42,9 @@
 #include <vtkRenderer.h>
 #include <vtkTimerLog.h>
 #include <vtkRayCastImageDisplayHelper.h>
+#include <vtkFixedPointRayCastImage.h>
 #include "vtkHorosFixedPointVolumeRayCastMIPHelper.h"
+#include "VRRayCastZBufferGuard.h"
 
 #include <math.h>
 
@@ -112,6 +114,8 @@ void vtkHorosFixedPointVolumeRayCastMapper::Render( vtkRenderer *ren, vtkVolume 
     return;
     }
 
+  this->SanitizeRayCastZBuffer();
+
   if( dontRenderVolumeRenderingOsiriX == 0)
 	this->RenderSubVolume();
 
@@ -136,4 +140,19 @@ void vtkHorosFixedPointVolumeRayCastMapper::Render( vtkRenderer *ren, vtkVolume 
 			   this->OldSampleDistance ) );
 
   this->SampleDistance = this->OldSampleDistance;
+}
+
+void vtkHorosFixedPointVolumeRayCastMapper::SanitizeRayCastZBuffer()
+{
+    vtkFixedPointRayCastImage *image = this->GetRayCastImage();
+    if (!image || !image->GetUseZBuffer())
+    {
+        return;
+    }
+    int size[2] = {0, 0};
+    image->GetZBufferSize(size);
+    if (!HorosRayCastZBufferIsUsable(1, image->GetZBuffer(), size[0], size[1]))
+    {
+        image->UseZBufferOff();
+    }
 }

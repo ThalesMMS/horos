@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Horos</key>
+	<string>20220801</string>
+	<key>Version</key>
+	<string>4.0.0</string>
+	<key>ReleaseTag</key>
+	<string>v4.0.0-macos26.1</string>
+	<key>ReleaseURL</key>
+	<string>https://github.com/ThalesMMS/horos/releases/tag/v4.0.0-macos26.1</string>
+	<key>Architectures</key>
+	<array>
+		<string>arm64</string>
+	</array>
+</dict>
+</plist>

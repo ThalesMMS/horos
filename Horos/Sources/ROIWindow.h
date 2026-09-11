@@ -51,6 +51,7 @@
 	ViewerController		*curController;
 	
 	BOOL					loaded;
+    BOOL closing;
 	IBOutlet NSButton		*allWithSameName;
 	
 	IBOutlet NSComboBox		*name;
@@ -63,7 +64,7 @@
 	IBOutlet NSWindow		*recalibrateWindow;
 	IBOutlet NSTextField	*recalibrateValue;
 	
-	NSMutableArray			*roiNames;
+	NSArray			*roiNames;
 	
 	NSTimer					*getName;
 	

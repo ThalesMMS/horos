@@ -57,6 +57,8 @@
 - (BOOL) createNewOpenDocumentReportForStudy:(NSManagedObject*)aStudy toDestinationPath:(NSString*)aPath;
 + (NSMutableArray*)pagesTemplatesList;
 + (NSMutableArray*)wordTemplatesList;
++ (NSMutableArray*)openDocumentTemplatesList;
++ (NSString*)pathForOpenDocumentTemplate:(NSString*)name;
 - (NSMutableString *)templateName;
 - (void)setTemplateName:(NSString *)aName;
 + (int) Pages5orHigher;

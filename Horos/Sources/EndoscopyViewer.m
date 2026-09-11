@@ -35,6 +35,7 @@
      PURPOSE.
  ============================================================================*/
 
+#import "Horos-Swift.h"
 #import "OrthogonalMPRViewer.h"
 #import "EndoscopyViewer.h"
 #import "EndoscopyMPRView.h"
@@ -1080,6 +1081,10 @@ static NSString*	PathAssistantToolbarItemIdentifier		= @"PathAssistant";
         }
     }
     
+    // Plugins supply their own items, so prepare after they had their turn.
+    if( toolbarItem)
+        [HorosToolbarPolicy prepareItem: toolbarItem];
+    
     return toolbarItem;
 }
 
@@ -1389,7 +1394,7 @@ static NSString*	PathAssistantToolbarItemIdentifier		= @"PathAssistant";
     }
     else if(err == ERROR_NOENOUGHMEM)
     {
-        NSRunAlertPanel(NSLocalizedString(@"32-bit", nil), NSLocalizedString(@"Path Assistant can not allocate enough memory, try to increase the resample voxel size in the settings.", nil), NSLocalizedString(@"OK", nil), nil, nil);
+        NSRunAlertPanel(NSLocalizedString(@"Not enough memory", nil), NSLocalizedString(@"Path Assistant can not allocate enough memory, try to increase the resample voxel size in the settings.", nil), NSLocalizedString(@"OK", nil), nil, nil);
     }
     else if(err == ERROR_CANNOTFINDPATH)
     {
@@ -1598,7 +1603,7 @@ static NSString*	PathAssistantToolbarItemIdentifier		= @"PathAssistant";
         [assistant setCenterlineResampleStepLength:centerlineResampleStepLength];
     }
     else {
-        NSRunAlertPanel(NSLocalizedString(@"32-bit", nil), NSLocalizedString(@"Path Assistant can not allocate enough memory, try to increase the resample voxel size in the settings.", nil), NSLocalizedString(@"OK", nil), nil, nil);
+        NSRunAlertPanel(NSLocalizedString(@"Not enough memory", nil), NSLocalizedString(@"Path Assistant can not allocate enough memory, try to increase the resample voxel size in the settings.", nil), NSLocalizedString(@"OK", nil), nil, nil);
     }
     
     //misc
@@ -1668,7 +1673,7 @@ static NSString*	PathAssistantToolbarItemIdentifier		= @"PathAssistant";
         [waiting autorelease];
     }
     else {
-        NSRunAlertPanel(NSLocalizedString(@"32-bit", nil), NSLocalizedString(@"Path Assistant can not allocate enough memory, try to increase the resample voxel size in the settings.", nil), NSLocalizedString(@"OK", nil), nil, nil);
+        NSRunAlertPanel(NSLocalizedString(@"Not enough memory", nil), NSLocalizedString(@"Path Assistant can not allocate enough memory, try to increase the resample voxel size in the settings.", nil), NSLocalizedString(@"OK", nil), nil, nil);
     }
 }
 - (void) flyThruAssistantGoForward: (NSNotification*)note
@@ -1699,7 +1704,7 @@ static NSString*	PathAssistantToolbarItemIdentifier		= @"PathAssistant";
         int err= [assistant caculateNextPositionFrom:pt Towards:dir];
         if(err==ERROR_NOENOUGHMEM)
         {
-            NSRunAlertPanel(NSLocalizedString(@"32-bit", nil), NSLocalizedString(@"Path Assistant can not allocate enough memory, try to increase the resample voxel size in the settings.", nil), NSLocalizedString(@"OK", nil), nil, nil);
+            NSRunAlertPanel(NSLocalizedString(@"Not enough memory", nil), NSLocalizedString(@"Path Assistant can not allocate enough memory, try to increase the resample voxel size in the settings.", nil), NSLocalizedString(@"OK", nil), nil, nil);
             return;
         }
         else if(err==ERROR_CANNOTFINDPATH)

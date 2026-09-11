@@ -588,16 +588,15 @@ NSString* sopInstanceUIDDecode( unsigned char *r, int length)
         if( [dict objectForKey: @"value"] == nil || [(NSString*)[dict objectForKey: @"value"] length] == 0)
         {
             
-            [tagAndValues addObjectsFromArray:
-                                                [NSArray  arrayWithObjects:[DCMAttributeTag tagWithTagString:[dict objectForKey: @"field"]],
-                                                                            @"",nil]
-            ];
+            [tagAndValues addObject:
+             [NSArray  arrayWithObjects:[DCMAttributeTag tagWithTagString:[dict objectForKey: @"field"]], nil]
+             ];
             
             //[params addObjectsFromArray: [NSArray arrayWithObjects: @"-e", [dict objectForKey: @"field"], nil]];
         }
         else
         {
-            [tagAndValues addObjectsFromArray:
+            [tagAndValues addObject:
                                                 [NSArray  arrayWithObjects:[DCMAttributeTag tagWithTagString:[dict objectForKey: @"field"]],
                                                                             [dict objectForKey: @"value"],nil]
             ];
@@ -1109,12 +1108,17 @@ NSString* sopInstanceUIDDecode( unsigned char *r, int length)
             #ifdef OSIRIX_VIEWER
             if( [self.inDatabaseFolder boolValue] == YES)
             {
-                [[BrowserController currentBrowser] addFileToDeleteQueue: self.completePath];
-                
-                if( [[self.path pathExtension] isEqualToString:@"hdr"])		// ANALYZE -> DELETE IMG
-                    [[BrowserController currentBrowser] addFileToDeleteQueue: [[self.completePath stringByDeletingPathExtension] stringByAppendingPathExtension:@"img"]];
-                
-                self.inDatabaseFolder = [NSNumber numberWithBool: NO];
+                NSString *path = self.completePath;
+                NSString *analyzePath = [[self.path pathExtension] isEqualToString:@"hdr"] ?
+                    [[path stringByDeletingPathExtension] stringByAppendingPathExtension:@"img"] : nil;
+                N2ManagedObjectContext *context = (N2ManagedObjectContext *)self.managedObjectContext;
+                if ([context respondsToSelector:@selector(performAfterSuccessfulSave:)]) {
+                    [context performAfterSuccessfulSave:^{
+                        [[BrowserController currentBrowser] addFileToDeleteQueue:path];
+                        if (analyzePath)
+                            [[BrowserController currentBrowser] addFileToDeleteQueue:analyzePath];
+                    }];
+                }
             }
             #endif
         }

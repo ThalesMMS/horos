@@ -41,6 +41,7 @@
 #import "BrowserController.h"
 #import "DicomDatabase.h"
 #import "N2Debug.h"
+#import "Horos-Swift.h"
 
 @implementation SmartWindowController
 
@@ -62,6 +63,7 @@
 
 - (void)awakeFromNib {
     [self.editor setDbMode:YES];
+    [self installContentCriterionCheckbox];
 	[self.nameField.cell setPlaceholderString:NSLocalizedString(@"Smart Album", nil)];
     
 //    [self addObserver:self forKeyPath:@"predicate" options:NSKeyValueObservingOptionInitial context:[self class]];
@@ -71,6 +73,7 @@
 }
 
 - (void)dealloc {
+    [_contentCriterionCheckbox release]; _contentCriterionCheckbox = nil;
 //    [self removeObserver:self forKeyPath:@"predicate"];
     self.name = nil;
     self.predicate = nil;
@@ -221,6 +224,47 @@
 
 + (NSSet*)keyPathsForValuesAffectingOkButtonTitle {
     return [NSSet setWithObject:@"album"];
+}
+
+#pragma mark Content criterion (#380 B)
+
+- (void)installContentCriterionCheckbox {
+    NSView *content = self.window.contentView;
+    if (content == nil || _contentCriterionCheckbox) return;
+
+    NSButton *box = [[[NSButton alloc] initWithFrame:NSMakeRect(20, 12, 420, 18)] autorelease];
+    [box setButtonType:NSSwitchButton];
+    box.title = NSLocalizedString(@"Only studies with ROIs or segmentations", nil);
+    box.target = self;
+    box.action = @selector(toggleContentCriterion:);
+    box.state = self.wantsROIOrSegmentation ? NSControlStateValueOn : NSControlStateValueOff;
+    [box setAccessibilityLabel:box.title];
+    // Under the editor, above the buttons: grow the sheet rather than cover it.
+    NSRect frame = self.window.frame;
+    frame.size.height += 26;
+    [self.window setFrame:frame display:NO];
+    for (NSView *view in content.subviews) {
+        NSRect f = view.frame;
+        f.origin.y += 26;
+        [view setFrame:f];
+    }
+    [content addSubview:box];
+    _contentCriterionCheckbox = [box retain];
+}
+
+- (BOOL)wantsROIOrSegmentation {
+    return [HorosStudyContentPredicates contains:HorosStudyContentPredicates.roiOrSegmentationFormat in:self.predicateFormat];
+}
+
+- (IBAction)toggleContentCriterion:(id)sender {
+    NSString *clause = HorosStudyContentPredicates.roiOrSegmentationFormat;
+    BOOL wanted = [sender state] == NSControlStateValueOn;
+    NSString *updated = wanted ? [HorosStudyContentPredicates adding:clause to:self.predicateFormat]
+                               : [HorosStudyContentPredicates removing:clause from:self.predicateFormat];
+    self.predicateFormat = updated.length ? updated : nil;
+    // The row editor cannot show a SUBQUERY; the raw predicate mode can.
+    if (self.predicate == nil || ![self.editor reallyMatchForPredicate:self.predicate])
+        self.mode = 1;
 }
 
 - (NSString*)okButtonTitle {

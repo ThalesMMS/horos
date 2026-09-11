@@ -57,8 +57,14 @@
 @property BOOL dontSpecifyStringType;
 
 -(void)handleRequest:(CFHTTPMessageRef)request;
+// Asked once per request, as soon as the headers are complete and before the
+// body is read. A subclass that authenticates answers the request itself and
+// returns NO; the default accepts everything, which is what the non-networked
+// users of this class expect.
+-(BOOL)shouldHandleRequest:(CFHTTPMessageRef)request version:(NSString*)version;
 -(id)methodCall:(NSString*)methodName params:(NSArray*)params error:(NSError**)error; 
 -(void)writeAndReleaseResponse:(CFHTTPMessageRef)response;
+-(void)writeStatus:(NSInteger)status headers:(NSDictionary*)headers version:(NSString*)version;
 
 -(NSUInteger)N2XMLRPCOptions;
 

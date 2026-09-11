@@ -26,12 +26,13 @@
 
 #undef verify
 
-#include "osconfig.h"    /* make sure OS specific configuration is included first */
+#include "HorosDCMTKCompatibility.h"
+#include <dcmtk/config/osconfig.h>    /* make sure OS specific configuration is included first */
 
-#include "ofstream.h"
-#include "dsrdoc.h"
-#include "dcuid.h"
-#include "dcfilefo.h"
+#include <dcmtk/ofstd/ofstream.h>
+#include "HorosStructuredReportBridge.h"
+#include <dcmtk/dcmdata/dcuid.h>
+#include <dcmtk/dcmdata/dcfilefo.h>
 
 static NSString *ViewControlToolbarItem = @"viewControl";
 static NSString *SRToolbarIdentifier = @"SRWindowToolbar";
@@ -113,7 +114,7 @@ static NSString *addKeyImagesToolbarIdentifier = @"smallKeyPlus.tif";
 		[_study release];
 		_study = [study retain];	
 		[_reports release];
-		_reports = [NSMutableDictionary dictionaryWithObjects:[NSArray arrayWithObjects:study, [study valueForKey:@"name"], nil] forKeys:[NSArray arrayWithObjects: @"study", @"report", nil]];
+		_reports = [[NSArray alloc] initWithObjects:@{@"study": study, @"report": [study valueForKey:@"name"] ?: @""}, nil];
 }
 
 - (void)dealloc
@@ -271,7 +272,7 @@ static NSString *addKeyImagesToolbarIdentifier = @"smallKeyPlus.tif";
 	[[WindowLayoutManager sharedWindowLayoutManager] setCurrentHangingProtocolForModality:nil description:nil];
 	if ([[_report keyImages] count] > 0) {
 		NSArray *images = [NSMutableArray arrayWithObject:[_report keyImages]];
-		[browser openViewerFromImages :images movie: nil viewer :nil keyImagesOnly:NO];	
+		[browser openViewerFromImages :images movie: NO viewer :nil keyImagesOnly:NO];
 		[NSApp sendAction: @selector(tileWindows:) to:nil from: browser];
 	}
 	else {

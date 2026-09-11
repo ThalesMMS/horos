@@ -616,10 +616,29 @@
 	[self setEngine: engine showWait:NO];
 }
 
+// VTK's image display helper owns context-specific textures, shaders and VAOs.
+// Share the input pipeline, not that rendering state, with another view.
+- (void)setMapper:(vtkVolumeMapper*)source
+{
+    if( !source || source == volumeMapper) return;
+    vtkHorosFixedPointVolumeRayCastMapper *replacement = vtkHorosFixedPointVolumeRayCastMapper::New();
+    replacement->SetInputConnection(source->GetInputConnection(0, 0));
+    replacement->SetBlendMode(source->GetBlendMode());
+    if( vtkFixedPointVolumeRayCastMapper *fixed = vtkFixedPointVolumeRayCastMapper::SafeDownCast(source))
+    {
+        replacement->SetSampleDistance(fixed->GetSampleDistance());
+        replacement->SetMinimumImageSampleDistance(fixed->GetMinimumImageSampleDistance());
+        replacement->SetMaximumImageSampleDistance(fixed->GetMaximumImageSampleDistance());
+        replacement->SetAutoAdjustSampleDistances(fixed->GetAutoAdjustSampleDistances());
+    }
+    if( volumeMapper) volumeMapper->Delete();
+    volumeMapper = replacement;
+    volume->SetMapper(volumeMapper);
+}
+
 - (void) dealloc
 {
 	NSLog(@"VRPresetPreview dealloc");
-	volumeMapper = nil;
 	data8 = nil;
 	[super dealloc];
 }
@@ -649,8 +668,11 @@
 	{
 		if(isEmpty)
 		{
+		// Fill the view, not the area needing redraw: since macOS 14 NSView no
+		// longer clips drawing to its bounds, so an oversized dirty rectangle
+		// painted over the surrounding views.
 			[[NSColor blackColor] set];
-			NSRectFill(aRect);
+			NSRectFill(self.bounds);
 			[self changeColorWith:[NSColor colorWithDeviceRed:0.0 green:0.0 blue:0.0 alpha:1.0]];
 		}
 
@@ -677,6 +699,24 @@
 	[super setNeedsDisplay: flag];
 }
 
+// Expose the rendered thumbnail as a named, selectable option.
+- (BOOL)isAccessibilityElement { return !isEmpty; }
+- (NSString*)accessibilityRole { return NSAccessibilityRadioButtonRole; }
+- (id)accessibilityValue { return @(isSelected); }
+- (BOOL)accessibilityPerformPress
+{
+    if( isEmpty) return NO;
+    [self setSelected];
+    return YES;
+}
+
+- (void)setSelectedState:(BOOL)selected
+{
+    if( isSelected == selected) return;
+    isSelected = selected;
+    NSAccessibilityPostNotification(self, NSAccessibilityValueChangedNotification);
+}
+
 - (void)setSelected;
 {
 	if(isEmpty) return;
@@ -692,6 +732,16 @@
 	[presetController setSelectedPresetPreview:self];
 	
 	[selectionView display];
+}
+
+// The frame is one view moved from preview to preview, so nothing hides it when
+// the page stops having anything to select. Then it rings an empty square and
+// Apply looks like it would do something.
+- (void)hideSelectionFrame;
+{
+	[selectionView setHidden:YES];
+	[selectionView display];
+	[self setSelectedState:NO];
 }
 
 - (void)mouseDown:(NSEvent *)theEvent

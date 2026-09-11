@@ -40,6 +40,10 @@
 @implementation DarkBox
 
 - (void)drawRect:(NSRect)rect{
+	// Fill the view, not the area needing redraw: since macOS 14 NSView no
+	// longer clips drawing to its bounds, so an oversized dirty rectangle
+	// painted over the surrounding views.
+	rect = self.bounds;
 	NSColor *backgroundColor = [NSColor  colorWithCalibratedRed:0.7 green:0.7 blue:0.7 alpha:0.25];
 	[backgroundColor setFill];	
 	[NSBezierPath fillRect:rect];

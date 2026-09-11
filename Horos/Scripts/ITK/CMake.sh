@@ -5,8 +5,9 @@ export PATH="$PATH:/opt/local/bin:/opt/local/sbin:/opt/homebrew/bin/"
 path="$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )/$(basename "${BASH_SOURCE[0]}")"
 cd "$TARGET_NAME"; pwd
 
-env=$(env|sort|grep -v 'LLBUILD_BUILD_ID=\|LLBUILD_LANE_ID=\|LLBUILD_TASK_ID=\|Apple_PubSub_Socket_Render=\|DISPLAY=\|SHLVL=\|SSH_AUTH_SOCK=\|SECURITYSESSIONID=')
-hash="$(git describe --always --tags --dirty) $(md5 -q "$path")-$(md5 -qs "$env")"
+# One narrow hash for every dependency; see Horos/Scripts/dependency-hash.sh.
+. "$(dirname "$path")/../dependency-hash.sh"
+dependency_hash "$path"
 
 set -e; set -o xtrace
 
@@ -42,6 +43,10 @@ args+=(-DBUILD_EXAMPLES=OFF)
 args+=(-DBUILD_SHARED_LIBS=OFF)
 args+=(-DBUILD_TESTING=OFF)
 args+=(-DCMAKE_POLICY_VERSION_MINIMUM=3.5)
+args+=(-DITK_USE_SYSTEM_ZLIB=ON)
+args+=(-DITK_USE_SYSTEM_PNG=ON)
+args+=(-DITK_USE_SYSTEM_TIFF=ON)
+args+=(-DITK_USE_SYSTEM_JPEG=ON)
 args+=(-DCMAKE_OSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET")
 args+=(-DCMAKE_OSX_ARCHITECTURES="$ARCHS")
 
@@ -62,6 +67,9 @@ args+=(-DITK_INSTALL_INCLUDE_DIR="include")
 #args+=(-DGDCM_DIR="$CONFIGURATION_TEMP_DIR/GDCM.build/CMake")
 
 args+=(-DCMAKE_IGNORE_PATH="/opt/local/include;/opt/local/lib")
+
+cfs+=( -I/opt/homebrew/include )
+cxxfs+=( -I/opt/homebrew/include )
 
 lfs+=(-L"$CONFIGURATION_TEMP_DIR/OpenJPEG.build/Install/lib")
 

@@ -45,9 +45,10 @@ Super Class for SCU classes such as verifySCU, storeSCU, moveSCU, findSCU
 
 #ifdef __cplusplus
 #undef verify
-#include "osconfig.h" /* make sure OS specific configuration is included first */
-#include "dimse.h"
-#include "dccodec.h"
+#include "HorosDCMTKCompatibility.h"
+#include <dcmtk/config/osconfig.h> /* make sure OS specific configuration is included first */
+#include <dcmtk/dcmnet/dimse.h>
+#include <dcmtk/dcmdata/dccodec.h>
 
 #else
 

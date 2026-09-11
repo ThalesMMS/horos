@@ -62,6 +62,9 @@ struct rawData
 }
 
 @property (nonatomic, assign) BOOL prepareForDCMTK;
+@property (nonatomic, retain) NSMutableArray *previewImages;
+@property (nonatomic, retain) NSMutableArray *annotatedPreviewImages;
+- (NSArray*)writePreviewImages:(NSArray*)images sourceFiles:(NSArray*)files destinationPath:(NSString*)path;
 
 - (NSArray *) dicomFileListForViewer: (ViewerController *) currentViewer destinationPath: (NSString *) destPath options: (NSDictionary*) options asColorPrint: (BOOL) colorPrint withAnnotations: (BOOL) annotations;
 - (NSArray *) dicomFileListForViewer: (ViewerController *) currentViewer destinationPath: (NSString *) destPath options: (NSDictionary*) options fileList: (NSArray *) fileList asColorPrint: (BOOL) colorPrint withAnnotations: (BOOL) annotations;

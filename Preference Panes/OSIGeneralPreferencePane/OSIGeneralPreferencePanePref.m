@@ -57,6 +57,8 @@ static NSArray *languagesToMoveWhenQuitting = nil;
 }
 @end
 
+#import "HorosLanguagePreferences.h"
+
 @implementation OSIGeneralPreferencePanePref
 
 @synthesize languages;
@@ -65,34 +67,9 @@ static NSArray *languagesToMoveWhenQuitting = nil;
 {
 	if( self = [super init])
 	{
-        // Scan for available languages
-        self.languages = [NSMutableArray array];
-        for( NSString *file in [[NSFileManager defaultManager] contentsOfDirectoryAtPath: [[NSBundle mainBundle] resourcePath] error: nil])
-        {
-            if( [[file pathExtension] isEqualToString: @"lproj"])
-            {
-                NSString *name = [[NSLocale currentLocale] displayNameForKey:NSLocaleIdentifier value: [file stringByDeletingPathExtension]];
-                
-                if( name.length == 0)
-                    name = [file stringByDeletingPathExtension];
-                
-                [languages addObject: [NSMutableDictionary dictionaryWithObjectsAndKeys: [file stringByDeletingPathExtension], @"foldername", name, @"language", [NSNumber numberWithBool: YES], @"active", nil]];
-            }
-        }
-        
-        for( NSString *file in [[NSFileManager defaultManager] contentsOfDirectoryAtPath: [[[[NSBundle mainBundle] resourcePath] stringByDeletingLastPathComponent] stringByAppendingPathComponent: @"Resources Disabled"] error: nil])
-        {
-            if( [[file pathExtension] isEqualToString: @"lproj"])
-            {
-                NSString *name = [[NSLocale currentLocale] displayNameForKey:NSLocaleIdentifier value: [file stringByDeletingPathExtension]];
-                
-                if( name.length == 0)
-                    name = [file stringByDeletingPathExtension];
-                
-                [languages addObject: [NSMutableDictionary dictionaryWithObjectsAndKeys: [file stringByDeletingPathExtension], @"foldername", name, @"language", [NSNumber numberWithBool: NO], @"active", nil]];
-            }
-        }
-        
+        // Localization resources remain inside the signed bundle.
+        self.languages = HorosLanguageRows(NSBundle.mainBundle, NSUserDefaults.standardUserDefaults);
+
 		NSNib *nib = [[[NSNib alloc] initWithNibNamed: @"OSIGeneralPreferencePanePref" bundle: nil] autorelease];
 		[nib instantiateWithOwner:self topLevelObjects:&_tlos];
         
@@ -323,7 +300,7 @@ static NSArray *languagesToMoveWhenQuitting = nil;
     }
     
     // At least one language must be active !
-    if( enabled == NO)
+    if( enabled == NO && languages.count)
         [[languages objectAtIndex: 0] setValue: [NSNumber numberWithBool: YES] forKey: @"active"];
     
     [languagesToMoveWhenQuitting release];
@@ -332,38 +309,7 @@ static NSArray *languagesToMoveWhenQuitting = nil;
 
 + (void) applyLanguagesIfNeeded
 {
-    NSString *activePath = [[NSBundle mainBundle] resourcePath];
-    NSString *inactivePath = [[activePath stringByDeletingLastPathComponent] stringByAppendingPathComponent: @"Resources Disabled"];
-    
-    if( [[NSFileManager defaultManager] fileExistsAtPath: inactivePath] == NO)
-        [[NSFileManager defaultManager] createDirectoryAtPath: inactivePath withIntermediateDirectories: NO attributes: nil error: nil];
-    
-    for( NSDictionary *d in languagesToMoveWhenQuitting)
-    {
-        NSString *language = [[d valueForKey: @"foldername"] stringByAppendingPathExtension: @"lproj"];
-        
-        if( [[d valueForKey: @"active"] boolValue])
-        {
-            if( [[NSFileManager defaultManager] fileExistsAtPath: [inactivePath stringByAppendingPathComponent: language]])
-            {
-                NSError *error = nil;
-                [[NSFileManager defaultManager] removeItemAtPath: [activePath stringByAppendingPathComponent: language] error: nil];
-                if( [[NSFileManager defaultManager] moveItemAtPath: [inactivePath stringByAppendingPathComponent: language] toPath: [activePath stringByAppendingPathComponent: language] error: &error] == NO)
-                    NSLog( @"*********** applyLanguagesIfNeeded failed: %@ %@", language, error);
-            }
-        }
-        else
-        {
-            if( [[NSFileManager defaultManager] fileExistsAtPath: [activePath stringByAppendingPathComponent: language]])
-            {
-                NSError *error = nil;
-                [[NSFileManager defaultManager] removeItemAtPath: [inactivePath stringByAppendingPathComponent: language] error: nil];
-                if( [[NSFileManager defaultManager] moveItemAtPath: [activePath stringByAppendingPathComponent: language] toPath: [inactivePath stringByAppendingPathComponent: language] error: &error] == NO)
-                    NSLog( @"*********** applyLanguagesIfNeeded failed: %@ %@", language, error);
-            }
-        }
-    }
-    
+    HorosApplyLanguageRows(languagesToMoveWhenQuitting, NSUserDefaults.standardUserDefaults);
     [languagesToMoveWhenQuitting release];
     languagesToMoveWhenQuitting = nil;
 }

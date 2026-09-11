@@ -1,0 +1,59 @@
+--- dcmpstat/apps/dcmprscu.cc
++++ dcmpstat/apps/dcmprscu.cc
+@@ -317,13 +317,14 @@
+         OFLOG_ERROR(dcmprscuLogger, "spooler: printer communication failed, unable to delete print objects");
+       }
+ 
+-      result = printHandler.releaseAssociation();
+-      if (result.bad())
++      OFCondition releaseResult = printHandler.releaseAssociation();
++      if (releaseResult.bad())
+       {
+         OFString temp_str;
+-        OFLOG_ERROR(dcmprscuLogger, "spooler: release of connection to printer failed\n" << DimseCondition::dump(temp_str, result));
+-        if (EC_Normal == result) result = EC_IllegalCall;
+-      }
++        OFLOG_ERROR(dcmprscuLogger, "spooler: release of connection to printer failed\n" << DimseCondition::dump(temp_str, releaseResult));
++      }
++      // Releasing a connection successfully must not erase a rejected print job.
++      if (result.good()) result = releaseResult;
+     }
+   }
+   return result;
+@@ -1046,6 +1047,7 @@
+ 
+    int paramCount = cmd.getParamCount();
+    const char *currentParam = NULL;
++   int printExitCode = 0;
+    if (opt_spoolMode)
+    {
+       if (paramCount > 0)
+@@ -1076,6 +1078,7 @@
+       if (paramCount == 0)
+       {
+         OFLOG_WARN(dcmprscuLogger, "spooler: no stored print files specified - nothing to do");
++        printExitCode = 10;
+       } else {
+         dvi.clearFilmSessionSettings();
+         if (opt_mediumtype) dvi.setPrinterMediumType(opt_mediumtype);
+@@ -1096,9 +1099,13 @@
+             if (EC_Normal != spoolStoredPrintFile(currentParam, dvi, tLayer))
+             {
+               OFLOG_ERROR(dcmprscuLogger, "spooling of file '" << currentParam << "' failed");
++              printExitCode = 10;
++              break;
+             }
+           } else {
+             OFLOG_ERROR(dcmprscuLogger, "empty file name");
++            printExitCode = 10;
++            break;
+           }
+         }
+       }
+@@ -1126,5 +1133,5 @@
+     dcmDataDict.clear();  /* useful for debugging with dmalloc */
+ #endif
+ 
+-    return 0;
++    return printExitCode;
+ }

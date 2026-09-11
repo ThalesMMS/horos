@@ -64,6 +64,10 @@ enum burnerDestination
 	NSArray *filesToBurn;
 	BOOL _multiplePatients;
 	BOOL cancelled;
+	// A burn that did not write the medium, and why, so the window can say so
+	// instead of sounding and closing as if it had.
+	BOOL failed;
+	NSString *burnFailure;
     NSString *writeDMGPath, *writeVolumePath;
     NSUInteger selectedUSB;
 	NSArray *anonymizationTags;
@@ -104,5 +108,6 @@ enum burnerDestination
 - (void)irisAnimation:(NSTimer*)object;
 - (NSNumber*)getSizeOfDirectory:(NSString*)path;
 - (NSString*) defaultTitle;
-- (void)saveOnVolume;
+- (BOOL)saveOnVolume;
+- (void)renameVolumeTo:(NSString*)name;
 @end

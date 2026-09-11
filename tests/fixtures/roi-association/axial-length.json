@@ -1,0 +1,78 @@
+{
+  "coordinateSystems": {
+    "patient": "DICOM patient coordinates (LPS), millimetres",
+    "pixel": "image pixels: x right, y down, origin at the top-left corner of pixel (0,0), one unit per pixel"
+  },
+  "format": "org.horosproject.roi-interchange",
+  "images": [
+    {
+      "columns": 256,
+      "frame": 0,
+      "imageOrientationPatient": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0
+      ],
+      "imagePositionPatient": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "index": 0,
+      "pixelSpacing": [
+        1.0,
+        1.0
+      ],
+      "rois": [
+        {
+          "color": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "name": "QA Length",
+          "opacity": 1.0,
+          "points": [
+            [
+              10.0,
+              20.0
+            ],
+            [
+              40.0,
+              20.0
+            ]
+          ],
+          "pointsPatient": [
+            [
+              10.0,
+              20.0,
+              0.0
+            ],
+            [
+              40.0,
+              20.0,
+              0.0
+            ]
+          ],
+          "thickness": 2.0,
+          "type": "length",
+          "typeCode": 5
+        }
+      ],
+      "rows": 256,
+      "sopInstanceUID": "1.2.826.0.1.3680043.8.498.231.sop.a",
+      "temporalIndex": 0
+    }
+  ],
+  "series": {
+    "frameOfReferenceUID": "1.2.826.0.1.3680043.8.498.231.for",
+    "modality": "CT",
+    "seriesDescription": "Synthetic axial QA",
+    "seriesInstanceUID": "1.2.826.0.1.3680043.8.498.231.1",
+    "studyInstanceUID": "1.2.826.0.1.3680043.8.498.231"
+  },
+  "version": 1
+}

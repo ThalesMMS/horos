@@ -124,6 +124,16 @@ enum photometricmode{DCM_UNKNOWN_PHOTOMETRIC, DCM_MONOCHROME1,  DCM_MONOCHROME2,
 - (NSData *) convertYBrToRGB:(NSData *)ybrData kind:(NSString *)theKind isPlanar:(BOOL)isPlanar;
 - (NSData *)convertToFloat:(NSData *)data;
 - (NSMutableData *)decodeFrameAtIndex:(int)index;
+
+/* The whole encapsulated value, fragments joined and the basic offset
+   table dropped.
+
+   Transfer syntaxes 1.2.840.10008.1.2.4.100 and up carry one video for the
+   entire object rather than one compressed frame per fragment, so a caller
+   that wants to hand the video to a decoder needs the bytes as they were
+   written, not a frame's worth of them. nil when the value is not
+   encapsulated or has already been taken apart into frames. */
+- (NSData *)encapsulatedStream;
 //- (NSImage *)imageAtIndex:(int)index ww:(float)ww  wl:(float)wl;
 
 @end

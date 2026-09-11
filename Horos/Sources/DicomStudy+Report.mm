@@ -36,6 +36,8 @@
  ============================================================================*/
 
 #import "DicomStudy+Report.h"
+#import "Horos-Swift.h"
+#import "HorosBoundedTask.h"
 #import "DicomSeries.h"
 #import "N2Shell.h"
 #import "NSString+N2.h"
@@ -163,22 +165,23 @@
             [task setStandardOutput:[NSFileHandle fileHandleForWritingAtPath: outPdfPath]];
             [task setStandardError:[NSPipe pipe]];
             
-            [task launch];
-            while( [task isRunning])
-                [NSThread sleepForTimeInterval: 0.1];
+            NSError *taskError = nil;
+            if( HorosRunTaskUntilExit( task, 120, &taskError) == NO)
+                NSLog( @"****** cupsfilter failed for %@: %@", reportPath, taskError.localizedDescription);
         }
         else
             NSLog( @"************* no converter tool available");
     }
     else if ([reportPath.pathExtension.lowercaseString isEqualToString:@"pages"])
     {
-        NSString *path = nil;
-        if( [Reports Pages5orHigher])
-            path = [[NSBundle mainBundle] pathForResource:@"pages2pdf" ofType:@"applescript"];
-        else
-            path = [[NSBundle mainBundle] pathForResource:@"pages092pdf" ofType:@"applescript"];
-        
-        [[self class] _runAppleScriptAtPath:path withArguments:[NSArray arrayWithObjects: reportPath, outPdfPath, nil]];
+        // Pages 10 (issue 560 / #129): the bundled AppleScript named Pages
+        // and `open`ed a path. A sandboxed Pages answers that open and
+        // never shows the document, so manual and Validated conversion
+        // wrote nothing. HorosPagesPDFConversion opens through
+        // LaunchServices, exports a working copy, and leaves the report.
+        NSError *error = nil;
+        if (![HorosPagesPDFConversion convertReportAtPath:reportPath toPDFAtPath:outPdfPath error:&error])
+            [NSException raise:NSGenericException format:@"%@", error.localizedDescription ?: @"Pages could not export the report as PDF. The original report has been left unchanged."];
     }
     else if ([reportPath.pathExtension.lowercaseString isEqualToString:@"doc"] || [reportPath.pathExtension.lowercaseString isEqualToString:@"docx"]) {
         NSString* path = [[NSBundle mainBundle] pathForResource:@"word2pdf" ofType:@"applescript"];
@@ -225,7 +228,12 @@
 
 +(void)transformPdfAtPath:(NSString*)pdfPath toDicomAtPath:(NSString*)outDicomPath usingSourceDicomAtPath:(NSString*)sourcePath
 {
-    DCMObject* source = [DCMObject objectWithContentsOfFile:sourcePath decodingPixelData:NO];
+    [self transformPdfAtPath:pdfPath toDicomAtPath:outDicomPath usingSourceDicomAtPath:sourcePath fallbackAttributes:nil];
+}
+
++(void)transformPdfAtPath:(NSString*)pdfPath toDicomAtPath:(NSString*)outDicomPath usingSourceDicomAtPath:(NSString*)sourcePath fallbackAttributes:(NSDictionary*)fallback
+{
+    DCMObject* source = sourcePath.length ? [DCMObject objectWithContentsOfFile:sourcePath decodingPixelData:NO] : nil;
     
     DCMObject* output = [DCMObject encapsulatedPDF:[NSFileManager.defaultManager contentsAtPath:pdfPath]];
     
@@ -255,12 +263,28 @@
     
     [output setAttributeValues:[NSMutableArray arrayWithObject: [DCMCalendarDate dicomDateWithDate:[NSDate date]]] forName:@"SeriesDate"];
     [output setAttributeValues:[NSMutableArray arrayWithObject: [DCMCalendarDate dicomTimeWithDate:[NSDate date]]] forName:@"SeriesTime"];
+
+    if ([fallback isKindOfClass:[NSDictionary class]]) {
+        for (NSString *name in fallback) {
+            if ([name isEqualToString:@"StudyInstanceUID"])
+                continue;
+            if ([output attributeValueWithName:name])
+                continue;
+            [output setAttributeValues:[NSMutableArray arrayWithObject:[fallback objectForKey:name]] forName:name];
+        }
+        NSString *uid = [fallback objectForKey:@"StudyInstanceUID"];
+        if ([uid isKindOfClass:[NSString class]] && uid.length)
+            [output setAttributeValues:[NSMutableArray arrayWithObject:uid] forName:@"StudyInstanceUID"];
+    }
     
     [output writeToFile:outDicomPath withTransferSyntax:[DCMTransferSyntax ExplicitVRLittleEndianTransferSyntax] quality:DCMLosslessQuality atomically:YES];
 }
 
 -(void)transformPdfAtPath:(NSString*)pdfPath toDicomAtPath:(NSString*)outDicomPath
 {
+    if (![HorosPagesPDFConversion isUsablePDFAtPath:pdfPath])
+        [NSException raise:NSGenericException format:@"%@", NSLocalizedString(@"The report PDF is missing or unreadable. The original report has been left unchanged.", nil)];
+
     NSString* sourcePath = nil;
     for (DicomSeries* series in self.series.allObjects) {
         for (DicomImage* image in series.sortedImages) {
@@ -272,15 +296,28 @@
         if (sourcePath)
             break;
     }
-    
-    [[self class] transformPdfAtPath:pdfPath toDicomAtPath:outDicomPath usingSourceDicomAtPath:sourcePath];
+
+    NSDictionary *fallback = [HorosPagesPDFConversion associationAttributesWithStudyInstanceUID:self.studyInstanceUID
+                                                                                   patientName:self.name
+                                                                                     patientID:self.patientID
+                                                                              accessionNumber:self.accessionNumber
+                                                                            studyDescription:self.studyName];
+    [[self class] transformPdfAtPath:pdfPath toDicomAtPath:outDicomPath usingSourceDicomAtPath:sourcePath fallbackAttributes:fallback];
 }
 
 -(void)saveReportAsDicomAtPath:(NSString*)path
 {
     NSString* pdfPath = [self saveReportAsPdfInTmp];
-    [self transformPdfAtPath:pdfPath toDicomAtPath:path];
-    [NSFileManager.defaultManager removeItemAtPath:pdfPath error:NULL];
+    @try {
+        if (![HorosPagesPDFConversion isUsablePDFAtPath:pdfPath])
+            [NSException raise:NSGenericException format:@"%@", NSLocalizedString(@"Pages could not export the report as PDF. The original report has been left unchanged.", nil)];
+        [self transformPdfAtPath:pdfPath toDicomAtPath:path];
+        if (![[NSFileManager defaultManager] fileExistsAtPath:path])
+            [NSException raise:NSGenericException format:@"%@", NSLocalizedString(@"The DICOM PDF could not be written. The original report has been left unchanged.", nil)];
+    }
+    @finally {
+        [NSFileManager.defaultManager removeItemAtPath:pdfPath error:NULL];
+    }
 }
 
 -(NSString*)saveReportAsDicomInTmp

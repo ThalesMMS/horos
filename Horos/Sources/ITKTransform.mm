@@ -367,10 +367,9 @@ typedef itk::ResampleImageFilter<ImageType, ImageType> ResampleFilterType;
 	}
 	else
 	{
-		if( NSRunCriticalAlertPanel(NSLocalizedString(@"32-bit", nil),
-								NSLocalizedString(@"Cannot complete the operation.\r\rUpgrade to Horos 64-bit or Horos MD to solve this issue.", nil),
-								NSLocalizedString(@"OK", nil), NSLocalizedString(@"Horos 64-bit", nil), nil) == NSAlertAlternateReturn)
-									[[AppController sharedAppController] osirix64bit: self];
+		NSRunCriticalAlertPanel(NSLocalizedString(@"Not enough memory", nil),
+								NSLocalizedString(@"Cannot complete the operation.\r\rClose other studies or open a smaller series. Nothing was reduced silently.", nil),
+								NSLocalizedString(@"OK", nil), nil, nil);
 	}
 	
 	return new2DViewer;

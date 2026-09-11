@@ -405,6 +405,7 @@ typedef struct renderSurface
 - (void) add3DPointActor: (vtkActor*) actor;
 - (void) addRandomPoints: (int) n : (int) r;
 - (void) throw3DPointOnSurface: (double) x : (double) y;
+- (BOOL) pickSurfaceAtDisplayX: (double) x y: (double) y world: (double *) wXYZ;
 - (void) setDisplay3DPoints: (BOOL) on;
 - (void) toggleDisplay3DPoints;
 - (BOOL) isAny3DPointSelected;

@@ -47,6 +47,7 @@
 +(BOOL)decompressDicomFilesAtPaths:(NSArray*)paths;
 +(BOOL)decompressDicomFilesAtPaths:(NSArray*)paths intoDirAtPath:(NSString*)destDir;
 +(NSString*)extractReportSR:(NSString*)dicomSR contentDate:(NSDate*)date;
++(NSString*)extractReportSR:(NSString*)dicomSR contentDate:(NSDate*)date error:(NSError**)error;
 +(BOOL)testFiles:(NSArray*)files;
 
 @end

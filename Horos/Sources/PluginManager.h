@@ -89,6 +89,9 @@
 + (NSString*) deletePluginWithName:(NSString*)pluginName availability: (NSString*) availability isActive:(BOOL) isActive;
 + (NSArray*)pluginsList;
 + (void)createDirectory:(NSString*)directoryPath;
+// The file naming whatever plugin is being loaded right now, removed when it
+// finishes: one left behind says the last run stopped inside that plugin.
++ (NSString*) crashMarkerPath;
 + (NSArray*)availabilities;
 
 - (IBAction)checkForUpdates:(id)sender;

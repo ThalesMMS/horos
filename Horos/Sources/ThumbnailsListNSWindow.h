@@ -41,4 +41,7 @@
 {
 }
 
+// Detach/mode changes must not trigger orderOut's normal owner fallback.
+- (void)hideForReconfiguration;
+
 @end

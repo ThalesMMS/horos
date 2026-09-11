@@ -36,6 +36,12 @@
 					</form>	
 				</td></tr>
 			</table>
+			%[IF:Info.hasFederatedSources%
+			<div class="gray indent">A search also queries the selected local databases. Permission: %X:Info.federatedPermission%</div>
+			%[FOREACH:Info.federatedSources:Source%
+			%[IF:Source.included%<div class="gray indent">%X:Source.name%</div>%]IF:Source.included%
+			%]FOREACH:Info.federatedSources:Source%
+			%]IF:Info.hasFederatedSources%
 		</div>
 	</div>
 	
@@ -82,7 +88,7 @@
                 
                 %[IF:Info.proposeWeasis%
                 <td class="narrow middle">
-                    <a href="%Info.baseJnlpUrl%/weasis.jnlp?xid=%Study.XID%&sid=%Info.SID%"><img src="images/weasis.png"/></a>
+                    <a href="%Info.baseJnlpUrl%/weasis.jnlp?xid=%Study.XID%%[IF:User%&username=%U:User.name%&token=%U:Info.newToken%%]IF:User%"><img src="images/weasis.png"/></a>
                 </td>
                 %]IF:Info.proposeWeasis%
             </tr>
@@ -119,9 +125,12 @@
                         else
                         fileSize = (Math.round(file.size * 100 / 1024) / 100).toString() + 'KB';
                         
-                        document.getElementById('fileName').innerHTML = 'Name: ' + file.name;
-                        document.getElementById('fileSize').innerHTML = 'Size: ' + fileSize;
-                        document.getElementById('fileType').innerHTML = 'Type: ' + file.type;
+                        // The name and type of a chosen file are text, not
+                        // markup: a file called <img src=x onerror=...> used to
+                        // run in this page (ZSL-2016-5385).
+                        document.getElementById('fileName').textContent = 'Name: ' + file.name;
+                        document.getElementById('fileSize').textContent = 'Size: ' + fileSize;
+                        document.getElementById('fileType').textContent = 'Type: ' + file.type;
                         document.getElementById('upload').style.display= 'block';
                     }
                 }
@@ -144,17 +153,17 @@
                     if (evt.lengthComputable) {
                         var percentComplete = Math.round(evt.loaded * 100 / evt.total);
                         if( percentComplete == 100)
-                            document.getElementById('progressNumber').innerHTML = percentComplete.toString() + '% - Importing data... Please wait.';
+                            document.getElementById('progressNumber').textContent = percentComplete.toString() + '% - Importing data... Please wait.';
                         else
-                            document.getElementById('progressNumber').innerHTML = percentComplete.toString() + '% - Uploading... Please wait.';
+                            document.getElementById('progressNumber').textContent = percentComplete.toString() + '% - Uploading... Please wait.';
                     }
                     else {
-                        document.getElementById('progressNumber').innerHTML = 'Unable to compute';
+                        document.getElementById('progressNumber').textContent = 'Unable to compute';
                     }
                 }
                 
                 function uploadComplete(evt) {
-                    document.getElementById('progressNumber').innerHTML = 'Upload completed !';
+                    document.getElementById('progressNumber').textContent = 'Upload completed !';
                     document.getElementById('upload').style.display= 'block';
                 }
                 

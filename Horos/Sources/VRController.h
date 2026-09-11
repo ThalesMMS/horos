@@ -3,7 +3,7 @@
  
  Horos is free software: you can redistribute it and/or modify
  it under the terms of the GNU Lesser General Public License as published by
- the Free Software Foundation,  version 3 of the License.
+ the Free Software Foundation, ùversion 3 of the License.
  
  The Horos Project was based originally upon the OsiriX Project which at the time of
  the code fork was licensed as a LGPL project.  However, not all of the the source-code
@@ -15,24 +15,24 @@
  
  Horos is distributed in the hope that it will be useful, but
  WITHOUT ANY WARRANTY EXPRESS OR IMPLIED, INCLUDING ANY WARRANTY OF
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE OR USE.  See the
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE OR USE. ùSee the
  GNU Lesser General Public License for more details.
  
  You should have received a copy of the GNU Lesser General Public License
- along with Horos.  If not, see http://www.gnu.org/licenses/lgpl.html
+ along with Horos. ùIf not, see http://www.gnu.org/licenses/lgpl.html
  
  Prior versions of this file were published by the OsiriX team pursuant to
  the below notice and licensing protocol.
  ============================================================================
- Program:   OsiriX
-  Copyright (c) OsiriX Team
-  All rights reserved.
-  Distributed under GNU - LGPL
-  
-  See http://www.osirix-viewer.com/copyright.html for details.
-     This software is distributed WITHOUT ANY WARRANTY; without even
-     the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
-     PURPOSE.
+ Program: ù OsiriX
+ ùCopyright (c) OsiriX Team
+ ùAll rights reserved.
+ ùDistributed under GNU - LGPL
+ ù
+ ùSee http://www.osirix-viewer.com/copyright.html for details.
+ ù ù This software is distributed WITHOUT ANY WARRANTY; without even
+ ù ù the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+ ù ù PURPOSE.
  ============================================================================*/
 
 #import <Cocoa/Cocoa.h>
@@ -90,9 +90,9 @@
 	
     NSToolbar				*toolbar;
 	
-    NSMutableArray			*pixList[ 100];
+    NSMutableArray			*pixList[ MAX4D];
 	NSArray					*fileList;
-	NSData					*volumeData[ 100];
+	NSData					*volumeData[ MAX4D];
 	short					curMovieIndex, maxMovieIndex;
 	
 	IBOutlet NSTextField    *blendingPercentage;
@@ -110,7 +110,7 @@
 	IBOutlet NSSlider       *movieRateSlider;
 	IBOutlet NSSlider       *moviePosSlider;
 	
-	float					*undodata[ 100];
+	float					*undodata[ MAX4D];
 	float					minimumValue, maximumValue;
 	float					blendingMinimumValue, blendingMaximumValue;
 	float					deleteValue;

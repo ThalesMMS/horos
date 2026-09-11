@@ -57,4 +57,6 @@ California 94305, USA.
 
 - (NSAppleEventDescriptor *) callHandler: (NSString *) handler withArguments: (NSAppleEventDescriptor *) arguments errorInfo: (NSDictionary **) errorInfo;
 
++ (NSString *)mailExportErrorMessage:(NSDictionary *)errorInfo result:(NSAppleEventDescriptor *)result;
+
 @end

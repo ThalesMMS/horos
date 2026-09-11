@@ -49,6 +49,7 @@
 #import "iPhoto.h"
 #import "DICOMExport.h"
 #import "DicomImage.h"
+#import "Horos-Swift.h"
 
 static	BOOL EXPORT2IPHOTO = NO;
 
@@ -776,8 +777,8 @@ static NSString*	MailToolbarItemIdentifier		= @"Mail.icns";
     
     [view getWLWW:&iwl :&iww];
     
-    [wl setStringValue:[NSString stringWithFormat:@"%0.f", iwl]];
-    [ww setStringValue:[NSString stringWithFormat:@"%0.f", iww]];
+    [wl setStringValue: [HorosWindowLevelText stringForValue: iwl]];
+    [ww setStringValue: [HorosWindowLevelText stringForValue: iww]];
     
 	[newName setStringValue: @"Unnamed"];
 	
@@ -1057,6 +1058,7 @@ static NSString*	MailToolbarItemIdentifier		= @"Mail.icns";
 			toolbarItem = nil;
 		}
 	
+	[HorosToolbarPolicy prepareItem: toolbarItem];
 	return [toolbarItem autorelease];
 }
 

@@ -37,10 +37,11 @@
 
 
 #import "DCMTKServiceClassUser.h"
+#import "Horos-Swift.h"
 
-#include "tlstrans.h"
-#include "tlslayer.h"
-#include "ofstring.h"
+#include <dcmtk/dcmtls/tlstrans.h>
+#include <dcmtk/dcmtls/tlslayer.h>
+#include <dcmtk/ofstd/ofstring.h>
 
 
 @implementation DCMTKServiceClassUser
@@ -89,8 +90,9 @@
 		if (_secureConnection)
 		{
 			_doAuthenticate = [[extraParameters objectForKey:@"TLSAuthenticated"] boolValue];
-			_keyFileFormat = SSL_FILETYPE_PEM;
-			certVerification = (TLSCertificateVerificationType)[[extraParameters objectForKey:@"TLSCertificateVerification"] intValue];
+			_keyFileFormat = DCF_Filetype_PEM;
+			// An unrecognised value must not mean "do not check the peer".
+			certVerification = (TLSCertificateVerificationType)[HorosTLSVerificationPolicy normalise: [[extraParameters objectForKey:@"TLSCertificateVerification"] intValue]];
 			
 			NSArray *suites = [extraParameters objectForKey:@"TLSCipherSuites"];
 			NSMutableArray *selectedCipherSuites = [NSMutableArray array];

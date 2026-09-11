@@ -3,7 +3,7 @@
  
  Horos is free software: you can redistribute it and/or modify
  it under the terms of the GNU Lesser General Public License as published by
- the Free Software Foundation,  version 3 of the License.
+ the Free Software Foundation, ùversion 3 of the License.
  
  The Horos Project was based originally upon the OsiriX Project which at the time of
  the code fork was licensed as a LGPL project.  However, not all of the the source-code
@@ -15,28 +15,30 @@
  
  Horos is distributed in the hope that it will be useful, but
  WITHOUT ANY WARRANTY EXPRESS OR IMPLIED, INCLUDING ANY WARRANTY OF
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE OR USE.  See the
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE OR USE. ùSee the
  GNU Lesser General Public License for more details.
  
  You should have received a copy of the GNU Lesser General Public License
- along with Horos.  If not, see http://www.gnu.org/licenses/lgpl.html
+ along with Horos. ùIf not, see http://www.gnu.org/licenses/lgpl.html
  
  Prior versions of this file were published by the OsiriX team pursuant to
  the below notice and licensing protocol.
  ============================================================================
- Program:   OsiriX
-  Copyright (c) OsiriX Team
-  All rights reserved.
-  Distributed under GNU - LGPL
-  
-  See http://www.osirix-viewer.com/copyright.html for details.
-     This software is distributed WITHOUT ANY WARRANTY; without even
-     the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
-     PURPOSE.
+ Program: ù OsiriX
+ ùCopyright (c) OsiriX Team
+ ùAll rights reserved.
+ ùDistributed under GNU - LGPL
+ ù
+ ùSee http://www.osirix-viewer.com/copyright.html for details.
+ ù ù This software is distributed WITHOUT ANY WARRANTY; without even
+ ù ù the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+ ù ù PURPOSE.
  ============================================================================*/
 
+#import "Horos-Swift.h"
 #import "OrthogonalMPRPETCTViewer.h"
 #import "OrthogonalMPRPETCTView.h"
+#import "DCMPix.h"
 #import "BrowserController.h"
 #import "Mailer.h"
 #import "DICOMExport.h"
@@ -65,6 +67,77 @@ static NSString*	FlipVolumeToolbarItemIdentifier				= @"Revert.tif";
 static NSString*	WLWWToolbarItemIdentifier					= @"WLWW";
 static NSString*	VRPanelToolbarItemIdentifier				= @"MIP.tif";
 static NSString*	ThreeDPositionToolbarItemIdentifier			= @"3DPosition";
+
+static HorosOrthogonalFusionLayer *HorosFusionLayerFromView(DCMView *view)
+{
+    DCMPix *pix = [view curDCM];
+    if( pix == nil)
+        return nil;
+    
+    float *samples = pix.fImage;
+    BOOL freeSamples = NO;
+    if( samples == nil)
+    {
+        samples = [pix computefImage];
+        if( samples && samples != pix.fImage)
+            freeSamples = YES;
+    }
+    if( samples == nil)
+        return nil;
+    
+    NSInteger count = (NSInteger)pix.pwidth * (NSInteger)pix.pheight;
+    if( count <= 0)
+    {
+        if( freeSamples) free( samples);
+        return nil;
+    }
+    
+    HorosOrthogonalFusionLayer *layer = [[[HorosOrthogonalFusionLayer alloc] init] autorelease];
+    layer.samples = [NSData dataWithBytes: samples length: (NSUInteger)count * sizeof(float)];
+    if( freeSamples) free( samples);
+    layer.width = pix.pwidth;
+    layer.height = pix.pheight;
+    layer.origin = [NSArray arrayWithObjects:
+                    [NSNumber numberWithDouble: pix.originX],
+                    [NSNumber numberWithDouble: pix.originY],
+                    [NSNumber numberWithDouble: pix.originZ],
+                    nil];
+    float orientation[ 9] = {0};
+    [pix orientation: orientation];
+    NSMutableArray *axes = [NSMutableArray arrayWithCapacity: 9];
+    for( int i = 0; i < 9; i++)
+        [axes addObject: [NSNumber numberWithFloat: orientation[ i]]];
+    layer.orientation = axes;
+    layer.spacing = [NSArray arrayWithObjects:
+                      [NSNumber numberWithDouble: pix.pixelSpacingX],
+                      [NSNumber numberWithDouble: pix.pixelSpacingY],
+                      nil];
+    layer.sliceLocation = pix.sliceLocation;
+    layer.sliceThickness = pix.sliceThickness;
+    float wl = 0, ww = 0;
+    [view getWLWW: &wl :&ww];
+    layer.windowCenter = wl;
+    layer.windowWidth = ww;
+    return layer;
+}
+
+static NSData *HorosPETFusionLUT(void)
+{
+    unsigned char *red = [DCMView PETredTable];
+    unsigned char *green = [DCMView PETgreenTable];
+    unsigned char *blue = [DCMView PETblueTable];
+    if( red == nil || green == nil || blue == nil)
+        return nil;
+    NSMutableData *lut = [NSMutableData dataWithLength: 768];
+    unsigned char *bytes = [lut mutableBytes];
+    for( int i = 0; i < 256; i++)
+    {
+        bytes[ i * 3] = red[ i];
+        bytes[ i * 3 + 1] = green[ i];
+        bytes[ i * 3 + 2] = blue[ i];
+    }
+    return lut;
+}
 
 @implementation OrthogonalMPRPETCTViewer
 
@@ -1222,6 +1295,9 @@ static NSString*	ThreeDPositionToolbarItemIdentifier			= @"3DPosition";
                 toolbarItem = item;
         }
     }
+
+    if( toolbarItem)
+        [HorosToolbarPolicy prepareItem: toolbarItem];
     
     return toolbarItem;
 }
@@ -2288,8 +2364,46 @@ static NSString*	ThreeDPositionToolbarItemIdentifier			= @"3DPosition";
     [DCMView setDefaults];
     
     unsigned char *data = nil;
+    HorosOrthogonalFusionSlice *fusion = nil;
+    BOOL includeAllViews = [[NSUserDefaults standardUserDefaults] boolForKey: @"exportDCMIncludeAllViews"];
     
-    if( [[NSUserDefaults standardUserDefaults] boolForKey: @"exportDCMIncludeAllViews"])
+    if( includeAllViews == NO && [curView blendingView])
+    {
+        HorosOrthogonalFusionLayer *primary = HorosFusionLayerFromView( curView);
+        HorosOrthogonalFusionLayer *secondary = HorosFusionLayerFromView( [curView blendingView]);
+        fusion = [HorosOrthogonalFusionSliceExport sliceFromPrimary: primary
+                                                       secondary: secondary
+                                                             lut: HorosPETFusionLUT()
+                                                  blendingFactor: [curView blendingFactor]
+                                                  instanceNumber: 0];
+        if( fusion)
+        {
+            width = fusion.width;
+            height = fusion.height;
+            spp = 3;
+            bpp = 8;
+            isSigned = NO;
+            offset = 0;
+            if( fusion.origin.count >= 3)
+            {
+                imOrigin[ 0] = [[fusion.origin objectAtIndex: 0] floatValue];
+                imOrigin[ 1] = [[fusion.origin objectAtIndex: 1] floatValue];
+                imOrigin[ 2] = [[fusion.origin objectAtIndex: 2] floatValue];
+            }
+            if( fusion.spacing.count >= 2)
+            {
+                imSpacing[ 0] = [[fusion.spacing objectAtIndex: 0] floatValue];
+                imSpacing[ 1] = [[fusion.spacing objectAtIndex: 1] floatValue];
+            }
+            data = malloc( fusion.pixelRGB.length);
+            if( data)
+                memcpy( data, fusion.pixelRGB.bytes, fusion.pixelRGB.length);
+            else
+                fusion = nil;
+        }
+    }
+    
+    if( data == nil && includeAllViews)
     {
         NSMutableArray *views = [NSMutableArray array], *viewsRect = [NSMutableArray array];
         
@@ -2344,12 +2458,13 @@ static NSString*	ThreeDPositionToolbarItemIdentifier			= @"3DPosition";
                                                views: views
                                            viewsRect: viewsRect];
     }
-    else data = [curView getRawPixelsWidth: &width
+    else if( data == nil)
+        data = [curView getRawPixelsWidth: &width
                                     height: &height
                                        spp: &spp
                                        bpp: &bpp
                              screenCapture: screenCapture
-                                force8bits: YES
+                                force8bits: screenCapture
                            removeGraphical: YES
                               squarePixels: NO
                                   allTiles: NO
@@ -2377,24 +2492,34 @@ static NSString*	ThreeDPositionToolbarItemIdentifier			= @"3DPosition";
         
         [exportDCM setPixelSpacing: imSpacing[ 0] :imSpacing[ 1]];
         
-        if( [[NSUserDefaults standardUserDefaults] boolForKey: @"exportDCMIncludeAllViews"] == NO)
+        if( includeAllViews == NO)
         {
-            [exportDCM setSliceThickness: [curPix sliceThickness]];
-            [exportDCM setSlicePosition: [curPix sliceLocation]];
-            
-            [curView orientationCorrectedToView: o];
-            
-            //		if( screenCapture) [curView orientationCorrectedToView: o];	// <- Because we do screen capture !!!!! We need to apply the rotation of the image
-            //		else [curPix orientation: o];
-            
-            [exportDCM setOrientation: o];
-            [exportDCM setPosition: imOrigin];
+            if( fusion)
+            {
+                [exportDCM setSliceThickness: fusion.sliceThickness];
+                [exportDCM setSlicePosition: fusion.sliceLocation];
+                for( int i = 0; i < 9; i++) o[ i] = 0;
+                NSUInteger axes = MIN( (NSUInteger)9, fusion.orientation.count);
+                for( NSUInteger i = 0; i < axes; i++)
+                    o[ i] = [[fusion.orientation objectAtIndex: i] floatValue];
+                [exportDCM setOrientation: o];
+                [exportDCM setPosition: imOrigin];
+            }
+            else
+            {
+                [exportDCM setSliceThickness: [curPix sliceThickness]];
+                [exportDCM setSlicePosition: [curPix sliceLocation]];
+                
+                [curView orientationCorrectedToView: o];
+                [exportDCM setOrientation: o];
+                [exportDCM setPosition: imOrigin];
+            }
         }
         
         [exportDCM setPixelData: data samplesPerPixel:spp bitsPerSample:bpp width: width height: height];
         [exportDCM setSigned: isSigned];
         [exportDCM setOffset: offset];
-        [exportDCM setModalityAsSource: YES];
+        [exportDCM setModalityAsSource: fusion ? NO : YES];
         
         f = [exportDCM writeDCMFile: nil];
         if( f == nil)
@@ -2554,7 +2679,7 @@ static NSString*	ThreeDPositionToolbarItemIdentifier			= @"3DPosition";
                         NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
                         @try
                         {
-                            [producedFiles addObject: [self exportDICOMFileInt: YES]];
+                            [producedFiles addObject: [self exportDICOMFileInt: NO]];
                         }
                         @catch (NSException * e)
                         {
@@ -2593,7 +2718,7 @@ static NSString*	ThreeDPositionToolbarItemIdentifier			= @"3DPosition";
                         
                         @try
                         {
-                            [producedFiles addObject: [self exportDICOMFileInt: YES view:viewCT]];
+                            [producedFiles addObject: [self exportDICOMFileInt: NO view:viewCT]];
                         }
                         @catch (NSException * e)
                         {
@@ -2623,7 +2748,7 @@ static NSString*	ThreeDPositionToolbarItemIdentifier			= @"3DPosition";
                         
                         @try
                         {
-                            [producedFiles addObject: [self exportDICOMFileInt: YES view:viewPETCT]];
+                            [producedFiles addObject: [self exportDICOMFileInt: NO view:viewPETCT]];
                         }
                         @catch (NSException * e)
                         {
@@ -2653,7 +2778,7 @@ static NSString*	ThreeDPositionToolbarItemIdentifier			= @"3DPosition";
                         
                         @try 
                         {
-                            [producedFiles addObject: [self exportDICOMFileInt: YES view:viewPET]];
+                            [producedFiles addObject: [self exportDICOMFileInt: NO view:viewPET]];
                         }
                         @catch (NSException * e) 
                         {

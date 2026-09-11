@@ -55,6 +55,8 @@ extern NSString* const O2ScreenCapturesSeriesName;
 	NSRecursiveLock* _processFilesLock;
 	NSRecursiveLock* _importFilesFromIncomingDirLock;
 	BOOL _isFileSystemFreeSizeLimitReached;
+    BOOL _incomingImportSpaceWarningShown; // main-thread episode state for this database
+    NSString *_lastImportRefusalSummary;
 	NSTimeInterval _timeOfLastIsFileSystemFreeSizeLimitReachedVerification;
 	NSTimeInterval _timeOfLastModification;
 	char baseDirPathC[4096], incomingDirPathC[4096], tempDirPathC[4096]; // these paths are used from the DICOM listener
@@ -93,6 +95,12 @@ extern NSString* const O2ScreenCapturesSeriesName;
 @property(readwrite,retain,nonatomic) NSString* name, *sourcePath;
 @property(readwrite) NSTimeInterval timeOfLastModification;
 @property BOOL isReadOnly;
+@property(readonly) BOOL incomingImportWaitingForSpace;
+// What the last import refused, for the window to show. A refusal used to reach
+// the log only, so a study arrived with fewer images and nothing said which.
+@property(readonly, copy) NSString *lastImportRefusalSummary;
+- (void)setLastImportRefusalSummary:(NSString*)summary;
+- (void)addImportRefusalSummary:(NSString*)summary;
 @property BOOL hasPotentiallySlowDataAccess;
 
 -(BOOL)isLocal;
@@ -165,6 +173,7 @@ extern NSString* const DicomDatabaseLogEntryEntityName;
 -(NSInteger)importFilesFromIncomingDir: (NSNumber*) showGUI;
 -(NSInteger)importFilesFromIncomingDir: (NSNumber*) showGUI listenerCompressionSettings: (int) listenerCompressionSettings;
 -(BOOL)waitForCompressThread;
+- (void)updateStorageAvailabilityWarning; // main-thread, nonmodal storage status
 -(void)initiateImportFilesFromIncomingDirUnlessAlreadyImporting;
 -(void)importFilesFromIncomingDirThread;
 +(void)syncImportFilesFromIncomingDirTimerWithUserDefaults; // called from deprecated API
@@ -179,6 +188,7 @@ extern NSString* const DicomDatabaseLogEntryEntityName;
 -(void)initiateDecompressFilesAtPaths:(NSArray*)paths;
 -(void)initiateDecompressFilesAtPaths:(NSArray*)paths intoDirAtPath:(NSString*)destDir;
 -(void)processFilesAtPaths:(NSArray*)paths intoDirAtPath:(NSString*)destDir mode:(int)mode;
+-(BOOL)processFilesAtPaths:(NSArray*)paths intoDirAtPath:(NSString*)destDir mode:(int)mode error:(NSError**)error;
 
 #pragma mark Other
 -(BOOL)rebuildAllowed;

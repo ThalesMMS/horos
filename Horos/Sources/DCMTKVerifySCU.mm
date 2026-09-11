@@ -1,3 +1,4 @@
+#include "HorosDIMSEAssociation.h"
 /*
  *
  *  Copyright (C) 1994-2005, OFFIS
@@ -72,27 +73,28 @@
 
 
 #include "DCMTKVerifySCU.h"
-#include "osconfig.h"    /* make sure OS specific configuration is included first */
+#include "HorosDCMTKCompatibility.h"
+#include <dcmtk/config/osconfig.h>    /* make sure OS specific configuration is included first */
 
-#define INCLUDE_CSTDLIB
-#define INCLUDE_CSTDIO
-#define INCLUDE_CSTRING
-#define INCLUDE_CSTDARG
-#include "ofstdinc.h"
+#include <cstdlib>
+#include <cstdio>
+#include <cstring>
+#include <cstdarg>
+#include <dcmtk/ofstd/ofstdinc.h>
 
-#include "dimse.h"
-#include "diutil.h"
-#include "dcfilefo.h"
-#include "dcdebug.h"
-#include "dcdict.h"
-#include "dcuid.h"
-#include "cmdlnarg.h"
-#include "ofconapp.h"
-//#include "dcuid.h"    /* for dcmtk version name */
+#include <dcmtk/dcmnet/dimse.h>
+#include <dcmtk/dcmnet/diutil.h>
+#include <dcmtk/dcmdata/dcfilefo.h>
+#include "HorosDCMTKCompatibility.h"
+#include <dcmtk/dcmdata/dcdict.h>
+#include <dcmtk/dcmdata/dcuid.h>
+#include <dcmtk/dcmdata/cmdlnarg.h>
+#include <dcmtk/ofstd/ofconapp.h>
+//#include <dcmtk/dcmdata/dcuid.h>    /* for dcmtk version name */
 
 #ifdef WITH_OPENSSL
-#include "tlstrans.h"
-#include "tlslayer.h"
+#include <dcmtk/dcmtls/tlstrans.h>
+#include <dcmtk/dcmtls/tlslayer.h>
 #endif
 
 #ifdef WITH_ZLIB
@@ -188,7 +190,7 @@ static const char* transferSyntaxes[] = {
     T_ASC_Network *net = NULL;
     T_ASC_Parameters *params;
     DIC_NODENAME localHost;
-    DIC_NODENAME peerHost;
+
     T_ASC_Association *assoc = NULL;
    
 //	NSLog(@"hostname: %@ calledAET %@", _hostname, _calledAET);
@@ -313,7 +315,7 @@ static const char* transferSyntaxes[] = {
 #endif
 
 /* initialize asscociation parameters, i.e. create an instance of T_ASC_Parameters*. */
-    cond = ASC_createAssociationParameters(&params, _maxReceivePDULength);
+    cond = ASC_createAssociationParameters(&params, _maxReceivePDULength, _acse_timeout);
 	DimseCondition::dump(cond);
     if (cond.bad()) {
         DimseCondition::dump(cond);
@@ -340,9 +342,10 @@ static const char* transferSyntaxes[] = {
 	/* Figure out the presentation addresses and copy the */
 	/* corresponding values into the association parameters.*/
 	gethostname(localHost, sizeof(localHost) - 1);
-	sprintf(peerHost, "%s:%d", opt_peer, (int)opt_port);
+	// Address formatting and dual-stack DNS fallback are application policy.
 	//NSLog(@"peer host: %s", peerHost);
-	ASC_setPresentationAddresses(params, localHost, peerHost);
+	cond = HorosDIMSESetPeerAddress(params, localHost, opt_peer, (int)opt_port);
+            if (cond.bad()) [[NSException exceptionWithName:@"DICOM Network Failure" reason:[NSString stringWithUTF8String:cond.text()] userInfo:nil] raise];
 	
 	/* Set the presentation contexts which will be negotiated */
     /* when the network connection will be established */
@@ -371,7 +374,7 @@ static const char* transferSyntaxes[] = {
 	if (!cond.bad()) {
 		if (_verbose)
 			printf("Requesting Association\n");
-		cond = ASC_requestAssociation(net, params, &assoc);
+		cond = HorosDIMSERequestAssociation(net, params, &assoc);
 		if (cond.bad()) {
 			if (cond == DUL_ASSOCIATIONREJECTED)
 			{

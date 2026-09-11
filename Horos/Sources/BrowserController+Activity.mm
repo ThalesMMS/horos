@@ -88,6 +88,47 @@
 
 @implementation ThreadsTableView
 
+- (NSArray *)accessibilityRows
+{
+    NSMutableArray *rows = [NSMutableArray array];
+    for (NSInteger index = 0; index < self.numberOfRows; ++index)
+    {
+        ThreadCell *cell = [(id)self.delegate tableView:self dataCellForTableColumn:self.tableColumns.firstObject row:index];
+        if (![cell isKindOfClass:ThreadCell.class]) continue;
+        if (!cell.activityAccessibilityRow)
+            cell.activityAccessibilityRow = [NSAccessibilityElement accessibilityElementWithRole:NSAccessibilityRowRole
+                frame:NSZeroRect label:nil parent:self];
+        NSAccessibilityElement *row = cell.activityAccessibilityRow;
+        row.accessibilityIndex = index;
+        row.accessibilityEnabled = YES;
+        row.accessibilityFrame = NSAccessibilityFrameInView(self, [self rectOfRow:index]);
+        row.accessibilityLabel = cell.thread.name ?: NSLocalizedString(@"Unspecified Task", nil);
+        row.accessibilityHelp = cell.thread.status;
+        NSMutableArray *controls = [NSMutableArray array];
+        if (cell.cancelButton && !cell.cancelButton.hidden) {
+            cell.cancelButton.accessibilityParent = row;
+            [controls addObject:cell.cancelButton];
+        }
+        if (cell.progressIndicator && !cell.progressIndicator.hidden) {
+            cell.progressIndicator.accessibilityParent = row;
+            [controls addObject:cell.progressIndicator];
+        }
+        row.accessibilityChildren = controls;
+        [rows addObject:row];
+    }
+    return rows;
+}
+
+- (NSArray *)accessibilityChildren { return self.accessibilityRows; }
+- (NSArray *)accessibilityVisibleRows
+{
+    NSRect visible = NSAccessibilityFrameInView(self, self.visibleRect);
+    NSMutableArray *rows = [NSMutableArray array];
+    for (NSAccessibilityElement *row in self.accessibilityRows)
+        if (NSIntersectsRect(visible, row.accessibilityFrame)) [rows addObject:row];
+    return rows;
+}
+
 -(void)selectRowIndexes:(NSIndexSet*)indexes byExtendingSelection:(BOOL)extend {
 }
 
@@ -181,8 +222,10 @@ static NSString* const BrowserActivityHelperContext = @"BrowserActivityHelperCon
                 }
             }
             
-            if( needToReloadData)
+            if( needToReloadData) {
                 [_browser._activityTableView reloadData];
+                NSAccessibilityPostNotification(_browser._activityTableView, NSAccessibilityLayoutChangedNotification);
+            }
             
             return;
         }
@@ -224,13 +267,20 @@ static NSString* const BrowserActivityHelperContext = @"BrowserActivityHelperCon
     {
         if( [_cells containsObject: cell])
         {
+            NSString *activityName = cell.thread.name ?: NSLocalizedString(@"Unspecified Task", nil);
+            cell.cancelButton.accessibilityElement = YES;
+            cell.progressIndicator.accessibilityElement = YES;
+            cell.cancelButton.accessibilityLabel = [NSString stringWithFormat:NSLocalizedString(@"Cancel %@", nil), activityName];
+            cell.cancelButton.accessibilityHelp = cell.thread.status;
+            cell.progressIndicator.accessibilityLabel = activityName;
+
             // cancel
             if (![cell.cancelButton superview])
                 [tableView addSubview:cell.cancelButton];
 
             NSRect cancelFrame = NSMakeRect(frame.origin.x+frame.size.width-15-5, frame.origin.y+5, 15, 15);
             if (!NSEqualRects(cell.cancelButton.frame, cancelFrame))
-                [cell.cancelButton setFrame:cancelFrame];	
+                [cell.cancelButton setFrame:cancelFrame];
             
             // progress
             if (![cell.progressIndicator superview]) {

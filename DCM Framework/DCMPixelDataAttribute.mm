@@ -1425,28 +1425,79 @@ void info_callback(const char *msg, void *a) {
 }
 
 
+// Rewrites planes into samples: RRR GGG BBB becomes RGB RGB RGB.
+//
+// A JPEG-LS stream encoded with interleave mode "none" carries one scan per
+// component, and CharLS writes them out that way, one plane after another. The
+// other two interleave modes produce samples. Everything downstream expects
+// samples, so the planes are put together here rather than leaving the caller
+// to guess which of the three modes produced the buffer.
+static void HorosInterleaveJPEGLSPlanes( const void *planes, void *samples,
+                                         size_t pixels, int components, size_t bytesPerSample)
+{
+    const unsigned char *source = (const unsigned char*) planes;
+    unsigned char *destination = (unsigned char*) samples;
+    
+    for( int component = 0; component < components; component++)
+    {
+        const unsigned char *plane = source + (size_t) component * pixels * bytesPerSample;
+        unsigned char *sample = destination + (size_t) component * bytesPerSample;
+        
+        for( size_t pixel = 0; pixel < pixels; pixel++)
+        {
+            memcpy( sample, plane, bytesPerSample);
+            plane += bytesPerSample;
+            sample += components * bytesPerSample;
+        }
+    }
+}
+
 - (NSData *)convertJPEGLSToHost:(NSData *)jpegLsData
 {
     NSMutableData* pixelData = nil;
-    
-    unsigned long processors = 0;
-    
-    if( [jpegLsData length] > 512*1024)
-        processors = [[NSProcessInfo processInfo] processorCount] /2;
     
     JlsParameters jlsParameters = {};
     charls::ApiResult readHeaderResult = JpegLsReadHeader([jpegLsData bytes], [jpegLsData length], &jlsParameters, NULL);
     
     if (readHeaderResult == charls::ApiResult::OK)
     {
-        size_t uncompressedLength = jlsParameters.height * jlsParameters.stride;
-        void *uncompressedData = (void*) malloc(uncompressedLength);
+        // CharLS answers a header with the stride of one plane when the stream
+        // is interleave mode "none", and with the stride of a whole line of
+        // samples otherwise. height * stride was therefore a third of the
+        // buffer a three-component "none" stream needs, and CharLS refuses to
+        // decode into a buffer that small: the image came back empty.
+        int components = jlsParameters.components > 0 ? jlsParameters.components : 1;
+        BOOL planar = (jlsParameters.interleaveMode == charls::InterleaveMode::None) && components > 1;
+        
+        size_t uncompressedLength = (size_t) jlsParameters.height * (size_t) jlsParameters.stride;
+        if( planar)
+            uncompressedLength *= (size_t) components;
+        
+        void *uncompressedData = uncompressedLength ? malloc( uncompressedLength) : NULL;
         
         if (uncompressedData)
         {
             charls::ApiResult decodeResult = JpegLsDecode(uncompressedData, uncompressedLength, [jpegLsData bytes], [jpegLsData length], NULL, NULL);
             if (decodeResult != charls::ApiResult::OK)
             {
+                NSLog( @"DCM Framework: JPEG-LS decoding failed (%d) for %d x %d, %d component(s), %d bit(s), interleave %d",
+                      (int) decodeResult, jlsParameters.width, jlsParameters.height,
+                      components, jlsParameters.bitsPerSample, (int) jlsParameters.interleaveMode);
+                free(uncompressedData);
+            }
+            else if( planar)
+            {
+                void *interleaved = malloc( uncompressedLength);
+                if( interleaved)
+                {
+                    size_t bytesPerSample = (jlsParameters.bitsPerSample + 7) / 8;
+                    HorosInterleaveJPEGLSPlanes( uncompressedData, interleaved,
+                                                (size_t) jlsParameters.width * jlsParameters.height,
+                                                components, bytesPerSample);
+                    pixelData = [NSMutableData dataWithBytesNoCopy:interleaved
+                                                            length:uncompressedLength
+                                                      freeWhenDone:YES];
+                }
                 free(uncompressedData);
             }
             else
@@ -2395,11 +2446,77 @@ void info_callback(const char *msg, void *a) {
         NSLog( @"****** NOT ENOUGH MEMORY ! UPGRADE TO OSIRIX 64-BIT");
 }
 
+// Expands one segmented palette lookup table (PS 3.3 C.7.9.2): a stream of
+// segments, each a type and a length, then whatever that type needs. Nothing in
+// the stream is trusted - not the length to stay inside the stream, not the
+// total to stay inside the table.
+static long expandSegmentedPalette( NSData *segmented, unsigned short *table, long entries)
+{
+    if( segmented == nil || table == NULL || entries <= 0)
+        return 0;
+    
+    const unsigned short *stream = (const unsigned short*) [segmented bytes];
+    long count = (long) ([segmented length] / 2);
+    long filled = 0;
+    
+    if( stream == NULL)
+        return 0;
+    
+    for( long at = 0; at + 1 < count && filled < entries; )
+    {
+        int type = NSSwapLittleShortToHost( stream[ at]);
+        long length = NSSwapLittleShortToHost( stream[ at + 1]);
+        at += 2;
+        
+        if( type == 0)          // Discrete: one value per entry
+        {
+            if( at + length > count)
+                length = count - at;
+            
+            for( long i = 0; i < length && filled < entries; i++)
+                table[ filled++] = NSSwapLittleShortToHost( stream[ at + i]);
+            
+            at += length;
+        }
+        else if( type == 1)     // Linear: interpolate from the last entry to one value
+        {
+            if( at >= count)
+                break;
+            
+            long from = filled > 0 ? table[ filled - 1] : 0;
+            long to = NSSwapLittleShortToHost( stream[ at]);
+            
+            for( long i = 1; i <= length && filled < entries; i++)
+                table[ filled++] = (unsigned short) (from + ((to - from) * i) / (length > 0 ? length : 1));
+            
+            at += 1;
+        }
+        else                    // Indirect, and anything else
+        {
+            // Expanding it is not implemented, and carrying on would put every
+            // following segment at the wrong index.
+            NSLog( @"Palette segment type %d is not expanded; %ld entries were read", type, filled);
+            break;
+        }
+    }
+    return filled;
+}
+
+// A pixel value below the first one the table maps takes the first entry, one
+// above the last takes the last: PS 3.3 C.7.6.3.1.5.
+#define ENTRY_FOR( value, first, entries) \
+    ((entries) <= 0 ? 0 : \
+     ((value) - (first) < 0 ? 0 : \
+      ((value) - (first) >= (entries) ? (entries) - 1 : (value) - (first))))
+
 - (NSData *)convertPaletteToRGB:(NSData *)data
 {
     BOOL			fSetClut = NO, fSetClut16 = NO;
     unsigned char   *clutRed = nil, *clutGreen = nil, *clutBlue = nil;
     int		clutEntryR = 0, clutEntryG = 0, clutEntryB = 0;
+    // The second value of each descriptor is the pixel value the first entry
+    // stands for. Ignoring it reads every palette from the wrong end.
+    int   clutFirstR = 0, clutFirstG = 0, clutFirstB = 0;
     unsigned short		clutDepthR, clutDepthG, clutDepthB;
     unsigned short	*shortRed = nil, *shortGreen = nil, *shortBlue = nil;
     long height = _rows;
@@ -2419,16 +2536,20 @@ void info_callback(const char *msg, void *a) {
             
             // initialisation
             clutEntryR = clutEntryG = clutEntryB = 0;
+            clutFirstR = clutFirstG = clutFirstB = 0;
             clutDepthR = clutDepthG = clutDepthB = 0;
             
             NSArray *redLUTDescriptor = [_dcmObject attributeArrayWithName:@"RedPaletteColorLookupTableDescriptor"];
             clutEntryR = (unsigned short)[[redLUTDescriptor objectAtIndex:0] intValue];
+            clutFirstR = [[redLUTDescriptor objectAtIndex:1] intValue];
             clutDepthR = (unsigned short)[[redLUTDescriptor objectAtIndex:2] intValue];
             NSArray *greenLUTDescriptor = [_dcmObject attributeArrayWithName:@"GreenPaletteColorLookupTableDescriptor"];
             clutEntryG = (unsigned short)[[greenLUTDescriptor objectAtIndex:0] intValue];
+            clutFirstG = [[greenLUTDescriptor objectAtIndex:1] intValue];
             clutDepthG = (unsigned short)[[greenLUTDescriptor objectAtIndex:2] intValue];
             NSArray *blueLUTDescriptor = [_dcmObject attributeArrayWithName:@"BluePaletteColorLookupTableDescriptor"];
             clutEntryB = (unsigned short)[[blueLUTDescriptor objectAtIndex:0] intValue];
+            clutFirstB = [[blueLUTDescriptor objectAtIndex:1] intValue];
             clutDepthB = (unsigned short)[[blueLUTDescriptor objectAtIndex:2] intValue];
             
             if( clutEntryR > 256) NSLog(@"R-Palette > 256");
@@ -2447,187 +2568,26 @@ void info_callback(const char *msg, void *a) {
                 //NSLog(@"Segmented LUT");
                 if (clutDepthR == 16  && clutDepthG == 16  && clutDepthB == 16)
                 {
-                    long			length, xx, xxindex, jj;
+                    // A 16-bit pixel can be 65535, which is one past the end of
+                    // 65535 entries. And a segmented table fills only as far as its
+                    // segments go, so the rest has to be something rather than
+                    // whatever malloc handed back.
+                    shortRed = (unsigned short*) calloc( 65536L, sizeof( unsigned short));
+                    shortGreen = (unsigned short*) calloc( 65536L, sizeof( unsigned short));
+                    shortBlue = (unsigned short*) calloc( 65536L, sizeof( unsigned short));
                     
-                    shortRed = (unsigned short*) malloc( 65535L * sizeof( unsigned short));
-                    shortGreen = (unsigned short*) malloc( 65535L * sizeof( unsigned short));
-                    shortBlue = (unsigned short*) malloc( 65535L * sizeof( unsigned short));
+                    // The three streams are expanded by one piece of code that
+                    // trusts neither a segment's length to stay inside the stream
+                    // nor the total to stay inside the table. What was here was
+                    // written out three times; it read a length and then that many
+                    // values without looking at how long the stream was, and wrote
+                    // them wherever the running index had reached.
+                    long filled = expandSegmentedPalette( segmentedRedData, shortRed, 65536L);
+                    expandSegmentedPalette( [_dcmObject attributeValueWithName:@"SegmentedGreenPaletteColorLookupTableData"], shortGreen, 65536L);
+                    expandSegmentedPalette( [_dcmObject attributeValueWithName:@"SegmentedBluePaletteColorLookupTableData"], shortBlue, 65536L);
                     
-                    // extract the RED palette clut data
-                    val = (unsigned short *)[segmentedRedData bytes];
-                    if (val != NULL)
-                    {
-                        unsigned short  *ptrs =  (unsigned short*) val;
-                        nbVal = [segmentedRedData length] / 2;
-                        
-                        //NSLog(@"red");
-                        
-                        xxindex = 0;
-                        for( jj = 0; jj < nbVal;jj++)
-                        {
-                            int type = NSSwapLittleShortToHost(ptrs[jj]);
-                            //NSLog(@"Type: %d", type);
-                            switch(type)
-                            {
-                                case 0:	// Discrete
-                                    jj++;
-                                    length = NSSwapLittleShortToHost(ptrs[jj]);
-                                    jj++;
-                                    for( xx = xxindex; xxindex < xx + length; xxindex++)
-                                    {
-                                        unsigned short pixel = NSSwapLittleShortToHost(ptrs[ jj++]);
-                                        shortRed[ xxindex] = pixel;
-                                        //if( xxindex < 256) NSLog(@"Type: %d  pixel:%d, swapped: %d", shortRed[ xxindex], NSSwapLittleShortToHost(shortRed[ xxindex]));
-                                    }
-                                    jj--;
-                                    break;
-                                    
-                                case 1:	// Linear
-                                    jj++;
-                                    length = NSSwapLittleShortToHost(ptrs[jj]);
-                                    for( xx = xxindex; xxindex < xx + length; xxindex++)
-                                    {
-                                        unsigned short pixel = NSSwapLittleShortToHost(ptrs[ jj + 1]);
-                                        shortRed[ xxindex] = shortRed[ xx-1] + ((pixel - shortRed[ xx-1]) * (1+xxindex - xx)) / (length);
-                                        //if( xxindex < 256) NSLog(@"%d", shortRed[ xxindex]);
-                                    }
-                                    jj ++;
-                                    break;
-                                    
-                                case 2: // Indirect
-                                    NSLog(@"indirect not supported");
-                                    jj++;
-                                    length = NSSwapLittleShortToHost(ptrs[jj]);
-                                    
-                                    jj += 2;
-                                    break;
-                                    
-                                default:
-                                    NSLog(@"Error, Error, Horos will soon crash...");
-                                    break;
-                            }
-                        }
-                        found16 = YES; 	// this is used to let us know we have to look for the other element */
-                        //NSLog(@"%d", xxindex);
-                    }//endif
-                    
-                    // extract the GREEN palette clut data
-                    NSMutableData *segmentedGreenData = [_dcmObject attributeValueWithName:@"SegmentedGreenPaletteColorLookupTableData"];
-                    val = (unsigned short *)[segmentedGreenData bytes];
-                    if (val != NULL)
-                    {
-                        unsigned short  *ptrs =  (unsigned short*) val;
-                        nbVal = [segmentedGreenData length] / 2;
-                        
-                        //NSLog(@"green");
-                        
-                        xxindex = 0;
-                        for( jj = 0; jj < nbVal; jj++)
-                        {
-                            int type = NSSwapLittleShortToHost(ptrs[jj]);
-                            //NSLog(@"Green Type: %d", type);
-                            switch(type)
-                            {
-                                case 0:	// Discrete
-                                    jj++;
-                                    length = NSSwapLittleShortToHost(ptrs[jj]);
-                                    jj++;
-                                    for( xx = xxindex; xxindex < xx + length; xxindex++)
-                                    {
-                                        unsigned short pixel = NSSwapLittleShortToHost(ptrs[ jj++]);
-                                        shortGreen[ xxindex] = pixel;
-                                        //if( xxindex < 256) NSLog(@"%d", shortGreen[ xxindex]);
-                                    }
-                                    jj--;
-                                    break;
-                                    
-                                case 1:	// Linear
-                                    jj++;
-                                    length = NSSwapLittleShortToHost(ptrs[jj]);
-                                    for( xx = xxindex; xxindex < xx + length; xxindex++)
-                                    {
-                                        unsigned short pixel = NSSwapLittleShortToHost(ptrs[ jj + 1]);
-                                        shortGreen[ xxindex] = shortGreen[ xx-1] + ((pixel - shortGreen[ xx-1]) * (1+xxindex - xx)) / (length);
-                                        //	if( xxindex < 256) NSLog(@"%d", shortGreen[ xxindex]);
-                                    }
-                                    jj ++;
-                                    break;
-                                    
-                                case 2: // Indirect
-                                    NSLog(@"indirect not supported");
-                                    jj++;
-                                    length = NSSwapLittleShortToHost(ptrs[jj]);
-                                    
-                                    jj += 2;
-                                    break;
-                                    
-                                default:
-                                    NSLog(@"Error, Error, Horos will soon crash...");
-                                    break;
-                            }
-                        }
-                        found16 = YES; 	// this is used to let us know we have to look for the other element
-                        //NSLog(@"%d", xxindex);
-                    }//endif
-                    
-                    // extract the BLUE palette clut data
-                    NSMutableData *segmentedBlueData = [_dcmObject attributeValueWithName:@"SegmentedBluePaletteColorLookupTableData"];
-                    val = (unsigned short *)[segmentedBlueData  bytes];
-                    if (val != NULL)
-                    {
-                        unsigned short  *ptrs =  (unsigned short*) val;
-                        nbVal = [segmentedBlueData length] / 2;
-                        
-                        //NSLog(@"blue");
-                        
-                        xxindex = 0;
-                        for( jj = 0; jj < nbVal; jj++)
-                        {
-                            int type = NSSwapLittleShortToHost(ptrs[jj]);
-                            //NSLog(@"Blue Type: %d", type);
-                            switch(type)
-                            {
-                                case 0:	// Discrete
-                                    jj++;
-                                    length = NSSwapLittleShortToHost(ptrs[jj]);
-                                    jj++;
-                                    for( xx = xxindex; xxindex < xx + length; xxindex++)
-                                    {
-                                        unsigned short pixel = NSSwapLittleShortToHost(ptrs[ jj++]);
-                                        shortBlue[ xxindex] = pixel;
-                                        //			if( xxindex < 256) NSLog(@"%d", shortBlue[ xxindex]);
-                                    }
-                                    jj--;
-                                    break;
-                                    
-                                case 1:	// Linear
-                                    jj++;
-                                    length = NSSwapLittleShortToHost(ptrs[jj]);
-                                    for( xx = xxindex; xxindex < xx + length; xxindex++)
-                                    {
-                                        unsigned short pixel = NSSwapLittleShortToHost(ptrs[ jj + 1]);
-                                        shortBlue[ xxindex] = shortBlue[ xx-1] + ((pixel - shortBlue[ xx-1]) * (xxindex - xx + 1)) / (length);
-                                        //if( xxindex < 256) NSLog(@"%d", shortBlue[ xxindex]);
-                                    }
-                                    jj ++;
-                                    break;
-                                    
-                                case 2: // Indirect
-                                    NSLog(@"indirect not supported");
-                                    jj++;
-                                    length = NSSwapLittleShortToHost(ptrs[jj]);
-                                    
-                                    jj += 2;
-                                    break;
-                                    
-                                default:
-                                    NSLog(@"Error, Error, Horos will soon crash...");
-                                    break;
-                            }
-                        }
-                        found16 = YES; 	// this is used to let us know we have to look for the other element
-                        //NSLog(@"%d", xxindex);
-                    }//endif
+                    if( filled > 0)
+                        found16 = YES;
                     /*
                      for( jj = 0; jj < 65535; jj++)
                      {
@@ -2646,98 +2606,104 @@ void info_callback(const char *msg, void *a) {
                     NSLog(@"Dont know this kind of DICOM CLUT...");
                 }
             } //end segmented
-            // EXTRACT THE PALETTE data only if there is 256 entries and depth is 16 bits
-            else if (clutDepthR == 16  && clutDepthG == 16  && clutDepthB == 16)
+            // NOT SEGMENTED
+            //
+            // Three tables, read the same way, because they are the same thing in
+            // three colours. What was here read the blue table out of the green
+            // attribute - so every image came back with blue equal to green, and an
+            // object with a blue table and no green one dereferenced a null pointer
+            // - and it turned a 16-bit entry into 8 bits by dividing by 256, which
+            // is only right when the entries really use all sixteen. A nuclear
+            // medicine palette that stores 0-255 in 16-bit words, which is common,
+            // came out entirely black.
+            else if( (clutDepthR == 16 && clutDepthG == 16 && clutDepthB == 16) ||
+                     (clutDepthR == 8 && clutDepthG == 8 && clutDepthB == 8))
             {
-                //			NSLog(@"16 bit PALETTE");
-                NSData *redCLUT = [_dcmObject attributeValueWithName:@"RedPaletteColorLookupTableData"];
-                if (redCLUT) {
-                    if (clutEntryR == 0)
-                        clutEntryR = (int)[redCLUT length] / 2;
+                NSString *names[ 3] = { @"RedPaletteColorLookupTableData",
+                                        @"GreenPaletteColorLookupTableData",
+                                        @"BluePaletteColorLookupTableData"};
+                unsigned char *tables[ 3] = { clutRed, clutGreen, clutBlue};
+                int *counts[ 3] = { &clutEntryR, &clutEntryG, &clutEntryB};
+                unsigned short depths[ 3] = { clutDepthR, clutDepthG, clutDepthB};
+                unsigned short raw[ 3][ 65536];
+                int read[ 3] = { 0, 0, 0};
+                unsigned short largest = 0;
+                
+                for( int c = 0; c < 3; c++)
+                {
+                    DCMAttribute *table = [_dcmObject attributeWithName: names[ c]];
+                    if( table == nil)
+                        continue;
                     
-                    //NSLog(@"Red CLUT length: %d %d ", clutEntryR, lutLength);
-                    unsigned short  *ptrs =  (unsigned short*) [redCLUT bytes];
-                    for (j = 0; j < clutEntryR; j++, ptrs++) {
-                        clutRed [j] = (int) (NSSwapLittleShortToHost(*ptrs)/256);
+                    if( [table valueMultiplicity] > 1)
+                    {
+                        // Some objects arrive parsed into numbers rather than bytes.
+                        NSArray *values = [table values];
+                        int wanted = *counts[ c] > 0 ? *counts[ c] : (int) values.count;
+                        if( wanted > (int) values.count) wanted = (int) values.count;
+                        if( wanted > 65536) wanted = 65536;
+                        
+                        for( int j = 0; j < wanted; j++)
+                            raw[ c][ j] = (unsigned short) [[values objectAtIndex: j] intValue];
+                        read[ c] = wanted;
                     }
-                    found = YES; 	// this is used to let us know we have to look for the other element
-                }//endif red
-                
-                // extract the GREEN palette clut data
-                NSData *greenCLUT = [_dcmObject attributeValueWithName:@"GreenPaletteColorLookupTableData"];
-                if (greenCLUT) {
-                    if (clutEntryG == 0)
-                        clutEntryG = (int)[greenCLUT length] / 2;
-                    unsigned short  *ptrs =  (unsigned short*) [greenCLUT bytes];
-                    for (j = 0; j < clutEntryG; j++, ptrs++) clutGreen [j] = (int) (NSSwapLittleShortToHost(*ptrs)/256);
-                }//endif green
-                
-                // extract the BLUE palette clut data
-                NSData *blueCLUT = [_dcmObject attributeValueWithName:@"BluePaletteColorLookupTableData"];
-                if (blueCLUT) {
-                    if (clutEntryB == 0)
-                        clutEntryB = (int)[blueCLUT length] / 2;
-                    unsigned short  *ptrs =  (unsigned short*) [blueCLUT bytes];
-                    for (j = 0; j < clutEntryB; j++, ptrs++) clutBlue [j] = (int) (NSSwapLittleShortToHost(*ptrs)/256);
-                } //endif blue
-                
-            }  //end 16 bit
-            
-            // if ...the palette has 256 entries and thus we extract the clut datas
-            
-            else if (clutDepthR == 8  && clutDepthG == 8  && clutDepthB == 8) {
-                NSLog(@"Converting 8 bit LUT. Red LUT: %@", [_dcmObject attributeWithName:@"RedPaletteColorLookupTableData"].description );
-                DCMAttribute *redCLUT = [_dcmObject attributeWithName:@"RedPaletteColorLookupTableData"];
-                //NSData *redCLUT = [_dcmObject attributeValueWithName:@"RedPaletteColorLookupTableData"];
-                if (redCLUT) {
-                    // in case we have an array rather than NSData
-                    if ([redCLUT valueMultiplicity] > 1) {
-                        NSArray *lut = [redCLUT values];
-                        for (j = 0; j < clutEntryR; j++) clutRed [j] = (int) [[lut objectAtIndex:j] intValue];
-                        found = YES;
-                    }
-                    else{
-                        unsigned char  *ptrs =  (unsigned char*) [[redCLUT value] bytes];
-                        for (j = 0; j < clutEntryR; j++, ptrs++) clutRed [j] = (int) (*ptrs);
-                        found = YES; 	// this is used to let us know we have to look for the other element
-                    }
-                }
-                
-                // extract the GREEN palette clut data
-                DCMAttribute *greenCLUT = [_dcmObject attributeWithName:@"GreenPaletteColorLookupTableData"];
-                //NSData *greenCLUT = [_dcmObject attributeValueWithName:@"GreenPaletteColorLookupTableData"];
-                if (greenCLUT) {
-                    // in case we have an array rather than NSData
-                    if ([greenCLUT valueMultiplicity] > 1) {
-                        NSArray *lut = [greenCLUT values];
-                        for (j = 0; j < clutEntryG; j++) clutGreen [j] = (int) [[lut objectAtIndex:j] intValue];
-                        found = YES;
-                    }
-                    else{
-                        unsigned char  *ptrs =  (unsigned char*) [[greenCLUT value] bytes];
-                        for (j = 0; j < clutEntryG; j++, ptrs++) clutGreen [j] = (int) (*ptrs);
-                        found = YES; 	// this is used to let us know we have to look for the other element
-                    }
-                }
-                
-                // extract the BLUE palette clut data
-                DCMAttribute *blueCLUT = [_dcmObject attributeWithName:@"BluePaletteColorLookupTableData"];
-                //NSData *blueCLUT = [_dcmObject attributeValueWithName:@"BluePaletteColorLookupTableData"];
-                if (blueCLUT) {
-                    // in case we have an array rather than NSData
-                    if ([blueCLUT valueMultiplicity] > 1) {
-                        NSArray *lut = [blueCLUT values];
-                        for (j = 0; j < clutEntryB; j++) clutBlue [j] = (int) [[lut objectAtIndex:j] intValue];
-                        found = YES;
-                    }
-                    else{
-                        unsigned char  *ptrs =  (unsigned char*) [[greenCLUT value] bytes];
-                        for (j = 0; j < clutEntryB; j++, ptrs++) clutBlue [j] = (int) (*ptrs);
-                        found = YES; 	// this is used to let us know we have to look for the other element
+                    else
+                    {
+                        NSData *data = [table value];
+                        if( data == nil)
+                            continue;
+                        
+                        if( depths[ c] == 16)
+                        {
+                            int available = (int) ([data length] / 2);
+                            int wanted = *counts[ c] > 0 ? *counts[ c] : available;
+                            if( wanted > available) wanted = available;
+                            if( wanted > 65536) wanted = 65536;
+                            
+                            const unsigned short *entries = (const unsigned short*) [data bytes];
+                            for( int j = 0; j < wanted; j++)
+                                raw[ c][ j] = NSSwapLittleShortToHost( entries[ j]);
+                            read[ c] = wanted;
+                        }
+                        else
+                        {
+                            int available = (int) [data length];
+                            int wanted = *counts[ c] > 0 ? *counts[ c] : available;
+                            if( wanted > available) wanted = available;
+                            if( wanted > 65536) wanted = 65536;
+                            
+                            const unsigned char *entries = (const unsigned char*) [data bytes];
+                            for( int j = 0; j < wanted; j++)
+                                raw[ c][ j] = entries[ j];
+                            read[ c] = wanted;
+                        }
                     }
                     
+                    for( int j = 0; j < read[ c]; j++)
+                        if( raw[ c][ j] > largest) largest = raw[ c][ j];
                 }
-                // let the rest of the routine know that it should set the clut
+                
+                // The descriptor says how wide an entry is, not how much of it is
+                // used. What the tables actually contain does.
+                BOOL eightBitValues = (largest <= 255);
+                
+                for( int c = 0; c < 3; c++)
+                {
+                    for( int j = 0; j < read[ c]; j++)
+                        tables[ c][ j] = eightBitValues ? (unsigned char) raw[ c][ j]
+                                                        : (unsigned char) (raw[ c][ j] >> 8);
+                    
+                    if( read[ c] > 0)
+                    {
+                        *counts[ c] = read[ c];
+                        found = YES;
+                    }
+                }
+            }
+            else
+            {
+                NSLog( @"Palette color lookup tables of %d/%d/%d bits are not read",
+                      (int) clutDepthR, (int) clutDepthG, (int) clutDepthB);
             }
             if (found) fSetClut = YES;
             if (found16) fSetClut16 = YES;
@@ -2752,12 +2718,24 @@ void info_callback(const char *msg, void *a) {
                 unsigned char   *bufPtr = (unsigned char*) [data bytes];
                 unsigned short	*bufPtr16 = (unsigned short*) [data bytes];
                 unsigned char   *tmpImage;
-                long			totSize, pixelR, pixelG, pixelB, x, y;
-                int i= 0;
+                long      totSize, pixelR, pixelG, pixelB;
+                long i = 0;
                 totSize = (long) ((long) height * (long) realwidth * 3L);
                 //tmpImage = malloc( totSize);
                 rgbData = [NSMutableData dataWithLength:totSize];
                 tmpImage = (unsigned char*) [rgbData mutableBytes];
+                
+                // An object can declare a picture larger than the pixels it
+                // carries. Under AddressSanitizer, a frame half the length of its
+                // own Rows x Columns read past the end of the buffer.
+                long available = (long) ([data length] / (_pixelDepth == 16 ? 2 : 1));
+                long pixels = (long) height * (long) realwidth;
+                if( available < pixels)
+                {
+                    NSLog( @"Palette pixel data holds %ld of the %ld pixels the object declares",
+                          available, pixels);
+                    pixels = available;
+                }
                 
                 //if( _pixelDepth != 8) NSLog(@"Palette with a non-8 bit image??? : %d ", _pixelDepth);
                 //NSLog(@"height; %d  width %d totSize: %d, length: %d", height, realwidth, totSize, [data length]);
@@ -2765,36 +2743,41 @@ void info_callback(const char *msg, void *a) {
                 {
                     case 8:
                         
-                        for( y = 0; y < height; y++)
+                        for( i = 0; i < pixels; i++)
                         {
-                            for( x = 0; x < width; x++)
                             {
-                                pixelR = pixelG = pixelB = bufPtr[y*width + x];
+                                long value = bufPtr[ i];
                                 
-                                if( pixelR > clutEntryR) {	pixelR = clutEntryR-1;}
-                                if( pixelG > clutEntryG) {	pixelG = clutEntryG-1;}
-                                if( pixelB > clutEntryB) {	pixelB = clutEntryB-1;}
+                                pixelR = ENTRY_FOR( value, clutFirstR, clutEntryR);
+                                pixelG = ENTRY_FOR( value, clutFirstG, clutEntryG);
+                                pixelB = ENTRY_FOR( value, clutFirstB, clutEntryB);
                                 
-                                tmpImage[y*width*3 + x*3 + 0] = clutRed[ pixelR];
-                                tmpImage[y*width*3 + x*3 + 1] = clutGreen[ pixelG];
-                                tmpImage[y*width*3 + x*3 + 2] = clutBlue[ pixelB];
+                                tmpImage[i*3 + 0] = clutRed[ pixelR];
+                                tmpImage[i*3 + 1] = clutGreen[ pixelG];
+                                tmpImage[i*3 + 2] = clutBlue[ pixelB];
                             }
                         }
                         
                         break;
                         
                     case 16:
-                        i = 0;
-                        for( y = 0; y < height; y++)
+                        for( i = 0; i < pixels; i++)
                         {
-                            for( x = 0; x < width; x++)
                             {
-                                pixelR = pixelG = pixelB = NSSwapBigShortToHost( bufPtr16[i]);
+                                // The pixels arrive in host order, like every other
+                                // image here. Swapping them asked for entry 256 when
+                                // the pixel was 1, which is past the end of a
+                                // 256-entry palette: the whole picture came back
+                                // black. Neither was the value clamped to the table.
+                                long value = bufPtr16[i];
+                                
+                                pixelR = ENTRY_FOR( value, clutFirstR, clutEntryR);
+                                pixelG = ENTRY_FOR( value, clutFirstG, clutEntryG);
+                                pixelB = ENTRY_FOR( value, clutFirstB, clutEntryB);
+                                
                                 tmpImage[i*3 + 0] = clutRed[ pixelR];
                                 tmpImage[i*3 + 1] = clutGreen[ pixelG];
                                 tmpImage[i*3 + 2] = clutBlue[ pixelB];
-                                i++;
-                                
                             }
                         }
                         break;
@@ -2804,35 +2787,50 @@ void info_callback(const char *msg, void *a) {
         }
         
         if( fSetClut16){
-            unsigned short	*bufPtr = (unsigned short*) [data bytes];
-            unsigned short   *tmpImage;
-            long			totSize, x, y, ii;
+            unsigned short  *bufPtr = (unsigned short*) [data bytes];
+            unsigned char   *tmpImage;
+            long      totSize;
             
-            unsigned short pixel;
+            long pixel;
             
-            totSize = (long) ((long) _rows * (long) _columns * 3L * 2);
+            // Three bytes per pixel, like the other palette. Nothing downstream can
+            // tell which of the two ran, and the display path reads eight bits per
+            // sample, so both have to produce the same thing.
+            totSize = (long) ((long) _rows * (long) _columns * 3L);
             rgbData = [NSMutableData dataWithLength:totSize];
-            tmpImage = (unsigned short *)[rgbData mutableBytes];
+            tmpImage = (unsigned char *)[rgbData mutableBytes];
             
             if( depth != 16) NSLog(@"Segmented Palette with a non-16 bit image???");
             
-            ii = height * realwidth;
-            
-            for( y = 0; y < height; y++)
+            long available = (long) ([data length] / 2);
+            long pixels = (long) height * (long) realwidth;
+            if( available < pixels)
             {
-                for( x = 0; x < width; x++)
-                {
-                    //pixel = NSSwapLittleShortToHost(bufPtr[y*width + x]);
-                    pixel = (bufPtr[y*width + x]);
-                    tmpImage[y*width*3 + x*3 + 0] = shortRed[pixel];
-                    tmpImage[y*width*3 + x*3 + 1] = shortGreen[ pixel];
-                    tmpImage[y*width*3 + x*3 + 2] = shortBlue[ pixel];
-                    //if ((y*width + x) % 5000 == 0)
-                    //	NSLog(@"y: %d x: %d red: %d  green: %d  blue: %d", y , x, shortRed[pixel], shortGreen[ pixel],shortBlue[ pixel]);
-                }
+                NSLog( @"Segmented palette pixel data holds %ld of the %ld pixels the object declares",
+                      available, pixels);
+                pixels = available;
             }
             
+            unsigned short largest = 0;
+            for( long entry = 0; entry < 65536; entry++)
+            {
+                if( shortRed[ entry] > largest) largest = shortRed[ entry];
+                if( shortGreen[ entry] > largest) largest = shortGreen[ entry];
+                if( shortBlue[ entry] > largest) largest = shortBlue[ entry];
+            }
+            BOOL eightBitValues = (largest <= 255);
             
+            for( long index = 0; index < pixels; index++)
+            {
+                long value = bufPtr[ index];
+                
+                pixel = ENTRY_FOR( value, clutFirstR, clutEntryR);
+                tmpImage[index*3 + 0] = eightBitValues ? (unsigned char) shortRed[ pixel] : (unsigned char) (shortRed[ pixel] >> 8);
+                pixel = ENTRY_FOR( value, clutFirstG, clutEntryG);
+                tmpImage[index*3 + 1] = eightBitValues ? (unsigned char) shortGreen[ pixel] : (unsigned char) (shortGreen[ pixel] >> 8);
+                pixel = ENTRY_FOR( value, clutFirstB, clutEntryB);
+                tmpImage[index*3 + 2] = eightBitValues ? (unsigned char) shortBlue[ pixel] : (unsigned char) (shortBlue[ pixel] >> 8);
+            }
         } //done converting Palette
     } @catch( NSException *localException) {
         rgbData = nil;
@@ -2857,12 +2855,47 @@ void info_callback(const char *msg, void *a) {
     
 }
 
+// One place where a luminance and two chrominance samples become a colour.
+// PS 3.3 C.7.6.3.1.2: YBR_FULL uses the whole 0-255 range for luminance, and
+// YBR_PARTIAL reserves 16-235 for it, which is the same matrix with the range
+// scaled. Fixed point, fifteen fractional bits.
+static inline void ybrToRGB( int luminance, int blueDifference, int redDifference,
+                             BOOL partialRange,
+                             unsigned char *red, unsigned char *green, unsigned char *blue)
+{
+    int r, g, b;
+    
+    blueDifference -= 128;
+    redDifference -= 128;
+    
+    if( partialRange)
+    {
+        luminance -= 16;
+        r = 38142 * luminance + 52298 * redDifference;
+        g = 38142 * luminance - 26640 * redDifference - 12845 * blueDifference;
+        b = 38142 * luminance + 66093 * blueDifference;
+    }
+    else
+    {
+        r = 32768 * luminance + 45941 * redDifference;
+        g = 32768 * luminance - 23401 * redDifference - 11277 * blueDifference;
+        b = 32768 * luminance + 58065 * blueDifference;
+    }
+    
+    r = (r + 16384) >> 15;
+    g = (g + 16384) >> 15;
+    b = (b + 16384) >> 15;
+    
+    *red   = (unsigned char) (r < 0 ? 0 : (r > 255 ? 255 : r));
+    *green = (unsigned char) (g < 0 ? 0 : (g > 255 ? 255 : g));
+    *blue  = (unsigned char) (b < 0 ? 0 : (b > 255 ? 255 : b));
+}
+
 - (NSData *) convertYBrToRGB:(NSData *)ybrData kind:(NSString *)theKind isPlanar:(BOOL)isPlanar
 {
-    long			loop, size;
-    unsigned char		*pYBR, *pRGB;
-    unsigned char		*theRGB;
-    int			y, y1, r;
+    long      loop, size;
+    unsigned char   *pRGB;
+    unsigned char   *theRGB;
     NSMutableData *rgbData;
     
     //  NSLog(@"convertYBrToRGB:%@ isPlanar:%d", theKind, isPlanar);
@@ -2881,202 +2914,66 @@ void info_callback(const char *msg, void *a) {
     if (theRGB == nil) return nil;
     pRGB = theRGB;
     size = (long) _rows * (long) _columns;
-    // int kind = 0;
+    const BOOL partialRange = [theKind hasPrefix: @"YBR_PARTIAL"];
+    const BOOL subsampled = [theKind hasSuffix: @"_422"] || [theKind hasSuffix: @"_420"];
     
-    int32_t R, G, B;
-    uint8_t a;
-    uint8_t b;
-    uint8_t c;
-    
-    switch (isPlanar)
+    if( isPlanar)
     {
-        case 0 : // all pixels stored one after the other
-            if ([theKind isEqualToString:@"YBR_FULL"])
-            {
-                // loop on the pixels of the image
-                for (loop = 0, pYBR = (unsigned char *)[ybrData bytes]; loop < size; loop++, pYBR += 3)
-                {
-                    // get the Y, B and R channels from the original image
-                    //            y = (int) pYBR [0];
-                    //            b = (int) pYBR [1];
-                    //            r = (int) pYBR [2];
-                    a = (int) pYBR [0];
-                    b = (int) pYBR [1];
-                    c = (int) pYBR [2];
-                    
-                    R = 38142 *(a-16) + 52298 *(c -128);
-                    G = 38142 *(a-16) - 26640 *(c -128) - 12845 *(b -128);
-                    B = 38142 *(a-16) + 66093 *(b -128);
-                    
-                    R = (R+16384)>>15;
-                    G = (G+16384)>>15;
-                    B = (B+16384)>>15;
-                    
-                    if (R < 0)   R = 0;
-                    if (G < 0)   G = 0;
-                    if (B < 0)   B = 0;
-                    if (R > 255) R = 255;
-                    if (G > 255) G = 255;
-                    if (B > 255) B = 255;
-                    
-                    
-                    // red
-                    *pRGB = R;	//(unsigned char) (y + (1.402 *  r));
-                    pRGB++;	// move the ptr to the Green
-                    
-                    // green
-                    *pRGB = G;	//(unsigned char) (y - (0.344 * b) - (0.714 * r));
-                    pRGB++;	// move the ptr to the Blue
-                    
-                    // blue
-                    *pRGB = B;	//(unsigned char) (y + (1.772 * b));
-                    pRGB++;	// move the ptr to the next Red
-                    
-                } // for ...loop on the elements of the image to convert
-            }
-            else if ([theKind isEqualToString:@"YBR_FULL_422"])
-            {
-                // loop on the pixels of the image
-                pYBR = (unsigned char *) [ybrData bytes];
-                
-                int yy, x;
-                for( yy = 0; yy < _rows; yy++)	//_rows/2
-                {
-                    unsigned char	*rr = pRGB;
-                    //			unsigned char	*rr2 = pRGB+3*_columns;
-                    
-                    for( x = 0; x < _columns; x++)
-                    {
-                        y  = (int) pYBR [0];
-                        b = (int) pYBR [1];
-                        r = (int) pYBR [2];
-                        
-                        *(rr) = y;
-                        *(rr+1) = b;
-                        *(rr+2) = r;
-                        
-                        //				*(rr2) = y;
-                        //				*(rr2+1) = b;
-                        //				*(rr2+2) = r;
-                        
-                        pYBR += 3;
-                        rr += 3;
-                        //				rr2 += 3;
-                    }
-                    
-                    //			pRGB += 2*_columns*3;
-                    pRGB += _columns*3;
-                }
-                
-            }
-            else if ([theKind isEqualToString:@"YBR_PARTIAL_422"])
-            {
-                // loop on the pixels of the image
-                for (loop = 0, pYBR = (unsigned char *)[ybrData bytes]; loop < (size / 2); loop++)
-                {
-                    // get the Y, B and R channels from the original image
-                    y  = (int) pYBR [0];
-                    y1 = (int) pYBR [1];
-                    // the Cb and Cr values are sampled horizontally at half the Y rate
-                    b = (int) pYBR [2];
-                    r = (int) pYBR [3];
-                    
-                    // ***** first pixel *****
-                    // red 1
-                    *pRGB = (unsigned char) ((1.1685 * y) + (0.0389 * b) + (1.596 * r));
-                    pRGB++;	// move the ptr to the Green
-                    
-                    // green 1
-                    *pRGB = (unsigned char) ((1.1685 * y) - (0.401 * b) - (0.813 * r));
-                    pRGB++;	// move the ptr to the Blue
-                    
-                    // blue 1
-                    *pRGB = (unsigned char) ((1.1685 * y) + (2.024 * b));
-                    pRGB++;	// move the ptr to the next Red
-                    
-                    
-                    // ***** second pixel *****
-                    // red 2
-                    *pRGB = (unsigned char) ((1.1685 * y1) + (0.0389 * b) + (1.596 * r));
-                    pRGB++;	// move the ptr to the Green
-                    
-                    // green 2
-                    *pRGB = (unsigned char) ((1.1685 * y1) - (0.401 * b) - (0.813 * r));
-                    pRGB++;	// move the ptr to the Blue
-                    
-                    // blue 2
-                    *pRGB = (unsigned char) ((1.1685 * y1) + (2.024 * b));
-                    pRGB++;	// move the ptr to the next Red
-                    
-                    // the Cb and Cr values are sampled horizontally at half the Y rate
-                    pYBR += 4;
-                    
-                } // for ...loop on the elements of the image to convert
-            }  //YBR 422
-            //  } // switch ...kind of YBR
-            break;
-        case 1 : // each plane is stored separately (only allowed for YBR_FULL)
+        // Three planes, one after the other, and only for the full-sampled kinds.
+        const unsigned char *luminance = (const unsigned char*) [ybrData bytes];
+        const unsigned char *blueDifference = luminance + size;
+        const unsigned char *redDifference = blueDifference + size;
+        
+        if( (long) [ybrData length] < size * 3)
         {
-            unsigned char *pY, *pB, *pR;	// ptr to Y, Cb and Cr channels of the original image
-            //      NSLog(@"YBR FULL and planar");
-            // points to the begining of each channel in memory
-            pY = (unsigned char *)[ybrData bytes];
-            pB = (unsigned char *) (pY + size);
-            pR = (unsigned char *) (pB + size);
+            NSLog( @"YBR planar data holds %ld of the %ld bytes the object declares",
+                  (long) [ybrData length], (long) (size * 3));
+            return nil;
+        }
+        
+        for( loop = 0; loop < size; loop++)
+            ybrToRGB( luminance[ loop], blueDifference[ loop], redDifference[ loop],
+                     partialRange, pRGB + loop*3, pRGB + loop*3 + 1, pRGB + loop*3 + 2);
+    }
+    else if( subsampled)
+    {
+        // Y for each of two pixels, then one Cb and one Cr they share.
+        const unsigned char *ybr = (const unsigned char*) [ybrData bytes];
+        long pairs = size / 2;
+        
+        if( (long) [ybrData length] < pairs * 4)
+        {
+            pairs = (long) [ybrData length] / 4;
+            NSLog( @"YBR_422 data holds %ld of the %ld pixel pairs the object declares",
+                  pairs, (long) (size / 2));
+        }
+        
+        for( loop = 0; loop < pairs; loop++)
+        {
+            int first = ybr[ loop*4 + 0], second = ybr[ loop*4 + 1];
+            int blueDifference = ybr[ loop*4 + 2], redDifference = ybr[ loop*4 + 3];
             
-            // loop on the pixels of the image
-            for (loop = 0; loop < size; loop++, pY++, pB++, pR++)
-            {
-                a = (int) *pY;
-                b = (int) *pB;
-                c = (int) *pR;
-                
-                R = 38142 *(a-16) + 52298 *(c -128);
-                G = 38142 *(a-16) - 26640 *(c -128) - 12845 *(b -128);
-                B = 38142 *(a-16) + 66093 *(b -128);
-                
-                R = (R+16384)>>15;
-                G = (G+16384)>>15;
-                B = (B+16384)>>15;
-                
-                if (R < 0)   R = 0;
-                if (G < 0)   G = 0;
-                if (B < 0)   B = 0;
-                if (R > 255) R = 255;
-                if (G > 255) G = 255;
-                if (B > 255) B = 255;
-                
-                
-                // red
-                *pRGB = R;	//(unsigned char) ((int) *pY + (1.402 *  (int) *pR) - 179.448);
-                pRGB++;	// move the ptr to the Green
-                
-                // green
-                *pRGB = G;	//(unsigned char) ((int) *pY - (0.344 * (int) *pB) - (0.714 * (int) *pR) + 135.45);
-                pRGB++;	// move the ptr to the Blue
-                
-                // blue
-                *pRGB = B;	//(unsigned char) ((int) *pY + (1.772 * (int) *pB) - 226.8);
-                pRGB++;	// move the ptr to the next Red
-                
-                
-                //        // red
-                //        *pRGB = (unsigned char) ((int) *pY + (1.402 *  (int) *pR) - 179.448);
-                //        pRGB++;	// move the ptr to the Green
-                //
-                //        // green
-                //        *pRGB = (unsigned char) ((int) *pY - (0.344 * (int) *pB) - (0.714 * (int) *pR) + 135.45);
-                //        pRGB++;	// move the ptr to the Blue
-                //
-                //        // blue
-                //        *pRGB = (unsigned char) ((int) *pY + (1.772 * (int) *pB) - 226.8);
-                //        pRGB++;	// move the ptr to the next Red
-                //
-            } // for ...loop on the elements of the image to convert
-        } // case 1
-            break;
-            
-    } // switch
+            ybrToRGB( first, blueDifference, redDifference, partialRange,
+                     pRGB + loop*6, pRGB + loop*6 + 1, pRGB + loop*6 + 2);
+            ybrToRGB( second, blueDifference, redDifference, partialRange,
+                     pRGB + loop*6 + 3, pRGB + loop*6 + 4, pRGB + loop*6 + 5);
+        }
+    }
+    else
+    {
+        const unsigned char *ybr = (const unsigned char*) [ybrData bytes];
+        long count = size;
+        
+        if( (long) [ybrData length] < size * 3)
+        {
+            count = (long) [ybrData length] / 3;
+            NSLog( @"YBR data holds %ld of the %ld pixels the object declares", count, size);
+        }
+        
+        for( loop = 0; loop < count; loop++)
+            ybrToRGB( ybr[ loop*3], ybr[ loop*3 + 1], ybr[ loop*3 + 2], partialRange,
+                     pRGB + loop*3, pRGB + loop*3 + 1, pRGB + loop*3 + 2);
+    }
     
     return rgbData;
     
@@ -3507,6 +3404,26 @@ void info_callback(const char *msg, void *a) {
     }
 }
 
+- (NSData *)encapsulatedStream
+{
+    if( transferSyntax.isEncapsulated == NO || _framesCreated || [_values count] < 2)
+        return nil;
+
+    NSMutableData *stream = [NSMutableData data];
+
+    // The first item is the basic offset table, which is not part of the
+    // stream; the rest are the stream, in order, split wherever the writer
+    // chose to split it.
+    for( NSUInteger i = 1; i < [_values count]; i++)
+    {
+        NSData *fragment = [_values objectAtIndex: i];
+        if( [fragment isKindOfClass: [NSData class]])
+            [stream appendData: fragment];
+    }
+
+    return [stream length] ? stream : nil;
+}
+
 - (NSData *)decodeFrameAtIndex:(int)index
 {
     [singleThread lock];
@@ -3706,7 +3623,7 @@ void info_callback(const char *msg, void *a) {
             int numberofPlanes = [[_dcmObject attributeValueWithName:@"PlanarConfiguration"] intValue];			
             if (numberofPlanes > 0 && numberofPlanes <= 4)
             {
-                if( [transferSyntax isEqualToTransferSyntax:[DCMTransferSyntax JPEGExtendedTransferSyntax]] || [transferSyntax isEqualToTransferSyntax:[DCMTransferSyntax JPEGLosslessTransferSyntax]] || [transferSyntax isEqualToTransferSyntax:[DCMTransferSyntax JPEG2000LosslessTransferSyntax]] || [transferSyntax isEqualToTransferSyntax:[DCMTransferSyntax JPEG2000LossyTransferSyntax]])
+                if( [transferSyntax isEqualToTransferSyntax:[DCMTransferSyntax JPEGExtendedTransferSyntax]] || [transferSyntax isEqualToTransferSyntax:[DCMTransferSyntax JPEGLosslessTransferSyntax]] || [transferSyntax isEqualToTransferSyntax:[DCMTransferSyntax JPEG2000LosslessTransferSyntax]] || [transferSyntax isEqualToTransferSyntax:[DCMTransferSyntax JPEG2000LossyTransferSyntax]] || [transferSyntax isEqualToTransferSyntax:[DCMTransferSyntax JPEGLSLosslessTransferSyntax]] || [transferSyntax isEqualToTransferSyntax:[DCMTransferSyntax JPEGLSLossyTransferSyntax]])
                 {
                     [_dcmObject setAttributeValues:[NSMutableArray arrayWithObject: [NSNumber numberWithInt: 0]] forName:@"PlanarConfiguration"];
                 }

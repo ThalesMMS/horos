@@ -448,6 +448,20 @@ OFCondition DcmSequenceOfItems::readTagAndLength(DcmInputStream &inStream,
 // ********************************
 
 
+/* Reading a sequence recurses: an item is read by DcmItem::read, which reads a
+ * sequence by DcmSequenceOfItems::read, which reads its items back through here.
+ * Nothing bounded that, so a file that nests sequences deeply enough exhausts the
+ * stack and the process dies - a crash a malformed file can ask for. Two thousand
+ * levels, in a 72 KB file, was enough under AddressSanitizer.
+ *
+ * Real objects nest a handful of levels - an Enhanced object four or five.
+ * The bound is per thread, because parsing happens on several, and it is low
+ * because those threads run on the 512 KB stack an NSThread gets by default:
+ * sixty-four levels of this recursion still exhausted it.
+ */
+#define DCM_MaximumSequenceNesting 16
+static __thread int dcmSequenceNesting = 0;
+
 OFCondition DcmSequenceOfItems::readSubItem(DcmInputStream &inStream,
                                             const DcmTag &newTag,
                                             const Uint32 newLength,
@@ -461,9 +475,21 @@ OFCondition DcmSequenceOfItems::readSubItem(DcmInputStream &inStream,
     OFCondition l_error = makeSubObject(subObject, newTag, newLength);
     if (l_error.good() && (subObject != NULL))
     {
+        if (dcmSequenceNesting >= DCM_MaximumSequenceNesting)
+        {
+            ofConsole.lockCerr() << "DcmSequenceOfItems: sequences nested deeper than "
+                << DCM_MaximumSequenceNesting << " levels; the rest of this object is not read"
+                << endl;
+            ofConsole.unlockCerr();
+            delete subObject;
+            return EC_InvalidStream;
+        }
+
         // inStream.UnsetPutbackMark(); // not needed anymore with new stream architecture
         itemList->insert(subObject, ELP_next);
+        dcmSequenceNesting++;
         l_error = subObject->read(inStream, xfer, glenc, maxReadLength); // read sub-item
+        dcmSequenceNesting--;
         return l_error; // prevent subObject from getting deleted
     }
     else if (l_error == EC_InvalidTag)  // try to recover parsing

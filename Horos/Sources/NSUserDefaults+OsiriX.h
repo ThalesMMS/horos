@@ -43,6 +43,9 @@
 
 #pragma mark General
 
+// Command-line defaults take precedence and must not be copied into saved settings.
+-(BOOL)hasArgumentOverrideForKey:(NSString*)key;
+
 extern NSString* const OsirixDateTimeFormatDefaultsKey;
 +(NSDateFormatter*)dateTimeFormatter;
 +(NSString*)formatDateTime:(NSDate*)date;

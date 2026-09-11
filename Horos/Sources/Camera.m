@@ -166,7 +166,10 @@
 	
     int i = 0;
     for( NSValue *v in croppingPlanes)
+    {
         [xml setObject: [(id) N3PlaneCreateDictionaryRepresentation( [v N3PlaneValue]) autorelease] forKey: [NSString stringWithFormat: @"croppingPlanes %d", i]];
+        i++;
+    }
     
 	[xml setObject:[NSString stringWithFormat:@"%f",[self fusionPercentage]] forKey:@"fusionPercentage"];
 	
@@ -187,11 +190,14 @@
 	wl = [[xml valueForKey:@"wl"] floatValue];
 	ww = [[xml valueForKey:@"ww"] floatValue];
     
+    croppingPlanes = [[NSMutableArray alloc] initWithCapacity:6];
     for( int i = 0; i < 6; i++)
     {
-        N3Plane plane;
-        if( N3PlaneMakeWithDictionaryRepresentation( (CFDictionaryRef) [xml valueForKey: [NSString stringWithFormat: @"croppingPlanes %d", i]], &plane))
-           [croppingPlanes replaceObjectAtIndex: i withObject: [NSValue valueWithN3Plane: plane]];
+        N3Plane plane = N3PlaneInvalid;
+        id representation = [xml objectForKey: [NSString stringWithFormat: @"croppingPlanes %d", i]];
+        if( [representation isKindOfClass: [NSDictionary class]])
+            N3PlaneMakeWithDictionaryRepresentation( (CFDictionaryRef) representation, &plane);
+        [croppingPlanes addObject: [NSValue valueWithN3Plane: plane]];
     }
 	fusionPercentage = [[xml valueForKey:@"fusionPercentage"] floatValue];
 	return self;

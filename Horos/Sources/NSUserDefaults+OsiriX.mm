@@ -46,6 +46,11 @@
 
 #pragma mark General
 
+-(BOOL)hasArgumentOverrideForKey:(NSString*)key {
+    return [[self volatileDomainForName:NSArgumentDomain] objectForKey:key] != nil;
+}
+
+
 NSString* const OsirixDateTimeFormatDefaultsKey = @"DBDateFormat2";
 
 +(NSString*)dateTimeFormat {

@@ -35,9 +35,11 @@
      PURPOSE.
  ============================================================================*/
 #import "WebPortalConnection.h"
+#import "HorosWebPathSafety.h"
 #import "WebPortal.h"
 #import "WebPortal+Email+Log.h"
 #import "WebPortalDatabase.h"
+#import "Horos-Swift.h"
 #import "WebPortalSession.h"
 #import "WebPortalResponse.h"
 #import "WebPortalConnection+Data.h"
@@ -462,18 +464,12 @@ NSString* const SessionDicomCStorePortKey = @"DicomCStorePort"; // NSNumber (int
 	[response.tokens setObject:parameters forKey:@"Request"];
 	
 	// find the name of the requested file
-    NSString *requestedPath = [urlComponenents objectAtIndex:0];
-	// SECURITY: we cannot allow the client to read any file on the hard disk (outside the shared dir), so no ".."
-    //FIXED 20170312: path traversal bug, added extra filtering patterns: https://www.exploit-db.com/exploits/40930/ https://github.com/horosproject/horos/issues/163
-    // TODO: I am convinced the next lines aren't doing what they were supposed to be doing, basically only the last one has any effect since all these lines don't consider the previous changes
-    requestedPath = [[urlComponenents objectAtIndex:0] stringByReplacingOccurrencesOfString:@"../" withString:@""];
-    requestedPath = [[urlComponenents objectAtIndex:0] stringByReplacingOccurrencesOfString:@"/../" withString:@""];
-    requestedPath = [[urlComponenents objectAtIndex:0] stringByReplacingOccurrencesOfString:@"..//" withString:@""];
-    requestedPath = [[urlComponenents objectAtIndex:0] stringByReplacingOccurrencesOfString:@"/../" withString:@""];
-    requestedPath = [[urlComponenents objectAtIndex:0] stringByReplacingOccurrencesOfString:@"/..//" withString:@""];
-    requestedPath = [[urlComponenents objectAtIndex:0] stringByReplacingOccurrencesOfString:@"//.." withString:@""];
-    requestedPath = [[urlComponenents objectAtIndex:0] stringByReplacingOccurrencesOfString:@"//../" withString:@""];
-    
+    NSString *requestedPath = HorosWebRequestPath([urlComponenents objectAtIndex:0]);
+    if (!requestedPath) {
+        response.statusCode = 404;
+        return nil;
+    }
+
     self.requestedPath = requestedPath;
     
 //	NSString* userAgent = [(id)CFHTTPMessageCopyHeaderFieldValue(request, (CFStringRef)@"User-Agent") autorelease];
@@ -497,16 +493,20 @@ NSString* const SessionDicomCStorePortKey = @"DicomCStorePort"; // NSNumber (int
 		#ifndef OSIRIX_LIGHT
         BOOL assigned = false;
         for (NSString *dir in [Horos WeasisCustomizationPaths]) {
-            NSString *path = [dir stringByAppendingPathComponent:[self.requestedPath substringFromIndex:8]];
+            NSString *path = HorosWebFilePath(dir, [self.requestedPath substringFromIndex:8]);
             BOOL isDir;
-            if ([[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDir] && !isDir)
+            if (path && [[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDir] && !isDir)
                 if ((response.data = [NSData dataWithContentsOfFile:path])) {
                     assigned = YES;
                     break;
                 }
         }
-        if (!assigned)
-            response.data = [NSData dataWithContentsOfFile:[[[AppController sharedAppController] weasisBasePath] stringByAppendingPathComponent:self.requestedPath]];
+        if (!assigned) {
+            // The bundled distribution contains a weasis/ subdirectory.
+            NSString *path = HorosWebFilePath([[AppController sharedAppController] weasisBasePath], self.requestedPath);
+            if (path) response.data = [NSData dataWithContentsOfFile:path];
+        }
+        if (!response.data) response.statusCode = 404;
 		#else
 		response.statusCode = 404;
 		#endif
@@ -1170,8 +1170,9 @@ NSString* const SessionDicomCStorePortKey = @"DicomCStorePort"; // NSNumber (int
             if( authenticatedByPlugin == NO && username.length && sha1.length)
             {
                 NSFetchRequest *r = [NSFetchRequest fetchRequestWithEntityName: @"User"];
-                r.predicate = [NSPredicate predicateWithFormat:@"name LIKE[cd] %@", username];
-                self.user = [[self.portal.database.independentContext executeFetchRequest: r error: nil] lastObject];
+                r.predicate = [HorosWebPortalUserLookup predicateForName: username];
+                NSArray *matches = [self.portal.database.independentContext executeFetchRequest: r error: nil];
+                self.user = (WebPortalUser*)[HorosWebPortalUserLookup userAmong: matches forName: username];
                 
                 [self.user convertPasswordToHashIfNeeded];
                 
@@ -1188,7 +1189,19 @@ NSString* const SessionDicomCStorePortKey = @"DicomCStorePort"; // NSNumber (int
                 {
                     [NSThread sleepForTimeInterval: 2]; // To avoid brute-force attacks
                     
-                    [self.portal updateLogEntryForStudy:NULL withMessage:[NSString stringWithFormat: @"Unsuccessful login attempt with invalid password for user name: %@", username] forUser:NULL ip:asyncSocket.connectedHost];
+                    // The digest the browser sends is taken over the name as it was
+                    // typed, and the stored one is taken over the name as it is
+                    // registered, so a name typed in another case finds the account
+                    // and can never match its password. That reads as a wrong
+                    // password to everyone; say what it really is, in the log the
+                    // administrator reads. The answer to the client stays the same,
+                    // so this does not tell an unauthenticated caller whether an
+                    // account exists.
+                    NSString *entry = [NSString stringWithFormat: @"Unsuccessful login attempt with invalid password for user name: %@", username];
+                    if( self.user.name.length && [self.user.name isEqualToString: username] == NO)
+                        entry = [NSString stringWithFormat: @"Unsuccessful login attempt for user name: %@ - the name is registered as \"%@\", and the password is bound to that spelling, so it has to be typed the same way", username, self.user.name];
+                    
+                    [self.portal updateLogEntryForStudy:NULL withMessage: entry forUser:NULL ip:asyncSocket.connectedHost];
                 }
             }
             

@@ -36,6 +36,7 @@
  ============================================================================*/
 
 #import "AppController.h"
+#import "Horos-Swift.h"
 #import "StringTexture.h"
 #include <OpenGL/gl.h>
 #include <OpenGL/glext.h>
@@ -86,6 +87,9 @@ static RGBColor colorRotationTable[10] =
     
 int spline( NSPoint *Pt, int tot, NSPoint **newPt, long **correspondingSegmentPt, double scale)
 {
+    if (!newPt) return 0;
+    *newPt = NULL;
+    if (correspondingSegmentPt) *correspondingSegmentPt = NULL;
 	NSPoint p1, p2;
 	long long  i, j;
 	double xi, yi;
@@ -187,16 +191,16 @@ int spline( NSPoint *Pt, int tot, NSPoint **newPt, long **correspondingSegmentPt
 		
 	if( failed)
 	{
-		if( !a) 		free(a);
-		if( !c) 		free(c);
-		if( !cx)		free(cx);
-		if( !cy)		free(cy);
-		if( !d) 		free(d);
-		if( !g) 		free(g);
-		if( !gam)		free(gam);
-		if( !h) 		free(h);
-		if( !px)		free(px);
-		if( !py)		free(py);
+		free(a);
+		free(c);
+		free(cx);
+		free(cy);
+		free(d);
+		free(g);
+		free(gam);
+		free(h);
+		free(px);
+		free(py);
 		
 		return 0;
 	}
@@ -257,7 +261,7 @@ int spline( NSPoint *Pt, int tot, NSPoint **newPt, long **correspondingSegmentPt
 	// di = (ci+1 - ci) / 3 hi
 	// ai = yi
 	// bi = ((ai+1 - ai) / hi) - (hi/3) (ci+1 + 2 ci)
-	int totNewPt = 0;
+	int totNewPt = 1; // Reserve the final control point even for a fractional interval.
 	for (i=1; i<nb-2; i++)
 	{
 		totNewPt++;
@@ -265,18 +269,18 @@ int spline( NSPoint *Pt, int tot, NSPoint **newPt, long **correspondingSegmentPt
 	}
 
 	*newPt = calloc(totNewPt, sizeof(NSPoint));
-	if( newPt == nil)
+	if( *newPt == nil)
 	{
-		if( !a) 		free(a);
-		if( !c) 		free(c);
-		if( !cx)		free(cx);
-		if( !cy)		free(cy);
-		if( !d) 		free(d);
-		if( !g) 		free(g);
-		if( !gam)		free(gam);
-		if( !h) 		free(h);
-		if( !px)		free(px);
-		if( !py)		free(py);
+		free(a);
+		free(c);
+		free(cx);
+		free(cy);
+		free(d);
+		free(g);
+		free(gam);
+		free(h);
+		free(px);
+		free(py);
 		
 		return 0;
 	}
@@ -286,18 +290,19 @@ int spline( NSPoint *Pt, int tot, NSPoint **newPt, long **correspondingSegmentPt
 		*correspondingSegmentPt = calloc(totNewPt, sizeof(long));
 		if( *correspondingSegmentPt == nil)
 		{
-			free( newPt);
+			free( *newPt);
+            *newPt = NULL;
 			
-			if( !a) 		free(a);
-			if( !c) 		free(c);
-			if( !cx)		free(cx);
-			if( !cy)		free(cy);
-			if( !d) 		free(d);
-			if( !g) 		free(g);
-			if( !gam)		free(gam);
-			if( !h) 		free(h);
-			if( !px)		free(px);
-			if( !py)		free(py);
+			free(a);
+			free(c);
+			free(cx);
+			free(cy);
+			free(d);
+			free(g);
+			free(gam);
+			free(h);
+			free(px);
+			free(py);
 			
 			return 0;
 		}
@@ -338,6 +343,11 @@ int spline( NSPoint *Pt, int tot, NSPoint **newPt, long **correspondingSegmentPt
 			tt++;
 		}//endfor points in 1 interval
 	}//endfor each interval
+    // Integer sampling may stop before h[last]. Keep the physical endpoint exact.
+    (*newPt)[tt] = Pt[tot-1];
+    if (correspondingSegmentPt) (*correspondingSegmentPt)[tt] = tot-2;
+    tt++;
+
 
 	// delete dynamic structures
 	free(a);
@@ -356,6 +366,7 @@ int spline( NSPoint *Pt, int tot, NSPoint **newPt, long **correspondingSegmentPt
 
 @implementation ROI
 @synthesize min = rmin, max = rmax, mean = rmean;
+@synthesize median;
 @synthesize textureWidth, textureHeight, textureBuffer, locked, selectable, isAliased, originalIndexForAlias, imageOrigin, pixelSpacingX, pixelSpacingY;
 @synthesize textureDownRightCornerX,textureDownRightCornerY, textureUpLeftCornerX, textureUpLeftCornerY;
 @synthesize opacity, hidden;
@@ -1577,13 +1588,20 @@ int spline( NSPoint *Pt, int tot, NSPoint **newPt, long **correspondingSegmentPt
         stringTextureCache.countLimit = 50;
     }
     
-    StringTexture *sT = [stringTextureCache objectForKey: str];
+    // ROI layout reads texSize before drawing; a texture at the old scale
+    // would give the wrong label bounds even if drawing later refreshes it.
+    NSArray *textureKey = @[str, @(curView.window.backingScaleFactor), [HorosAnnotationPresentation textureCacheTokenForWindow: curView.window]];
+    StringTexture *sT = [stringTextureCache objectForKey: textureKey];
     if( sT == nil)
     {
         NSMutableDictionary *attrib = [NSMutableDictionary dictionary];
         
         NSFont *fontGL = [NSFont fontWithName: [[NSUserDefaults standardUserDefaults] stringForKey:@"LabelFONTNAME"] size: [[NSUserDefaults standardUserDefaults] floatForKey: @"LabelFONTSIZE"]];
         
+        // A font saved on another Mac may no longer be installed.
+        if( fontGL == nil)
+            fontGL = [NSFont userFixedPitchFontOfSize: [[NSUserDefaults standardUserDefaults] floatForKey: @"LabelFONTSIZE"]];
+
         [attrib setObject: fontGL forKey:NSFontAttributeName];
         [attrib setObject: [NSColor whiteColor] forKey:NSForegroundColorAttributeName];
         
@@ -1592,7 +1610,7 @@ int spline( NSPoint *Pt, int tot, NSPoint **newPt, long **correspondingSegmentPt
         [sT setAntiAliasing: YES];
         [sT genTextureWithBackingScaleFactor: curView.window.backingScaleFactor];
         
-        [stringTextureCache setObject: sT forKey: str];
+        [stringTextureCache setObject: sT forKey: textureKey];
     }
     
     return sT;
@@ -1613,12 +1631,8 @@ int spline( NSPoint *Pt, int tot, NSPoint **newPt, long **correspondingSegmentPt
 
 - (void) glStr: (NSString*) str :(float) x :(float) y :(float) line
 {
-#define MAXLENGTH 300
-    
-	if( str.length == 0) return;
-    if( str.length > MAXLENGTH)
-        str = [str substringToIndex: MAXLENGTH];
-    
+    if( str.length == 0) return;
+
 	float xx, yy;
 	
 	line *= fontHeight*curView.window.backingScaleFactor;
@@ -1640,11 +1654,20 @@ int spline( NSPoint *Pt, int tot, NSPoint **newPt, long **correspondingSegmentPt
     xc = xx - 2*curView.window.backingScaleFactor;
     yc = yy-[sT texSize].height;
     
-    glColor4f (0, 0, 0, 1.0f);
+    // Every other ROI draw site passes `opacity`; a literal here left the label
+    // at full strength while the geometry it belongs to faded.
+    //
+    // drawTextualData composites this with glBlendFunc( GL_ONE, GL_ONE_MINUS_SRC_ALPHA)
+    // and StringTexture's bitmap is premultiplied, so the colour carries the
+    // opacity as well as the alpha channel. Passing it in alpha alone leaves
+    // the source at full strength and only lightens the destination, which is
+    // brighter than opaque rather than fainter. Premultiplied black is black,
+    // so the shadow needs the alpha only.
+    glColor4f (0, 0, 0, opacity);
     [sT drawAtPoint: NSMakePoint( xc+1, yc+1)];
     
     //glColor4f (1.0f, 1.0f, 1.0f, 1.0f);
-    glColor4f (color.red/65535., color.green/65535., color.blue/65535., 1.0f);
+    glColor4f (opacity * color.red/65535., opacity * color.green/65535., opacity * color.blue/65535., opacity);
     [sT drawAtPoint: NSMakePoint( xc, yc)];
     
 //    glDisable(GL_BLEND);
@@ -2653,7 +2676,14 @@ int spline( NSPoint *Pt, int tot, NSPoint **newPt, long **correspondingSegmentPt
 //	}
 	else
 	{
-		if( [[points lastObject] isNearToPoint: pt : scale/(thickness*backingScaleFactor) :[[curView curDCM] pixelRatio]] == NO)
+        // Complete a closed polygon without appending a duplicate first vertex.
+        // Keep the existing hit tolerance in screen points, including Retina.
+        if( type == tCPolygon && mode == ROI_drawing && points.count >= 3 &&
+            [[points objectAtIndex: 0] isNearToPoint: pt :scale/(thickness*backingScaleFactor) :[[curView curDCM] pixelRatio]])
+        {
+            mode = ROI_selected;
+        }
+        else if( [[points lastObject] isNearToPoint: pt : scale/(thickness*backingScaleFactor) :[[curView curDCM] pixelRatio]] == NO)
 		{
 			mypt = [[MyPoint alloc] initWithPoint: pt];
 			
@@ -3822,6 +3852,7 @@ int spline( NSPoint *Pt, int tot, NSPoint **newPt, long **correspondingSegmentPt
 	if( locked)
 		return NO;
 
+    BOOL deletedAllPoints = NO;
 	switch( type)
 	{
 		case tPlain:
@@ -3840,15 +3871,19 @@ int spline( NSPoint *Pt, int tot, NSPoint **newPt, long **correspondingSegmentPt
 		case tCPolygon:
 		case tOPolygon:
 		case tPencil:
-			if( mode == ROI_selectedModify)
-			{
-				if( selectedModifyPoint >= 0)
-					[points removeObjectAtIndex: selectedModifyPoint];
-			}
-			else [points removeLastObject];
-			
-			if( selectedModifyPoint >= [points count]) selectedModifyPoint = (long)[points count]-1;
+        {
+            NSInteger index = mode == ROI_selectedModify ? selectedModifyPoint : (NSInteger)[points count]-1;
+            if( index >= 0 && index < (NSInteger)[points count])
+            {
+                [points removeObjectAtIndex: index];
+                if( index < (NSInteger)[zPositions count])
+                    [zPositions removeObjectAtIndex: index];
+            }
+            if( selectedModifyPoint >= (NSInteger)[points count])
+                selectedModifyPoint = (NSInteger)[points count]-1;
+            deletedAllPoints = [points count] == 0;
 		break;
+        }
 		case tDynAngle:
 		case tAxis:
         case tTAGT:
@@ -3867,7 +3902,7 @@ int spline( NSPoint *Pt, int tot, NSPoint **newPt, long **correspondingSegmentPt
 
 	[[NSNotificationCenter defaultCenter] postNotificationName: OsirixROIChangeNotification object:self userInfo: nil];
 	
-	return [self valid];
+	return !deletedAllPoints && [self valid];
 }
 
 // in cm or in pixels if no pixelspacing values
@@ -3961,90 +3996,14 @@ void gl_round_box(int mode, float minx, float miny, float maxx, float maxy, floa
 
 - (NSRect) findAnEmptySpaceForMyRect:(NSRect) dRect :(BOOL*) moved
 {
-	NSMutableArray *rectArray = [curView rectArray];
-	
-	if( rectArray == nil)
-	{
-		*moved = NO;
-		return dRect;
-	}
-	
-	int direction = 0, maxRedo = [rectArray count] + 2;
-	
-	*moved = NO;
-	
-	dRect.origin.x += 8;
-	dRect.origin.y += 8;
-	
-	//Does it intersect with the frame view?
-	NSRect displayingRect = [curView drawingFrameRect];
-	displayingRect.origin.x = -displayingRect.size.width/2;
-	displayingRect.origin.y = -displayingRect.size.height/2;
-	if( NSIntersectsRect( dRect, displayingRect))
-	{
-		if( NSEqualRects( NSUnionRect( dRect, displayingRect), displayingRect) == NO)
-		{
-			if( dRect.origin.x < displayingRect.origin.x)
-				dRect.origin.x = displayingRect.origin.x;
-			
-			if( dRect.origin.y < displayingRect.origin.y)
-				dRect.origin.y = displayingRect.origin.y;
-			
-			if( dRect.origin.y + dRect.size.height > displayingRect.origin.y + displayingRect.size.height)
-				dRect.origin.y = displayingRect.origin.y + displayingRect.size.height - dRect.size.height;
-			
-			if( dRect.origin.x + dRect.size.width > displayingRect.origin.x + displayingRect.size.width)
-				dRect.origin.x = displayingRect.origin.x + displayingRect.size.width - dRect.size.width;
-		}
-	}
-	
-	for( int i = 0; i < [rectArray count]; i++ )
-	{
-		NSRect	curRect = [[rectArray objectAtIndex: i] rectValue];
-		
-		if( NSIntersectsRect( curRect, dRect))
-		{
-			NSRect interRect = NSIntersectionRect( curRect, dRect);
-			
-			interRect.size.height++;
-			interRect.size.width++;
-			
-			NSPoint cInterRect = NSMakePoint( NSMidX( interRect), NSMidY( interRect));
-			NSPoint cCurRect = NSMakePoint( NSMidX( curRect), NSMidY( curRect));
-			
-			if( direction)
-			{
-				if( direction == -1) dRect.origin.y -= interRect.size.height;
-				else dRect.origin.y += interRect.size.height;
-			}
-			else
-			{
-				if( cInterRect.y < cCurRect.y)
-				{
-					dRect.origin.y -= interRect.size.height;
-					direction = -1;
-				}
-				else
-				{
-					dRect.origin.y += interRect.size.height;
-					direction = 1;
-				}
-			}
-			
-			if( maxRedo-- >= 0) i = -1;
-			
-			*moved = YES;
-		}
-	}
-	
-	if( *moved)
-	{
-		dRect.origin.x += 5;
-	}
-	
-	[rectArray addObject: [NSValue valueWithRect: dRect]];
-	
-	return dRect;
+    NSMutableArray *rectArray = [curView rectArray];
+    NSRect desired = NSOffsetRect(dRect, 8, 8);
+    NSRect viewport = [curView drawingFrameRect];
+    viewport.origin = NSMakePoint(-viewport.size.width/2, -viewport.size.height/2);
+    NSRect placed = [HorosROILabelPresentation placeLabelRect:desired inViewport:viewport avoiding:rectArray ?: @[]];
+    *moved = !NSEqualRects(desired, placed);
+    [rectArray addObject:[NSValue valueWithRect:placed]];
+    return placed;
 }
 
 - (BOOL) isTextualDataDisplayed
@@ -4084,6 +4043,28 @@ void gl_round_box(int mode, float minx, float miny, float maxx, float maxy, floa
 	return drawTextBox;
 }
 
+- (NSArray*) fitTextualDataToAvailableSpace
+{
+    // Fixed annotations have now supplied their current-frame rectangles.
+    // Choose and measure one immutable line set for both placement and drawing.
+    NSArray *drawingLines = [self renderedTextualLines];
+    NSArray *viewportLines = drawingLines;
+    NSInteger lineCount = 0;
+    for( NSString *text in viewportLines) if( text.length) lineCount++;
+    NSRect viewport = [curView drawingFrameRect];
+    viewport.origin = NSMakePoint(-viewport.size.width/2, -viewport.size.height/2);
+    for( NSInteger budget = lineCount; budget >= 1; budget--)
+    {
+        drawingLines = [HorosROILabelPresentation fitLines:viewportLines maximumLineCount:budget];
+        long maxWidth = 0;
+        for( NSString *text in drawingLines) maxWidth = [self maxStringWidth:text max:maxWidth];
+        drawRect.size = NSMakeSize(maxWidth + 8, budget * fontHeight * curView.window.backingScaleFactor + 2);
+        if( [HorosROILabelPresentation hasUnoccupiedPlacementForLabelRect:NSOffsetRect(drawRect, 8, 8)
+            inViewport:viewport avoiding:[curView rectArray] ?: @[]]) break;
+    }
+    return drawingLines;
+}
+
 - (void) drawTextualData
 {
 	BOOL moved;
@@ -4106,7 +4087,8 @@ void gl_round_box(int mode, float minx, float miny, float maxx, float maxy, floa
 		return;
 	}
 	
-	drawRect = [self findAnEmptySpaceForMyRect: drawRect : &moved];
+    NSArray *drawingLines = [self fitTextualDataToAvailableSpace];
+    drawRect = [self findAnEmptySpaceForMyRect: drawRect : &moved];
 	
 	if(type == tDynAngle || type == tTAGT || type == tAxis ||type == tCPolygon || type == tOPolygon || type == tPencil) moved = YES;
 
@@ -4208,12 +4190,11 @@ void gl_round_box(int mode, float minx, float miny, float maxx, float maxy, floa
 			
 			long line = 0;
 			
-			[self glStr: textualBoxLine1 : tPt.x : tPt.y : line];	if( textualBoxLine1.length) line++;
-			[self glStr: textualBoxLine2 : tPt.x : tPt.y : line];	if( textualBoxLine2.length) line++;
-			[self glStr: textualBoxLine3 : tPt.x : tPt.y : line];	if( textualBoxLine3.length) line++;
-			[self glStr: textualBoxLine4 : tPt.x : tPt.y : line];	if( textualBoxLine4.length) line++;
-			[self glStr: textualBoxLine5 : tPt.x : tPt.y : line];	if( textualBoxLine5.length) line++;
-			[self glStr: textualBoxLine6 : tPt.x : tPt.y : line];	if( textualBoxLine6.length) line++;
+            for( NSString *text in drawingLines)
+            {
+                [self glStr: text :tPt.x :tPt.y :line];
+                if( text.length) line++;
+            }
 			
 			
 			glDisable(GL_BLEND);
@@ -4225,6 +4206,45 @@ void gl_round_box(int mode, float minx, float miny, float maxx, float maxy, floa
 	{
 		drawRect = NSMakeRect(0, 0, 0, 0);
 	}
+}
+
+// Wrap only the rendering view of the text; source fields and exports stay complete.
+- (NSArray*) renderedTextualLines
+{
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSFont *font = [NSFont fontWithName:[defaults stringForKey:@"LabelFONTNAME"] size:[defaults floatForKey:@"LabelFONTSIZE"]];
+    if( font == nil) font = [NSFont userFixedPitchFontOfSize:[defaults floatForKey:@"LabelFONTSIZE"]];
+    CGFloat scale = curView.window.backingScaleFactor;
+    if( scale <= 0) return [self displayedTextualLines];
+    // StringTexture contributes 8 points of horizontal padding, plus the ROI box inset.
+    CGFloat width = [curView drawingFrameRect].size.width / scale - 20;
+    NSArray *wrapped = [HorosROILabelPresentation wrapLines:[self displayedTextualLines] font:font maximumWidth:width];
+    // Match prepareTextualData's physical-pixel height, including its border.
+    CGFloat height = [curView drawingFrameRect].size.height;
+    if( fontHeight <= 0 || !isfinite(height)) return wrapped;
+    NSInteger lines = MAX(0, floor((height - 2) / (fontHeight * scale)));
+    return [HorosROILabelPresentation fitLines:wrapped maximumLineCount:lines];
+}
+
+// Select presentation only; keep all six source lines and exported statistics.
+- (NSArray*) displayedTextualLines
+{
+    NSArray *full = @[textualBoxLine1 ?: @"", textualBoxLine2 ?: @"",
+        textualBoxLine3 ?: @"", textualBoxLine4 ?: @"", textualBoxLine5 ?: @"", textualBoxLine6 ?: @""];
+    if( ROITEXTNAMEONLY || ![[NSUserDefaults standardUserDefaults] boolForKey:@"ROIPRIMARYMEASUREMENTONLY"])
+        return full;
+
+    NSString *primary = nil;
+    switch( type)
+    {
+        case tOPolygon: primary = textualBoxLine5; break;
+        case tMesure: case tAngle: case tOval: case tROI:
+        case tCPolygon: case tPencil: case tPlain:
+            primary = textualBoxLine2; break;
+        default: return full;
+    }
+    NSString *compact = [HorosROILabelPresentation compactMeasurement:primary primaryAngle:type == tAngle];
+    return compact ? @[compact] : full;
 }
 
 - (void) prepareTextualData:(NSPoint) tPt
@@ -4242,13 +4262,12 @@ void gl_round_box(int mode, float minx, float miny, float maxx, float maxy, floa
 	drawRect.origin = tPt;
 	
 	line = 0;
-	maxWidth = [self maxStringWidth:textualBoxLine1 max: maxWidth];	if( textualBoxLine1.length) line++;
-	maxWidth = [self maxStringWidth:textualBoxLine2 max: maxWidth];	if( textualBoxLine2.length) line++;
-	maxWidth = [self maxStringWidth:textualBoxLine3 max: maxWidth];	if( textualBoxLine3.length) line++;
-	maxWidth = [self maxStringWidth:textualBoxLine4 max: maxWidth];	if( textualBoxLine4.length) line++;
-	maxWidth = [self maxStringWidth:textualBoxLine5 max: maxWidth];	if( textualBoxLine5.length) line++;
-	maxWidth = [self maxStringWidth:textualBoxLine6 max: maxWidth];	if( textualBoxLine6.length) line++;
-	
+    for( NSString *text in [self renderedTextualLines])
+    {
+        maxWidth = [self maxStringWidth:text max:maxWidth];
+        if( text.length) line++;
+    }
+
 	drawRect.size.height = line * fontHeight*curView.window.backingScaleFactor + 2;
 	drawRect.size.width = maxWidth + 8;
 	
@@ -4292,7 +4311,7 @@ void gl_round_box(int mode, float minx, float miny, float maxx, float maxy, floa
 	
 	[pix computeROI:self :&mean :&total :&dev :&min :&max];
 	
-	return [NSString stringWithFormat:@"%@	%.3f	%.3f	%.3f	%.3f	%.3f", name, mean, min, max, total, dev];
+	return [NSString stringWithFormat:@"%@	%.3f	%.3f	%.3f	%.3f	%.3f	%@	%@", name, mean, min, max, total, dev, isfinite(self.median) ? [NSString stringWithFormat:@"%.3f", self.median] : NSLocalizedString(@"N/A", nil), pix.SUVConverted ? @"SUV" : (pix.rescaleType ?: @"")];
 }
 
 - (void) drawROI :(float) scaleValue :(float) offsetx :(float) offsety :(float) spacingX :(float) spacingY;
@@ -4350,6 +4369,7 @@ void gl_round_box(int mode, float minx, float miny, float maxx, float maxy, floa
 		glEnable(GL_LINE_SMOOTH);
 		glEnable(GL_POLYGON_SMOOTH);
 		glEnable(GL_BLEND);
+		glBlendEquation(GL_FUNC_ADD);
 		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 		
 		switch( type)
@@ -4742,7 +4762,7 @@ void gl_round_box(int mode, float minx, float miny, float maxx, float maxy, floa
                             if( [self pix].SUVConverted)
                                 pixelUnit = [NSString stringWithFormat:@" %@ ", NSLocalizedString( @"SUV", @"SUV = Standard Uptake Value")];
                             
-							self.textualBoxLine3 = [NSString stringWithFormat: NSLocalizedString( @"Mean: %0.3f%@ SDev: %0.3f%@ Sum: %0.0f%@", nil), rmean, pixelUnit, rdev, pixelUnit, rtotal, pixelUnit];
+							self.textualBoxLine3 = [NSString stringWithFormat: NSLocalizedString( @"Mean: %0.3f%@ SDev: %0.3f%@ Sum: %0.0f%@ Median: %@%@", nil), rmean, pixelUnit, rdev, pixelUnit, rtotal, pixelUnit, isfinite(self.median) ? [NSString stringWithFormat:@"%0.3f", self.median] : NSLocalizedString(@"N/A", nil), pixelUnit];
                             if( rskewness || rkurtosis)
                                 self.textualBoxLine4 = [NSString stringWithFormat: NSLocalizedString( @"Min: %0.3f%@ Max: %0.3f%@ Skewness: %0.3f Kurtosis: %0.3f", nil), rmin, pixelUnit, rmax, pixelUnit, rskewness, rkurtosis];
                             else
@@ -4763,6 +4783,7 @@ void gl_round_box(int mode, float minx, float miny, float maxx, float maxy, floa
 							blendedROI.pix = blendedPix;
 							[blendedROI setOriginAndSpacing: blendedPix.pixelSpacingX: blendedPix.pixelSpacingY :[DCMPix originCorrectedAccordingToOrientation: blendedPix]];
 							[blendedPix computeROI: blendedROI :&Brmean :&Brtotal :&Brdev :&Brmin :&Brmax :&Brskewness :&Brkurtosis];
+                            Brmedian = blendedROI.median;
 							[blendedROI release];
 							
                             NSString *pixelUnit = [NSString stringWithFormat:@" %@ ", blendedPix.rescaleType];
@@ -4770,7 +4791,7 @@ void gl_round_box(int mode, float minx, float miny, float maxx, float maxy, floa
                             if( blendedPix.SUVConverted)
                                 pixelUnit = [NSString stringWithFormat:@" %@ ", NSLocalizedString( @"SUV", @"SUV = Standard Uptake Value")];
                             
-							self.textualBoxLine5 = [NSString stringWithFormat: NSLocalizedString( @"Fused Image Mean: %0.3f%@ SDev: %0.3f%@ Sum: %0.0f%@", nil), Brmean, pixelUnit, Brdev, pixelUnit, Brtotal, pixelUnit];
+							self.textualBoxLine5 = [NSString stringWithFormat: NSLocalizedString( @"Fused Image Mean: %0.3f%@ SDev: %0.3f%@ Sum: %0.0f%@ Median: %@%@", nil), Brmean, pixelUnit, Brdev, pixelUnit, Brtotal, pixelUnit, isfinite(Brmedian) ? [NSString stringWithFormat:@"%0.3f", Brmedian] : NSLocalizedString(@"N/A", nil), pixelUnit];
                             if( Brskewness || Brkurtosis)
                                 self.textualBoxLine6 = [NSString stringWithFormat: NSLocalizedString( @"Fused Image Min: %0.3f%@ Max: %0.3f%@ Skewness: %0.3f Kurtosis: %0.3f", nil), Brmin, pixelUnit, Brmax, pixelUnit, Brskewness, Brkurtosis];
                             else
@@ -4836,6 +4857,7 @@ void gl_round_box(int mode, float minx, float miny, float maxx, float maxy, floa
 							[blendedROI setROIRect: blendedRect];
 							
 							[blendedPix computeROI: blendedROI :&Brmean :&Brtotal :&Brdev :&Brmin :&Brmax :&rskewness :&rkurtosis];
+                            Brmedian = blendedROI.median;
 						}
                         
                         // US Regions (Point) --->
@@ -4911,16 +4933,16 @@ void gl_round_box(int mode, float minx, float miny, float maxx, float maxy, floa
                             NSArray * physicalUnitsXYDirection = [NSArray arrayWithObjects:
                                                                   NSLocalizedString( @"none", nil), @"%", NSLocalizedString( @"dB", @"decibel"), NSLocalizedString( @"cm", nil), NSLocalizedString( @"sec", @"second"), NSLocalizedString( @"hertz", nil), NSLocalizedString( @"dB/sec", @"decibel per second"), NSLocalizedString( @"cm/sec", nil), NSLocalizedString( @"cm\u00B2", @"cm2"), NSLocalizedString( @"cm\u00B2/sec", @"cm2/sec"), NSLocalizedString( @"cm\u00B3", @"cm3"), NSLocalizedString( @"cm\u00B3/sec", @"cm3/sec"), @"\u00B0", nil];
                             
-                            NSString * unitsX;
-                            NSString * unitsY;
-                            if ((physicalUnitsXDirection < 0) || (physicalUnitsXDirection > 12)) {
-                                unitsX = NSLocalizedString( @"unknown", nil);
-                            } else if ((physicalUnitsYDirection < 0) || (physicalUnitsYDirection > 12)) {
-                                unitsY = NSLocalizedString( @"unknown", nil);
-                            } else {
-                                unitsX = [physicalUnitsXYDirection objectAtIndex:physicalUnitsXDirection];
-                                unitsY = [physicalUnitsXYDirection objectAtIndex:physicalUnitsYDirection];
-                            }
+                            // (0018,6024) and (0018,6026) are independent. Chained as
+                            // if/else-if these left the other axis unassigned, and the
+                            // unassigned pointer was then formatted into the label and
+                            // compared with isEqualToString:. Each axis answers for itself.
+                            NSString * unitsX = ((physicalUnitsXDirection < 0) || (physicalUnitsXDirection > 12))
+                                ? NSLocalizedString( @"unknown", nil)
+                                : [physicalUnitsXYDirection objectAtIndex: physicalUnitsXDirection];
+                            NSString * unitsY = ((physicalUnitsYDirection < 0) || (physicalUnitsYDirection > 12))
+                                ? NSLocalizedString( @"unknown", nil)
+                                : [physicalUnitsXYDirection objectAtIndex: physicalUnitsYDirection];
                             
                             if ((!isReferencePixelX0Present) && (isReferencePixelY0Present)) {
                                 self.textualBoxLine4 = [NSString stringWithFormat: NSLocalizedString( @"2D Pos: X:n/a %@ Y:%0.3f %@", nil), unitsX, roiPosYValue, unitsY];
@@ -5383,16 +5405,13 @@ void gl_round_box(int mode, float minx, float miny, float maxx, float maxy, floa
                                             NSArray * physicalUnitsXYDirection = [NSArray arrayWithObjects:
                                                                                   NSLocalizedString( @"none", nil), @"%", NSLocalizedString( @"dB", @"decibel"), NSLocalizedString( @"cm", nil), NSLocalizedString( @"sec", @"second"), NSLocalizedString( @"hertz", nil), NSLocalizedString( @"dB/sec", @"decibel per second"), NSLocalizedString( @"cm/sec", nil), NSLocalizedString( @"cm\u00B2", @"cm2"), NSLocalizedString( @"cm\u00B2/sec", @"cm2/sec"), NSLocalizedString( @"cm\u00B3", @"cm3"), NSLocalizedString( @"cm\u00B3/sec", @"cm3/sec"), @"\u00B0", nil];
                                             
-                                            NSString * unitsX;
-                                            NSString * unitsY;
-                                            if ((physicalUnitsXDirection < 0) || (physicalUnitsXDirection > 12)) {
-                                                unitsX = NSLocalizedString( @"unknown", nil);
-                                            } else if ((physicalUnitsYDirection < 0) || (physicalUnitsYDirection > 12)) {
-                                                unitsY = NSLocalizedString( @"unknown", nil);
-                                            } else {
-                                                unitsX = [physicalUnitsXYDirection objectAtIndex:physicalUnitsXDirection];
-                                                unitsY = [physicalUnitsXYDirection objectAtIndex:physicalUnitsYDirection];
-                                            }
+                                            // Independent axes; see the note at the other site.
+                                            NSString * unitsX = ((physicalUnitsXDirection < 0) || (physicalUnitsXDirection > 12))
+                                                ? NSLocalizedString( @"unknown", nil)
+                                                : [physicalUnitsXYDirection objectAtIndex: physicalUnitsXDirection];
+                                            NSString * unitsY = ((physicalUnitsYDirection < 0) || (physicalUnitsYDirection > 12))
+                                                ? NSLocalizedString( @"unknown", nil)
+                                                : [physicalUnitsXYDirection objectAtIndex: physicalUnitsYDirection];
                                             
                                             if (([unitsY isEqualToString: NSLocalizedString( @"cm/sec", nil)]) && (lengthY >= 100.0)) {
                                                 unitsY = NSLocalizedString( @"m/sec", nil);
@@ -5581,7 +5600,7 @@ void gl_round_box(int mode, float minx, float miny, float maxx, float maxy, floa
                             if( [self pix].SUVConverted)
                                 pixelUnit = [NSString stringWithFormat:@" %@ ", NSLocalizedString( @"SUV", @"SUV = Standard Uptake Value")];
                             
-							self.textualBoxLine3 = [NSString stringWithFormat: NSLocalizedString( @"Mean: %0.3f%@ SDev: %0.3f%@ Sum: %0.0f%@", nil), rmean, pixelUnit, rdev, pixelUnit, rtotal, pixelUnit];
+							self.textualBoxLine3 = [NSString stringWithFormat: NSLocalizedString( @"Mean: %0.3f%@ SDev: %0.3f%@ Sum: %0.0f%@ Median: %@%@", nil), rmean, pixelUnit, rdev, pixelUnit, rtotal, pixelUnit, isfinite(self.median) ? [NSString stringWithFormat:@"%0.3f", self.median] : NSLocalizedString(@"N/A", nil), pixelUnit];
                             if( rskewness || rkurtosis)
                                 self.textualBoxLine4 = [NSString stringWithFormat: NSLocalizedString( @"Min: %0.3f%@ Max: %0.3f%@ Skewness: %0.3f Kurtosis: %0.3f", nil), rmin, pixelUnit, rmax, pixelUnit, rskewness, rkurtosis];
                             else
@@ -5606,13 +5625,14 @@ void gl_round_box(int mode, float minx, float miny, float maxx, float maxy, floa
 								[blendedROI setROIRect: blendedRect];
 								
 								[blendedPix computeROI: blendedROI :&Brmean :&Brtotal :&Brdev :&Brmin :&Brmax :&Brskewness :&Brkurtosis];
+                            Brmedian = blendedROI.median;
 								
                                 NSString *pixelUnit = [NSString stringWithFormat:@" %@ ", blendedPix.rescaleType];
                                 
                                 if( blendedPix.SUVConverted)
                                     pixelUnit = [NSString stringWithFormat:@" %@ ", NSLocalizedString( @"SUV", @"SUV = Standard Uptake Value")];
                                 
-								self.textualBoxLine5 = [NSString stringWithFormat: NSLocalizedString( @"Fused Image Mean: %0.3f%@ SDev: %0.3f%@ Sum: %0.0f%@", nil), Brmean, pixelUnit, Brdev, pixelUnit, Brtotal, pixelUnit];
+								self.textualBoxLine5 = [NSString stringWithFormat: NSLocalizedString( @"Fused Image Mean: %0.3f%@ SDev: %0.3f%@ Sum: %0.0f%@ Median: %@%@", nil), Brmean, pixelUnit, Brdev, pixelUnit, Brtotal, pixelUnit, isfinite(Brmedian) ? [NSString stringWithFormat:@"%0.3f", Brmedian] : NSLocalizedString(@"N/A", nil), pixelUnit];
                                 
                                 if( Brskewness || Brkurtosis)
                                     self.textualBoxLine6 = [NSString stringWithFormat: NSLocalizedString( @"Fused Image Min: %0.3f%@ Max: %0.3f%@ Skewness: %0.3f Kurtosis: %0.3f", nil), Brmin, pixelUnit, Brmax, pixelUnit, Brskewness, Brkurtosis];
@@ -5747,7 +5767,7 @@ void gl_round_box(int mode, float minx, float miny, float maxx, float maxy, floa
                         if( [self pix].SUVConverted)
                             pixelUnit = [NSString stringWithFormat:@" %@ ", NSLocalizedString( @"SUV", @"SUV = Standard Uptake Value")];
                         
-						self.textualBoxLine3 = [NSString stringWithFormat: NSLocalizedString( @"Mean: %0.3f%@ SDev: %0.3f%@ Sum: %0.0f%@", nil), rmean, pixelUnit, rdev, pixelUnit, rtotal, pixelUnit];
+						self.textualBoxLine3 = [NSString stringWithFormat: NSLocalizedString( @"Mean: %0.3f%@ SDev: %0.3f%@ Sum: %0.0f%@ Median: %@%@", nil), rmean, pixelUnit, rdev, pixelUnit, rtotal, pixelUnit, isfinite(self.median) ? [NSString stringWithFormat:@"%0.3f", self.median] : NSLocalizedString(@"N/A", nil), pixelUnit];
                         
                         if( rskewness || rkurtosis)
                             self.textualBoxLine4 = [NSString stringWithFormat: NSLocalizedString( @"Min: %0.3f%@ Max: %0.3f%@ Skewness: %0.3f Kurtosis: %0.3f", nil), rmin, pixelUnit, rmax, pixelUnit, rskewness, rkurtosis];
@@ -5767,13 +5787,14 @@ void gl_round_box(int mode, float minx, float miny, float maxx, float maxy, floa
 							
 							[blendedROI setPoints: pts];
 							[blendedPix computeROI: blendedROI :&Brmean :&Brtotal :&Brdev :&Brmin :&Brmax :&Brskewness :&Brkurtosis];
+                            Brmedian = blendedROI.median;
 							
                             NSString *pixelUnit = [NSString stringWithFormat:@" %@ ", blendedPix.rescaleType];
                             
                             if( blendedPix.SUVConverted)
                                 pixelUnit = [NSString stringWithFormat:@" %@ ", NSLocalizedString( @"SUV", @"SUV = Standard Uptake Value")];
                             
-							self.textualBoxLine5 = [NSString stringWithFormat: NSLocalizedString( @"Fused Image Mean: %0.3f%@ SDev: %0.3f%@ Sum: %0.0f%@", nil), Brmean, pixelUnit, Brdev, pixelUnit, Brtotal, pixelUnit];
+							self.textualBoxLine5 = [NSString stringWithFormat: NSLocalizedString( @"Fused Image Mean: %0.3f%@ SDev: %0.3f%@ Sum: %0.0f%@ Median: %@%@", nil), Brmean, pixelUnit, Brdev, pixelUnit, Brtotal, pixelUnit, isfinite(Brmedian) ? [NSString stringWithFormat:@"%0.3f", Brmedian] : NSLocalizedString(@"N/A", nil), pixelUnit];
                             if( Brskewness || Brkurtosis)
                                 self.textualBoxLine6 = [NSString stringWithFormat: NSLocalizedString( @"Fused Image Min: %0.3f%@ Max: %0.3f%@ Skewness: %0.3f Kurtosis: %0.3f", nil), Brmin, pixelUnit, Brmax, pixelUnit, Brskewness, Brkurtosis];
                             else
@@ -6272,6 +6293,9 @@ void gl_round_box(int mode, float minx, float miny, float maxx, float maxy, floa
 					glEnd();
 					
 					// TEXT
+                    // Measurements use the same fixed sampling as Area, independent of display zoom.
+                    if (self.isTextualDataDisplayed && prepareTextualData)
+                        splinePoints = [self splinePoints];
 					if( type == tCPolygon || type == tPencil)
 					{
 						if( self.isTextualDataDisplayed && prepareTextualData)
@@ -6355,7 +6379,7 @@ void gl_round_box(int mode, float minx, float miny, float maxx, float maxy, floa
                                 if( [self pix].SUVConverted)
                                     pixelUnit = [NSString stringWithFormat:@" %@ ", NSLocalizedString( @"SUV", @"SUV = Standard Uptake Value")];
                                 
-                                self.textualBoxLine3 = [NSString stringWithFormat: NSLocalizedString( @"Mean: %0.3f%@ SDev: %0.3f%@ Sum: %0.0f%@", nil), rmean, pixelUnit, rdev, pixelUnit, rtotal, pixelUnit];
+                                self.textualBoxLine3 = [NSString stringWithFormat: NSLocalizedString( @"Mean: %0.3f%@ SDev: %0.3f%@ Sum: %0.0f%@ Median: %@%@", nil), rmean, pixelUnit, rdev, pixelUnit, rtotal, pixelUnit, isfinite(self.median) ? [NSString stringWithFormat:@"%0.3f", self.median] : NSLocalizedString(@"N/A", nil), pixelUnit];
                                 if( rskewness || rkurtosis)
                                     self.textualBoxLine4 = [NSString stringWithFormat: NSLocalizedString( @"Min: %0.3f%@ Max: %0.3f%@ Skewness: %0.3f Kurtosis: %0.3f", nil), rmin, pixelUnit, rmax, pixelUnit, rskewness, rkurtosis];
 								else
@@ -6382,13 +6406,14 @@ void gl_round_box(int mode, float minx, float miny, float maxx, float maxy, floa
 										
 										[blendedROI setPoints: pts];
 										[blendedPix computeROI: blendedROI :&Brmean :&Brtotal :&Brdev :&Brmin :&Brmax :&Brskewness :&Brkurtosis];
+                            Brmedian = blendedROI.median;
 										
                                         NSString *pixelUnit = [NSString stringWithFormat:@" %@ ", blendedPix.rescaleType];
                                         
                                         if( blendedPix.SUVConverted)
                                             pixelUnit = [NSString stringWithFormat:@" %@ ", NSLocalizedString( @"SUV", @"SUV = Standard Uptake Value")];
                                         
-										self.textualBoxLine5 = [NSString stringWithFormat: NSLocalizedString( @"Fused Image Mean: %0.3f%@ SDev: %0.3f%@ Sum: %0.0f%@", nil), Brmean, pixelUnit, Brdev, pixelUnit, Brtotal, pixelUnit];
+										self.textualBoxLine5 = [NSString stringWithFormat: NSLocalizedString( @"Fused Image Mean: %0.3f%@ SDev: %0.3f%@ Sum: %0.0f%@ Median: %@%@", nil), Brmean, pixelUnit, Brdev, pixelUnit, Brtotal, pixelUnit, isfinite(Brmedian) ? [NSString stringWithFormat:@"%0.3f", Brmedian] : NSLocalizedString(@"N/A", nil), pixelUnit];
                                         
                                         if( Brskewness || Brkurtosis)
                                             self.textualBoxLine6 = [NSString stringWithFormat: NSLocalizedString( @"Fused Image Min: %0.3f%@ Max: %0.3f%@ Skewness: %0.3f Kurtosis: %0.3f", nil), Brmin, pixelUnit, Brmax, pixelUnit, Brskewness, Brkurtosis];
@@ -6513,7 +6538,7 @@ void gl_round_box(int mode, float minx, float miny, float maxx, float maxy, floa
                                     if( [self pix].SUVConverted)
                                         pixelUnit = [NSString stringWithFormat:@" %@ ", NSLocalizedString( @"SUV", @"SUV = Standard Uptake Value")];
                                     
-									self.textualBoxLine3 = [NSString stringWithFormat: NSLocalizedString( @"Mean: %0.3f%@ SDev: %0.3f%@ Sum: %0.0f%@", nil), rmean, pixelUnit, rdev, pixelUnit, rtotal, pixelUnit];
+									self.textualBoxLine3 = [NSString stringWithFormat: NSLocalizedString( @"Mean: %0.3f%@ SDev: %0.3f%@ Sum: %0.0f%@ Median: %@%@", nil), rmean, pixelUnit, rdev, pixelUnit, rtotal, pixelUnit, isfinite(self.median) ? [NSString stringWithFormat:@"%0.3f", self.median] : NSLocalizedString(@"N/A", nil), pixelUnit];
 									self.textualBoxLine4 = [NSString stringWithFormat: NSLocalizedString( @"Min: %0.3f%@ Max: %0.3f%@", nil), rmin, pixelUnit, rmax, pixelUnit];
 								}
 								
@@ -6530,13 +6555,14 @@ void gl_round_box(int mode, float minx, float miny, float maxx, float maxy, floa
 									
 									[blendedROI setPoints: pts];
 									[blendedPix computeROI: blendedROI :&Brmean :&Brtotal :&Brdev :&Brmin :&Brmax :&Brskewness :&Brkurtosis];
+                            Brmedian = blendedROI.median;
 									
                                     NSString *pixelUnit = [NSString stringWithFormat:@" %@ ", blendedPix.rescaleType];
                                     
                                     if( blendedPix.SUVConverted)
                                         pixelUnit = [NSString stringWithFormat:@" %@ ", NSLocalizedString( @"SUV", @"SUV = Standard Uptake Value")];
                                     
-									self.textualBoxLine5 = [NSString stringWithFormat: NSLocalizedString( @"Fused Image Mean: %0.3f%@ SDev: %0.3f%@ Sum: %0.0f%@", nil), Brmean, pixelUnit, Brdev, pixelUnit, Brtotal, pixelUnit];
+									self.textualBoxLine5 = [NSString stringWithFormat: NSLocalizedString( @"Fused Image Mean: %0.3f%@ SDev: %0.3f%@ Sum: %0.0f%@ Median: %@%@", nil), Brmean, pixelUnit, Brdev, pixelUnit, Brtotal, pixelUnit, isfinite(Brmedian) ? [NSString stringWithFormat:@"%0.3f", Brmedian] : NSLocalizedString(@"N/A", nil), pixelUnit];
 									self.textualBoxLine6 = [NSString stringWithFormat: NSLocalizedString( @"Fused Image Min: %0.3f%@ Max: %0.3f%@", nil), Brmin, pixelUnit, Brmax, pixelUnit];
 								}
 								
@@ -6769,15 +6795,19 @@ void gl_round_box(int mode, float minx, float miny, float maxx, float maxy, floa
 			}
 				
 			[array setObject: [NSNumber numberWithFloat:rmean] forKey:@"Mean"];
+            [array setObject:@(isfinite(self.median)) forKey:@"MedianAvailable"];
+            if( isfinite(self.median)) [array setObject:@(self.median) forKey:@"Median"];
+            [array setObject:([self pix].SUVConverted ? @"SUV" : ([self pix].rescaleType ?: @"")) forKey:@"MedianUnit"];
 			[array setObject: [NSNumber numberWithFloat:rdev] forKey:@"Dev"];
 			[array setObject: [NSNumber numberWithFloat:rtotal] forKey:@"Total"];
 			[array setObject: [NSNumber numberWithFloat:rmin] forKey:@"Min"];
 			[array setObject: [NSNumber numberWithFloat:rmax] forKey:@"Max"];
 			
 			float length = 0;
-			long i;
-            NSMutableArray* ptsTemp = self.points;
-            if( self.points > 0)
+			long i = 0;
+            // Match the fixed spline geometry used by the displayed length.
+            NSMutableArray* ptsTemp = [self splinePoints];
+            if( [ptsTemp count] > 1)
             {
                 for( i = 0; i < (long)[ptsTemp count]-1; i++ )
 				length += [self Length:[[ptsTemp objectAtIndex:i] point] :[[ptsTemp objectAtIndex:i+1] point]];
@@ -7339,6 +7369,7 @@ NSInteger sortPointArrayAlongX(id point1, id point2, void *context)
 	}
 
 	if(newNb) free(splinePts);
+    free(correspondingSegments);
 	
 	if( [newPoints count] == 0)
 		return [self points];
@@ -7394,12 +7425,20 @@ NSInteger sortPointArrayAlongX(id point1, id point2, void *context)
 }
 
 -(NSColor*)NSColor {
-	return [NSColor colorWithCalibratedRed:color.red/0xffff green:color.green/0xffff blue:color.blue/0xffff alpha:opacity];
+	return [NSColor colorWithCalibratedRed:color.red/65535.0 green:color.green/65535.0 blue:color.blue/65535.0 alpha:opacity];
 }
 
 -(void)setNSColor:(NSColor*)nsColor globally:(BOOL)g {
-	[self setOpacity:[nsColor alphaComponent] globally:g];
-	RGBColor rgbColor = {[nsColor redComponent]*0xffff, [nsColor greenComponent]*0xffff, [nsColor blueComponent]*0xffff};
+	// Normalize the input before reading RGB components or changing either property.
+	NSColor *rgb = [nsColor colorUsingColorSpace:[NSColorSpace genericRGBColorSpace]];
+	if (!rgb) return; // Pattern colors and nil have no representable ROI color.
+	CGFloat r, green, b, a;
+	[rgb getRed:&r green:&green blue:&b alpha:&a];
+	if (!isfinite(r) || !isfinite(green) || !isfinite(b) || !isfinite(a)) return;
+	RGBColor rgbColor = {MIN(1.0, MAX(0.0, r))*65535.0,
+	                     MIN(1.0, MAX(0.0, green))*65535.0,
+	                     MIN(1.0, MAX(0.0, b))*65535.0};
+	[self setOpacity:MIN(1.0, MAX(0.0, a)) globally:g];
 	[self setColor:rgbColor globally:g];
 }
 

@@ -71,6 +71,90 @@
 //
 
 #import "SSCrypto.h"
+#import <openssl/provider.h>
+#include <limits.h>
+
+// OpenSSL 3 keeps older SSCrypto algorithms (notably its default Blowfish)
+// in a provider. Load that provider only into a private per-operation context:
+// legacy report/plugin compatibility must not enable it for DICOM TLS.
+@interface SSCryptoAlgorithm : NSObject {
+    OSSL_LIB_CTX *library;
+    OSSL_PROVIDER *legacy;
+    EVP_CIPHER *cipher;
+    EVP_MD *digest;
+}
++ (instancetype)cipherNamed:(NSString *)name;
++ (instancetype)digestNamed:(NSString *)name;
+- (const EVP_CIPHER *)cipher;
+- (const EVP_MD *)digest;
+- (BOOL)loadLegacy;
+@end
+
+@implementation SSCryptoAlgorithm
+- (BOOL)loadLegacy {
+    library = OSSL_LIB_CTX_new();
+    if (library) legacy = OSSL_PROVIDER_load(library, "legacy");
+    return legacy != NULL;
+}
++ (instancetype)cipherNamed:(NSString *)name {
+    SSCryptoAlgorithm *result = [[[self alloc] init] autorelease];
+    int marked = ERR_set_mark();
+    result->cipher = EVP_CIPHER_fetch(NULL, name.UTF8String, NULL);
+    if (!result->cipher) {
+        if (marked) ERR_pop_to_mark(); else ERR_clear_error();
+        if ([result loadLegacy]) result->cipher = EVP_CIPHER_fetch(result->library, name.UTF8String, NULL);
+    } else if (marked) ERR_clear_last_mark();
+    return result;
+}
++ (instancetype)digestNamed:(NSString *)name {
+    SSCryptoAlgorithm *result = [[[self alloc] init] autorelease];
+    int marked = ERR_set_mark();
+    result->digest = EVP_MD_fetch(NULL, name.UTF8String, NULL);
+    if (!result->digest) {
+        if (marked) ERR_pop_to_mark(); else ERR_clear_error();
+        if ([result loadLegacy]) result->digest = EVP_MD_fetch(result->library, name.UTF8String, NULL);
+    } else if (marked) ERR_clear_last_mark();
+    return result;
+}
+- (const EVP_CIPHER *)cipher { return cipher; }
+- (const EVP_MD *)digest { return digest; }
+- (void)dealloc {
+    EVP_CIPHER_free(cipher);
+    EVP_MD_free(digest);
+    if (legacy) OSSL_PROVIDER_unload(legacy);
+    OSSL_LIB_CTX_free(library);
+    [super dealloc];
+}
+@end
+
+static NSData *SSCryptoSymmetricData(NSData *input, NSData *password, NSData *salt,
+                                     NSString *name, BOOL encrypt)
+{
+    if (input.length > INT_MAX || password.length > INT_MAX) return nil;
+    const EVP_CIPHER *cipher = [[SSCryptoAlgorithm cipherNamed:name ?: @"BF-CBC"] cipher];
+    if (!cipher) return nil;
+    unsigned char key[EVP_MAX_KEY_LENGTH] = {0}, iv[EVP_MAX_IV_LENGTH] = {0};
+    // Keep the legacy file/key derivation, so existing encrypted values reopen.
+    if (!EVP_BytesToKey(cipher, EVP_md5(), salt.bytes, password.bytes,
+                       (int)password.length, 1, key, iv)) return nil;
+    EVP_CIPHER_CTX *context = EVP_CIPHER_CTX_new();
+    if (!context) return nil;
+    @try {
+        if (!EVP_CipherInit_ex(context, cipher, NULL, key, iv, encrypt)) return nil;
+        int blockSize = EVP_CIPHER_CTX_get_block_size(context);
+        if (blockSize < 1) return nil;
+        // Finalization can append a whole padding block even when the input
+        // is block-aligned. The old encrypt allocation was one byte short.
+        NSMutableData *output = [NSMutableData dataWithLength:input.length + (NSUInteger)blockSize];
+        int written = 0, final = 0;
+        if (!EVP_CipherUpdate(context, output.mutableBytes, &written, input.bytes, (int)input.length) ||
+            !EVP_CipherFinal_ex(context, (unsigned char *)output.mutableBytes + written, &final)) return nil;
+        output.length = (NSUInteger)written + (NSUInteger)final;
+        return output;
+    } @finally {
+        EVP_CIPHER_CTX_free(context);
+    }
+}
 
 @implementation NSData (HexDump)
 
@@ -563,94 +647,20 @@
         return nil;
     }
     
-    unsigned char *outbuf, iv[EVP_MAX_IV_LENGTH];
-    int outlen, templen, inlen;
+    unsigned char *outbuf;
+    int outlen, inlen;
     inlen = [cipherText length];
     unsigned char *input = (unsigned char *)[cipherText bytes];
     
-    if([self isSymmetric])
-	{
-		// Use symmetric decryption...
-		
-        unsigned char evp_key[EVP_MAX_KEY_LENGTH] = {"\0"};
-        EVP_CIPHER_CTX *cCtx;
-        const EVP_CIPHER *cipher;
-
-        if(cipherName)
-		{
-            cipher = EVP_get_cipherbyname((const char *)[cipherName UTF8String]);
-            if(!cipher)
-			{
-				NSLog(@"cannot get cipher with name %@", cipherName);
-				return nil;
-			}
+    if ([self isSymmetric]) {
+        NSData *salt = nil, *inputData = cipherText;
+        if (cipherText.length > 16 && memcmp(cipherText.bytes, "Salted__", 8) == 0) {
+            salt = [cipherText subdataWithRange:NSMakeRange(8, 8)];
+            inputData = [cipherText subdataWithRange:NSMakeRange(16, cipherText.length - 16)];
         }
-		else
-		{
-            cipher = EVP_bf_cbc();
-            if(!cipher)
-			{
-                NSLog(@"cannot get cipher with name %@", @"EVP_bf_cbc");
-                return nil;
-            }
-        }
-		
-		// Sometimes OpenSSL encrypted data contains an 8 byte salt.
-		// This is indicated by the "Salted__" prefix in the encrypted data.
-		
-		NSData *salt = nil;
-		
-		if([cipherText length] > 8+8)
-		{
-			if(strncmp((const char *)[cipherText bytes], "Salted__", 8) == 0)
-			{
-				salt = [cipherText subdataWithRange:NSMakeRange(8, 8)];
-				
-				input += 16;
-				inlen -= 16;
-			}
-		}
-        
-        EVP_BytesToKey(cipher, EVP_md5(), [salt bytes],
-					   [symmetricKey bytes], [symmetricKey length], 1, evp_key, iv);
-		
-        cCtx = EVP_CIPHER_CTX_new();
-
-        if (!EVP_DecryptInit(cCtx, cipher, evp_key, iv))
-		{
-            NSLog(@"EVP_DecryptInit() failed!");
-            EVP_CIPHER_CTX_free(cCtx);
-            return nil;
-        }
-        EVP_CIPHER_CTX_set_key_length(cCtx, EVP_MAX_KEY_LENGTH);
-		
-        // The data buffer passed to EVP_DecryptUpdate() should have sufficient room for
-		// (input_length + cipher_block_size) bytes unless the cipher block size is 1 in which
-		// case input_length bytes is sufficient.
-		
-		if(EVP_CIPHER_CTX_block_size(cCtx) > 1)
-			outbuf = (unsigned char *)calloc(inlen + EVP_CIPHER_CTX_block_size(cCtx), sizeof(unsigned char));
-		else
-			outbuf = (unsigned char *)calloc(inlen, sizeof(unsigned char));
-			
-        NSAssert(outbuf, @"Cannot allocate memory for buffer!");
-        
-        if (!EVP_DecryptUpdate(cCtx, outbuf, &outlen, input, inlen))
-		{
-			NSLog(@"EVP_DecryptUpdate() failed!");
-			EVP_CIPHER_CTX_free(cCtx);
-			return nil;
-        }
-        
-        if (!EVP_DecryptFinal(cCtx, outbuf + outlen, &templen))
-		{
-			NSLog(@"EVP_DecryptFinal() failed!");
-			EVP_CIPHER_CTX_free(cCtx);
-			return nil;
-        }
-        
-        outlen += templen;
-        EVP_CIPHER_CTX_free(cCtx);
+        NSData *result = SSCryptoSymmetricData(inputData, symmetricKey, salt, cipherName, NO);
+        if (result) [self setClearTextWithData:result];
+        return result;
     }
 	else
 	{
@@ -838,64 +848,14 @@
     }
 
     unsigned char *input = (unsigned char *)[clearText bytes];
-    unsigned char *outbuf, iv[EVP_MAX_IV_LENGTH];
-    int outlen, templen, inlen;
+    unsigned char *outbuf;
+    int outlen, inlen;
     inlen = [clearText length];
     
-    if([self isSymmetric])
-	{
-		// Perform symmetric encryption...
-		
-        unsigned char evp_key[EVP_MAX_KEY_LENGTH] = {"\0"};
-        EVP_CIPHER_CTX *cCtx;
-        const EVP_CIPHER *cipher;
-        
-        if (cipherName){
-            cipher = EVP_get_cipherbyname((const char *)[cipherName UTF8String]);
-            if (!cipher){
-                NSLog(@"cannot get cipher with name %@", cipherName);
-                return nil;
-            }
-        } else {
-            cipher = EVP_bf_cbc();
-            if (!cipher){
-                NSLog(@"cannot get cipher with name %@", @"EVP_bf_cbc");
-                return nil;
-            }
-        }
-
-        EVP_BytesToKey(cipher, EVP_md5(), NULL,
-                       [[self symmetricKey] bytes], [[self symmetricKey] length], 1, evp_key, iv);
-        cCtx = EVP_CIPHER_CTX_new();
-
-        if (!EVP_EncryptInit(cCtx, cipher, evp_key, iv)) {
-            NSLog(@"EVP_EncryptInit() failed!");
-            EVP_CIPHER_CTX_free(cCtx);
-            return nil;
-        }
-        EVP_CIPHER_CTX_set_key_length(cCtx, EVP_MAX_KEY_LENGTH);
-		
-		// The data buffer passed to EVP_EncryptUpdate() should have sufficient room for
-		// (input_length + cipher_block_size - 1)
-		
-        outbuf = (unsigned char *)calloc(inlen + EVP_CIPHER_CTX_block_size(cCtx) - 1, sizeof(unsigned char));
-        NSAssert(outbuf, @"Cannot allocate memory for buffer!");
-        
-        if (!EVP_EncryptUpdate(cCtx, outbuf, &outlen, input, inlen))
-		{
-			NSLog(@"EVP_EncryptUpdate() failed!");
-			EVP_CIPHER_CTX_free(cCtx);
-			return nil;
-        }
-        if (!EVP_EncryptFinal(cCtx, outbuf + outlen, &templen))
-		{
-			NSLog(@"EVP_EncryptFinal() failed!");
-			EVP_CIPHER_CTX_free(cCtx);
-			return nil;
-        }
-        outlen += templen;
-        EVP_CIPHER_CTX_free(cCtx);
-        
+    if ([self isSymmetric]) {
+        NSData *result = SSCryptoSymmetricData(clearText, symmetricKey, nil, cipherName, YES);
+        if (result) [self setCipherText:result];
+        return result;
     }
 	else
 	{
@@ -1062,22 +1022,12 @@
     
     if(inlen==0)
         return nil;
-    if(digestName) {
-        digest = EVP_get_digestbyname((const char*)[digestName UTF8String]);        
-        if (!digest) {
-            NSLog(@"cannot get digest with name %@",digestName);
-            return nil;
-        }
-    } else {
-        digest=EVP_md5();
-        if(!digest) {
-            NSLog(@"cannot get digest with name %@",@"MD5");
-            return nil;
-        }
-    }
+    digest = [[SSCryptoAlgorithm digestNamed:digestName ?: @"MD5"] digest];
+    if (!digest) return nil;
 
     ctx = EVP_MD_CTX_new();
-    EVP_DigestInit(ctx,digest);
+    if (!ctx) return nil;
+    if (!EVP_DigestInit(ctx,digest)) { EVP_MD_CTX_free(ctx); return nil; }
     if(!EVP_DigestUpdate(ctx,input,inlen)) {
         NSLog(@"EVP_DigestUpdate() failed!");
         EVP_MD_CTX_free(ctx);

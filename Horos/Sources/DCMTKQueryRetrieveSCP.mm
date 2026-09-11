@@ -1,3 +1,6 @@
+#import "HorosQueryRetrieveServer.h"
+#import "HorosDIMSEClient.h"
+#import "DicomDatabase.h"
 /*=========================================================================
  This file is part of the Horos Project (www.horosproject.org)
  
@@ -38,20 +41,23 @@
 #import "DCMTKQueryRetrieveSCP.h"
 #import "AppController.h"
 #import "DICOMTLS.h"
+#import "Horos-Swift.h"
 #import "ContextCleaner.h"
 
 #undef verify
 
-#include "osconfig.h"    /* make sure OS specific configuration is included first */
+#include "HorosDCMTKCompatibility.h"
+#include "HorosTLSConfiguration.h"
+#include <dcmtk/config/osconfig.h>    /* make sure OS specific configuration is included first */
 
-#define INCLUDE_CSTDLIB
-#define INCLUDE_CSTDIO
-#define INCLUDE_CSTRING
-#define INCLUDE_CSTDARG
-#define INCLUDE_CERRNO
-#define INCLUDE_CTIME
-#define INCLUDE_LIBC
-#include "ofstdinc.h"
+#include <cstdlib>
+#include <cstdio>
+#include <cstring>
+#include <cstdarg>
+#include <cerrno>
+#include <ctime>
+#include <unistd.h>
+#include <dcmtk/ofstd/ofstdinc.h>
 
 BEGIN_EXTERN_C
 #ifdef HAVE_SYS_FILE_H
@@ -86,21 +92,22 @@ BEGIN_EXTERN_C
 #endif
 END_EXTERN_C
 
-#include "dicom.h"
-#include "dcmqropt.h"
-#include "dimse.h"
-#include "dcmqrcnf.h"
-#include "dcmqrsrv.h"
-#include "dcdict.h"
-#include "dcdebug.h"
-#include "cmdlnarg.h"
-#include "ofconapp.h"
-#include "dcuid.h"       /* for dcmtk version name */
+#include <dcmtk/dcmnet/dicom.h>
+#include <dcmtk/dcmqrdb/dcmqropt.h>
+#include <dcmtk/dcmnet/dimse.h>
+#include <dcmtk/dcmqrdb/dcmqrcnf.h>
+#include <dcmtk/dcmqrdb/dcmqrsrv.h>
+#include <dcmtk/dcmdata/dcdict.h>
+#include "HorosDCMTKCompatibility.h"
+#include "HorosTLSConfiguration.h"
+#include <dcmtk/dcmdata/cmdlnarg.h>
+#include <dcmtk/ofstd/ofconapp.h>
+#include <dcmtk/dcmdata/dcuid.h>       /* for dcmtk version name */
 
 //#ifdef WITH_SQL_DATABASE
 #include "dcmqrdbq.h"
 //#else
-//#include "dcmqrdbi.h"
+//#include <dcmtk/dcmqrdb/dcmqrdbi.h>
 //#endif
 
 #define OPENSSL_DISABLE_OLD_DES_SUPPORT // joris
@@ -109,8 +116,8 @@ END_EXTERN_C
 #ifdef UI
 #undef UI // For MacOS 10.7 compilation
 #endif
-#include "tlstrans.h"
-#include "tlslayer.h"
+#include <dcmtk/dcmtls/tlstrans.h>
+#include <dcmtk/dcmtls/tlslayer.h>
 #endif
 
 #ifdef WITH_ZLIB
@@ -128,33 +135,104 @@ END_EXTERN_C
 //OFBool      opt_checkMoveIdentifier = OFFalse;
 //OFCmdUnsignedInt opt_port = 0;
 
-DcmQueryRetrieveSCP *scp = nil;
-DcmQueryRetrieveSCP *scptls = nil;
+HorosQueryRetrieveServer *scp = nil;
+HorosQueryRetrieveServer *scptls = nil;
 
-OFCondition mainStoreSCP(T_ASC_Association * assoc, T_DIMSE_C_StoreRQ * request, T_ASC_PresentationContextID presId, DcmQueryRetrieveDatabaseHandle *dbHandle)
+OFCondition mainStoreSCP(T_ASC_Association* assoc, T_DIMSE_C_StoreRQ* request, T_ASC_PresentationContextID presId, DcmQueryRetrieveDatabaseHandle* dbHandle)
 {
-	OFBool isTLS = assoc->params->DULparams.useSecureLayer;
-	if(!isTLS)
-	{
-		if( scp == nil)
-		{
-			NSLog( @"***** scp == nil !");
-			return EC_IllegalCall;
-		}
-		else
-			return scp->storeSCP( assoc, request, presId, *dbHandle, FALSE);
-	}
-	else
-	{
-		if( scptls == nil)
-		{
-			NSLog( @"***** scptls == nil !");
-			return EC_IllegalCall;
-		}
-		else
-			return scptls->storeSCP( assoc, request, presId, *dbHandle, FALSE);
-	}
-	return EC_IllegalCall;
+    DcmQueryRetrieveOptions options;
+    options.blockMode_ = DIMSE_NONBLOCKING;
+    options.dimse_timeout_ = (int)[[NSUserDefaults standardUserDefaults] integerForKey:@"DICOMTimeout"];
+    return HorosStoreSCP(assoc, *request, presId, *dbHandle, options);
+}
+
+
+static const char *HorosIncomingAssociationProfile = "HOROS_INCOMING";
+static const char *HorosIncomingPresentationContexts = "HOROS_INCOMING_CONTEXTS";
+static const char *HorosIncomingTransferSyntaxes = "HOROS_INCOMING_TRANSFER_SYNTAXES";
+static const char *HorosIncomingRoles = "HOROS_INCOMING_ROLES";
+
+static OFBool HorosSupportsIncomingTransferSyntax(E_TransferSyntax syntax)
+{
+    const int syntaxValue = OFstatic_cast(int, syntax);
+    if (syntaxValue < OFstatic_cast(int, EXS_LittleEndianImplicit) ||
+        syntaxValue > OFstatic_cast(int, EXS_HighThroughputJPEG2000))
+        return OFFalse;
+
+    if (syntax == EXS_BigEndianImplicit || syntax == EXS_JPIPReferenced ||
+        syntax == EXS_JPIPReferencedDeflate)
+        return OFFalse;
+
+    DcmXfer xfer(syntax);
+    return xfer.isValid() && xfer.getXferID()[0] != '\0' &&
+           xfer.getStreamCompression() != ESC_unsupported;
+}
+
+static OFCondition HorosAddIncomingTransferSyntax(DcmAssociationConfiguration &configuration,
+                                                   OFBool *addedSyntaxes,
+                                                   E_TransferSyntax syntax)
+{
+    if (!HorosSupportsIncomingTransferSyntax(syntax))
+        return EC_Normal;
+
+    const int syntaxValue = OFstatic_cast(int, syntax);
+    if (addedSyntaxes[syntaxValue])
+        return EC_Normal;
+
+    DcmXfer xfer(syntax);
+    OFCondition condition = configuration.addTransferSyntax(HorosIncomingTransferSyntaxes,
+                                                             xfer.getXferID());
+    if (condition.good())
+        addedSyntaxes[syntaxValue] = OFTrue;
+    return condition;
+}
+
+static OFCondition HorosConfigureIncomingAssociationProfile(DcmAssociationConfiguration &configuration,
+                                                             E_TransferSyntax preferredSyntax)
+{
+    // Most C-STORE senders use the default requestor-SCU role, while C-GET
+    // requires the requestor to act as Storage SCP. Accept both forms.
+    configuration.setAlwaysAcceptDefaultRole(OFTrue);
+
+    OFBool addedSyntaxes[OFstatic_cast(int, EXS_HighThroughputJPEG2000) + 1];
+    memset(addedSyntaxes, 0, sizeof(addedSyntaxes));
+
+    OFCondition condition = HorosAddIncomingTransferSyntax(configuration, addedSyntaxes,
+                                                            preferredSyntax);
+    if (condition.good())
+        condition = HorosAddIncomingTransferSyntax(configuration, addedSyntaxes,
+                                                    EXS_LittleEndianExplicit);
+    if (condition.good())
+        condition = HorosAddIncomingTransferSyntax(configuration, addedSyntaxes,
+                                                    EXS_BigEndianExplicit);
+    if (condition.good())
+        condition = HorosAddIncomingTransferSyntax(configuration, addedSyntaxes,
+                                                    EXS_LittleEndianImplicit);
+
+    for (int syntaxValue = OFstatic_cast(int, EXS_LittleEndianImplicit);
+         condition.good() && syntaxValue <= OFstatic_cast(int, EXS_HighThroughputJPEG2000);
+         ++syntaxValue)
+    {
+        condition = HorosAddIncomingTransferSyntax(configuration, addedSyntaxes,
+                                                    OFstatic_cast(E_TransferSyntax, syntaxValue));
+    }
+
+    for (int index = 0; condition.good() && index < numberOfDcmAllStorageSOPClassUIDs; ++index)
+    {
+        const char *sopClass = dcmAllStorageSOPClassUIDs[index];
+        condition = configuration.addPresentationContext(HorosIncomingPresentationContexts,
+                                                         sopClass,
+                                                         HorosIncomingTransferSyntaxes,
+                                                         OFFalse);
+        if (condition.good())
+            condition = configuration.addRole(HorosIncomingRoles, sopClass, ASC_SC_ROLE_SCUSCP);
+    }
+
+    if (condition.good())
+        condition = configuration.addProfile(HorosIncomingAssociationProfile,
+                                             HorosIncomingPresentationContexts,
+                                             HorosIncomingRoles);
+    return condition;
 }
 
 void errmsg(const char* msg, ...)
@@ -228,7 +306,7 @@ void errmsg(const char* msg, ...)
     DcmQueryRetrieveOptions options;
 
 	//verbose
-	options.verbose_= 0;
+
 	
 	//single process
 	options.singleProcess_ = [[NSUserDefaults standardUserDefaults] boolForKey: @"SingleProcessMultiThreadedListener"];
@@ -344,13 +422,18 @@ void errmsg(const char* msg, ...)
     }
 
 	//init the network
+	dcmIncomingProtocolFamily.set(ASC_AF_UNSPEC);
 	cond = ASC_initializeNetwork(NET_ACCEPTORREQUESTOR, (int)_port, options.acse_timeout_, &options.net_);
     if (cond.bad())
 	{
+		int bindErrno = errno;
 		errmsg("Error initialising network:");
 		DimseCondition::dump(cond);
 		
-        [[AppController sharedAppController] performSelectorOnMainThread:@selector(displayUpdateMessage:) withObject:@"LISTENER" waitUntilDone: NO];
+		NSString *service = [[_params objectForKey:@"TLSEnabled"] boolValue] ? @"DICOM TLS listen" : @"DICOM listen";
+        [[AppController sharedAppController] reportListenBindFailureForService:service
+                                                                          port:_port
+                                                                     errnoCode:bindErrno];
 		return;
     }
 	
@@ -369,14 +452,17 @@ void errmsg(const char* msg, ...)
 	
 	if([[_params objectForKey:@"TLSEnabled"] boolValue])
 	{
-		tLayer = new DcmTLSTransportLayer(DICOM_APPLICATION_ACCEPTOR, [TLS_SEED_FILE cStringUsingEncoding:NSUTF8StringEncoding]); // joris DICOM_APPLICATION_ACCEPTOR for server!!
+		tLayer = new DcmTLSTransportLayer(NET_ACCEPTOR, [TLS_SEED_FILE cStringUsingEncoding:NSUTF8StringEncoding], OFTrue); // joris DICOM_APPLICATION_ACCEPTOR for server!!
 		if (tLayer == NULL)
 		{
 			[[AppController sharedAppController] performSelectorOnMainThread: @selector(displayListenerError:) withObject: @"unable to create TLS transport layer" waitUntilDone: NO];
 			return;
 		}
 		
-		TLSCertificateVerificationType certVerification = (TLSCertificateVerificationType)[[[NSUserDefaults standardUserDefaults] valueForKey:@"TLSStoreSCPCertificateVerification"] intValue];
+		// Normalise first: the stored value is an unbounded intValue, and anything
+		// that was not 0 or 1 used to fall into the else further down and turn peer
+		// verification off. An unknown value now becomes the strictest.
+		TLSCertificateVerificationType certVerification = (TLSCertificateVerificationType)[HorosTLSVerificationPolicy normalise: [[[NSUserDefaults standardUserDefaults] valueForKey:@"TLSStoreSCPCertificateVerification"] intValue]];
 		
 		if(certVerification==VerifyPeerCertificate || certVerification==RequirePeerCertificate)
 		{
@@ -386,7 +472,7 @@ void errmsg(const char* msg, ...)
 			
 			for (NSString *cert in trustedCertificates)
 			{
-				if (TCS_ok != tLayer->addTrustedCertificateFile([[trustedCertificatesDir stringByAppendingPathComponent:cert] cStringUsingEncoding:NSUTF8StringEncoding], SSL_FILETYPE_PEM))
+				if (tLayer->addTrustedCertificateFile([[trustedCertificatesDir stringByAppendingPathComponent:cert] cStringUsingEncoding:NSUTF8StringEncoding], DCF_Filetype_PEM).bad())
 				{
 					NSString *errMessage = [NSString stringWithFormat: @"DICOM Network Failure (storescp TLS) : Unable to load certificate file %@. You can turn OFF TLS Listener in Preferences->Listener.", [trustedCertificatesDir stringByAppendingPathComponent:cert]];
 					[[AppController sharedAppController] performSelectorOnMainThread: @selector(displayListenerError:) withObject: errMessage waitUntilDone: NO];
@@ -403,7 +489,7 @@ void errmsg(const char* msg, ...)
 			//				do
 			//				{
 			//					app.checkValue(cmd.getValue(current));
-			//					if (TCS_ok != tLayer->addTrustedCertificateDir(current, opt_keyFileFormat))
+			//					if (tLayer->addTrustedCertificateDir(current, opt_keyFileFormat).bad())
 			//					{
 			//						CERR << "warning unable to load certificates from directory '" << current << "', ignoring" << endl;
 			//					}
@@ -426,14 +512,14 @@ void errmsg(const char* msg, ...)
 			NSString *_privateKeyFile = [DICOMTLS keyPathForLabel:TLS_KEYCHAIN_IDENTITY_NAME_SERVER withStringID:@"StoreSCPTLS"]; // generates the PEM file for the private key
 			NSString *_certificateFile = [DICOMTLS certificatePathForLabel:TLS_KEYCHAIN_IDENTITY_NAME_SERVER withStringID:@"StoreSCPTLS"]; // generates the PEM file for the certificate
 			
-			if (TCS_ok != tLayer->setPrivateKeyFile([_privateKeyFile cStringUsingEncoding:NSUTF8StringEncoding], SSL_FILETYPE_PEM))
+			if (tLayer->setPrivateKeyFile([_privateKeyFile cStringUsingEncoding:NSUTF8StringEncoding], DCF_Filetype_PEM).bad())
 			{
 				NSString *errMessage = [NSString stringWithFormat: @"DICOM Network Failure (storescp TLS) : Unable to load private TLS key from %@. You can turn OFF TLS Listener in Preferences->Listener.", _privateKeyFile];
 				[[AppController sharedAppController] performSelectorOnMainThread: @selector(displayListenerError:) withObject: errMessage waitUntilDone: NO];
 				return;
 			}
 			
-			if (TCS_ok != tLayer->setCertificateFile([_certificateFile cStringUsingEncoding:NSUTF8StringEncoding], SSL_FILETYPE_PEM))
+			if (tLayer->setCertificateFile([_certificateFile cStringUsingEncoding:NSUTF8StringEncoding], DCF_Filetype_PEM, TSP_Profile_BCP_195_RFC_8996).bad())
 			{
 				NSString *errMessage = [NSString stringWithFormat: @"DICOM Network Failure (storescp TLS) : Unable to load certificate from %@. You can turn OFF TLS Listener in Preferences->Listener.", _certificateFile];
 				[[AppController sharedAppController] performSelectorOnMainThread: @selector(displayListenerError:) withObject: errMessage waitUntilDone: NO];
@@ -459,48 +545,15 @@ void errmsg(const char* msg, ...)
 		
 		NSArray *_cipherSuites = [NSArray arrayWithArray:selectedCipherSuites];
 		
-		if(_cipherSuites)
-		{
-			const char *current = NULL;
-			const char *currentOpenSSL;
-			
-			static OFString opt_ciphersuites(TLS1_TXT_RSA_WITH_AES_128_SHA ":" SSL3_TXT_RSA_DES_192_CBC3_SHA);
-			opt_ciphersuites.clear();
-			
-			for (NSString *suite in _cipherSuites)
-			{
-				current = [suite cStringUsingEncoding:NSUTF8StringEncoding];
-				
-				if (NULL == (currentOpenSSL = DcmTLSTransportLayer::findOpenSSLCipherSuiteName(current)))
-				{
-					NSLog(@"ciphersuite '%s' is unknown.", current);
-					NSLog(@"Known ciphersuites are:");
-					
-					unsigned long numSuites = DcmTLSTransportLayer::getNumberOfCipherSuites();
-					for (unsigned long cs=0; cs < numSuites; cs++)
-					{
-						NSLog(@"%s", DcmTLSTransportLayer::getTLSCipherSuiteName(cs));
-					}
-					
-					NSString *errMessage = [NSString stringWithFormat: @"DICOM Network Failure (storescp TLS) : Ciphersuite '%s' is unknown. You can turn OFF TLS Listener in Preferences->Listener.", current];
-					[[AppController sharedAppController] performSelectorOnMainThread: @selector(displayListenerError:) withObject: errMessage waitUntilDone: NO];
-					return;
-				}
-				else
-				{
-					if (opt_ciphersuites.length() > 0) opt_ciphersuites += ":";
-					opt_ciphersuites += currentOpenSSL;
-				}
-				
-			}
-		
-			if (TCS_ok != tLayer->setCipherSuites(opt_ciphersuites.c_str()))
-			{
-				NSString *errMessage = [NSString stringWithFormat: @"DICOM Network Failure (storescp TLS) : Unable to set selected cipher suites. You can turn OFF TLS Listener in Preferences->Listener."];
-				[[AppController sharedAppController] performSelectorOnMainThread: @selector(displayListenerError:) withObject: errMessage waitUntilDone: NO];
-				return;
-			}
-		}
+        OFCondition cipherResult = HorosConfigureTLSCipherSuites(*tLayer, _cipherSuites);
+        if (cipherResult.bad())
+        {
+            NSString *errMessage = [NSString stringWithFormat:@"DICOM Network Failure (storescp TLS): %s", cipherResult.text()];
+            [[AppController sharedAppController] performSelectorOnMainThread:@selector(displayListenerError:) withObject:errMessage waitUntilDone:NO];
+            delete tLayer;
+            ASC_dropNetwork(&options.net_);
+            return;
+        }
 
 		DcmCertificateVerification _certVerification;
 		
@@ -527,31 +580,66 @@ void errmsg(const char* msg, ...)
 	
 	
 
-// Have this to avoid errors until I can get rid of it
+	NSString *storageArea = [[DicomDatabase activeLocalDatabase] incomingDirPath];
+	NSString *configPath = [NSTemporaryDirectory() stringByAppendingPathComponent: [NSString stringWithFormat: @"Horos-dcmqrscp-%d-%@.cfg", (int) getpid(), _aeTitle]];
+	NSString *configText = [NSString stringWithFormat:
+		@"NetworkTCPPort %d\n"
+		@"MaxPDUSize %lu\n"
+		@"MaxAssociations %d\n"
+		@"HostTable BEGIN\n"
+		@"HostTable END\n"
+		@"VendorTable BEGIN\n"
+		@"VendorTable END\n"
+		@"AETable BEGIN\n"
+		@"%@ \"%@\" RW (20000, 1024mb) ANY\n"
+		@"AETable END\n",
+		_port,
+		(unsigned long) options.maxPDU_,
+		(int) options.maxAssociations_,
+		_aeTitle,
+		storageArea];
+
+	if( [configText writeToFile: configPath atomically: YES encoding: NSUTF8StringEncoding error: nil] == NO)
+	{
+		[[AppController sharedAppController] performSelectorOnMainThread: @selector(displayListenerError:) withObject: @"Unable to create DICOM listener configuration." waitUntilDone: NO];
+		ASC_dropNetwork(&options.net_);
+		return;
+	}
+
 DcmQueryRetrieveConfig config;
+	if( !config.init( [configPath fileSystemRepresentation]))
+	{
+		[[AppController sharedAppController] performSelectorOnMainThread: @selector(displayListenerError:) withObject: @"Unable to read DICOM listener configuration." waitUntilDone: NO];
+		ASC_dropNetwork(&options.net_);
+		return;
+	}
+DcmAssociationConfiguration asccfg;
 
-//#ifdef WITH_SQL_DATABASE
-    // use SQL database
+	OFCondition profileCondition = HorosConfigureIncomingAssociationProfile(asccfg,
+	                                                                        options.networkTransferSyntax_);
+	if (profileCondition.good())
+		options.incomingProfile = HorosIncomingAssociationProfile;
+	else
+    {
+        NSString *message = [NSString stringWithFormat:@"Unable to configure DICOM listener: %s",
+                             profileCondition.text()];
+        [[AppController sharedAppController] performSelectorOnMainThread:@selector(displayListenerError:)
+                                                              withObject:message waitUntilDone:NO];
+        ASC_dropNetwork(&options.net_);
+#ifdef WITH_OPENSSL
+        delete tLayer;
+#endif
+        return;
+    }
+
     DcmQueryRetrieveOsiriXDatabaseHandleFactory factory;
-//#else
-    // use linear index database (index.dat)
-//    DcmQueryRetrieveIndexDatabaseHandleFactory factory(&config);
-//#endif
-	 //use if static scp rather than pointer
-    //DcmQueryRetrieveSCP scp(config, options, factory);
-	//scp.setDatabaseFlags(OFFalse, OFFalse, options.debug_);
-
-	DcmQueryRetrieveSCP *localSCP = nil;
-	
-	localSCP = new DcmQueryRetrieveSCP(config, options, factory);
+	HorosQueryRetrieveServer *localSCP = new HorosQueryRetrieveServer(config, options, factory, asccfg,
+        [[_params objectForKey:@"TLSEnabled"] boolValue]);
 	
 	if([[_params objectForKey:@"TLSEnabled"] boolValue])
 		scptls = localSCP;
 	else
 		scp = localSCP;
-	
-	localSCP->setDatabaseFlags(OFFalse, OFFalse, options.debug_);
-	localSCP->setSecureConnection([[_params objectForKey:@"TLSEnabled"] boolValue]);
 	
 	_abort = NO;
 	running = YES;
@@ -583,9 +671,7 @@ DcmQueryRetrieveConfig config;
 		}
 	}
 	
-    [NSThread sleepForTimeInterval: 1];
-    [ContextCleaner waitForHandledAssociations];
-    [NSThread sleepForTimeInterval: 1];
+    // The server cancels and joins its own association workers before releasing configuration.
     
 	if( _abort)
 		NSLog( @"---- store-SCP aborted");

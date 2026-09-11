@@ -3176,7 +3176,7 @@
 	<string>0014,5002</string>
 	<key>LINACOutput</key>
 	<string>0014,5004</string>
-	<key>LUTDataUS/SS/OW</key>
+	<key>LUTData</key>
 	<string>0028,3006</string>
 	<key>LUTDescriptor</key>
 	<string>0028,3002</string>

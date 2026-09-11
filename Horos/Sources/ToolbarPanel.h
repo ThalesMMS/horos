@@ -49,6 +49,11 @@
 @property (readonly) ViewerController *viewer;
 
 - (long) fixedHeight;
+/// What the title bar and the toolbar of a panel window actually take, asked of
+/// AppKit rather than assumed. Zero for no window.
++ (long) heightForPanelWindow: (NSWindow*) window;
+/// The tallest panel measured so far, never less than the historical 100.
++ (long) panelHeight;
 + (long) hiddenHeight;
 - (long) exposedHeight;
 + (long) exposedHeight;
@@ -56,5 +61,6 @@
 - (NSToolbar*) toolbar;
 + (void) checkForValidToolbar;
 - (void)applicationDidChangeScreenParameters:(NSNotification*)aNotification;
+- (void)toolbarDidChange:(NSNotification*)aNotification;
 
 @end

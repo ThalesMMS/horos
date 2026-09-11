@@ -174,7 +174,15 @@
     glPushMatrix();
     glMultMatrixd(dicomToPixGLTransform);
     
-    glLineWidth(3.0);    
+    glLineWidth(3.0);
+    NSColor *drawColor = [self.fillColor colorUsingColorSpaceName:NSCalibratedRGBColorSpace];
+    if (drawColor == nil) {
+        glPopMatrix();
+        return;
+    }
+    glEnable(GL_BLEND);
+    glBlendEquation(GL_FUNC_ADD);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     
     // let's try drawing some the mask
     OSIROIMask *mask;
@@ -189,7 +197,7 @@
     mask = [self ROIMaskForFloatVolumeData:[self homeFloatVolumeData]];
     maskRuns = [mask maskRuns];
     
-    glColor3f(1, 0, 1);
+    glColor4f((float)[drawColor redComponent], (float)[drawColor greenComponent], (float)[drawColor blueComponent], (float)[drawColor alphaComponent]);
     glBegin(GL_LINES);
     for (maskRunValue in maskRuns) {
         maskRun = [maskRunValue OSIROIMaskRunValue];
@@ -204,6 +212,7 @@
         glVertex3d(lineEnd.x, lineEnd.y, lineEnd.z);
     }
     glEnd();
+    glDisable(GL_BLEND);
     
     glPopMatrix();
 }

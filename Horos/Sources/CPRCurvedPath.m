@@ -36,6 +36,7 @@ The Horos Project was based originally upon the OsiriX Project which at the time
  ============================================================================*/
 
 #import "CPRCurvedPath.h"
+#import <math.h>
 #import "N3BezierPath.h"
 #import "N3BezierCoreAdditions.h"
 #import "CPRGeneratorRequest.h"
@@ -259,12 +260,15 @@ static CPRCurvedPathControlToken _controlTokenForElement(NSInteger element)
     node = N3VectorMake(point.x, point.y, 0);
     node = N3VectorApplyTransform(node, transform);
     
+    if (!isfinite(node.x) || !isfinite(node.y) || !isfinite(node.z)) {
+        NSLog(@"Warning, CPRCurvedPath refusing a non-finite node");
+        return;
+    }
+    
     if ([_nodes count] && N3VectorDistance([[_nodes lastObject] N3VectorValue], node) < _CPRCurvedPathNodeSpacingThreshold) {
         NSLog(@"Warning, CPRCurvedPath trying to add a node too close to the last node");
         return; // don't bother adding the point if it is already the last point
     }
-    
-    assert(N3VectorIsZero(node) == false);
     
     [_nodes addObject:[NSValue valueWithN3Vector:node]];
     
@@ -278,12 +282,14 @@ static CPRCurvedPathControlToken _controlTokenForElement(NSInteger element)
 - (void)insertPatientNode:(N3Vector)node atIndex:(NSUInteger)index // adds the point to z = 0 in the arbitrary coordinate space to a given index
 {
     assert(index >= 0);
+    if (!isfinite(node.x) || !isfinite(node.y) || !isfinite(node.z)) {
+        NSLog(@"Warning, CPRCurvedPath refusing a non-finite node");
+        return;
+    }
     if ([_nodes count] && N3VectorDistance([[_nodes lastObject] N3VectorValue], node) < _CPRCurvedPathNodeSpacingThreshold) {
         NSLog(@"Warning, CPRCurvedPath trying to add a node too close to the last node");
         return; // don't bother adding the point if it is already the last point
     }
-    
-    assert(N3VectorIsZero(node) == false);
     
     if (index < [_nodes count]) {
         [_nodes insertObject:[NSValue valueWithN3Vector:node] atIndex:index];
@@ -300,12 +306,14 @@ static CPRCurvedPathControlToken _controlTokenForElement(NSInteger element)
 
 - (void)addPatientNode:(N3Vector)node
 {
+    if (!isfinite(node.x) || !isfinite(node.y) || !isfinite(node.z)) {
+        NSLog(@"Warning, CPRCurvedPath refusing a non-finite node");
+        return;
+    }
     if ([_nodes count] && N3VectorDistance([[_nodes lastObject] N3VectorValue], node) < _CPRCurvedPathNodeSpacingThreshold) {
         NSLog(@"Warning, CPRCurvedPath trying to add a node too close to the last node");
         return; // don't bother adding the point if it is already the last point
     }
-    
-    assert(N3VectorIsZero(node) == false);
     
     [_nodes addObject:[NSValue valueWithN3Vector:node]];
     

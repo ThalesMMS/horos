@@ -1,5 +1,10 @@
 #ifdef __OBJC__
     #import <Cocoa/Cocoa.h>
+    // Horos-Swift.h declares the Swift preference pane as an NSPreferencePane
+    // subclass. Its own `@import PreferencePanes;` is compiled out because this
+    // target builds without modules, so every file that includes the generated
+    // header needs the framework declared here instead.
+    #import <PreferencePanes/PreferencePanes.h>
 #endif
 
 #define HOROS_VIEWER

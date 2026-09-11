@@ -39,21 +39,22 @@
 
 #undef verify
 
-#include "osconfig.h"    /* make sure OS specific configuration is included first */
+#include "HorosDCMTKCompatibility.h"
+#include <dcmtk/config/osconfig.h>    /* make sure OS specific configuration is included first */
 
-#define INCLUDE_CCTYPE
-#include "ofstdinc.h"
+#include <cctype>
+#include <dcmtk/ofstd/ofstdinc.h>
 
-#include "ofstream.h"
-#include "dviface.h"
-#include "dvpssp.h"
-#include "dcmimage.h"
-#include "cmdlnarg.h"
-#include "ofcmdln.h"
-#include "ofconapp.h"
-#include "dcuid.h"       /* for dcmtk version name */
-#include "oflist.h"
-#include "dcdebug.h"
+#include <dcmtk/ofstd/ofstream.h>
+#include <dcmtk/dcmpstat/dviface.h>
+#include <dcmtk/dcmpstat/dvpssp.h>
+#include <dcmtk/dcmimgle/dcmimage.h>
+#include <dcmtk/dcmdata/cmdlnarg.h>
+#include <dcmtk/ofstd/ofcmdln.h>
+#include <dcmtk/ofstd/ofconapp.h>
+#include <dcmtk/dcmdata/dcuid.h>       /* for dcmtk version name */
+#include <dcmtk/ofstd/oflist.h>
+#include "HorosDCMTKCompatibility.h"
 
 
 @implementation DCMTKPrintSCU

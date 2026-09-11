@@ -53,7 +53,7 @@
 #include <stdlib.h>
 #include <iostream>
 
-#include "ofthread.h"
+#include <dcmtk/ofstd/ofthread.h>
 
 //#define WITH_OPJ_BUFFER_STREAM
 #define WITH_OPJ_FILE_STREAM
@@ -69,7 +69,8 @@ struct opj_memory_stream
 static OPJ_SIZE_T opj_read_from_memory(void* p_buffer, OPJ_SIZE_T p_nb_bytes, void* p_user_data)
 {
     opj_memory_stream* ms = (opj_memory_stream*)p_user_data;
-    if (!ms || ms->offset >= ms->size) return (OPJ_SIZE_T)0;
+    // OpenJPEG uses -1 for EOF; zero makes its read loop retry without progress.
+    if (!ms || ms->offset >= ms->size) return (OPJ_SIZE_T)-1;
 
     OPJ_SIZE_T remaining = ms->size - ms->offset;
     OPJ_SIZE_T read_bytes = (p_nb_bytes < remaining) ? p_nb_bytes : remaining;
@@ -494,7 +495,12 @@ void* OPJSupport::decompressJPEG2KWithBuffer(void* inputBuffer,
         
         alpha = NULL;
         
-        has_rgb = (decodeInfo.image->numcomps == 3);
+        // The guard above admits numcomps >= 3, and the comment there says
+        // RGB[A]: four components are RGB with alpha, not greyscale. Testing
+        // for exactly 3 sent an RGBA image down the greyscale branch, which
+        // read all three channels from comps[0] and left alpha NULL while
+        // hasAlpha was true - a null dereference in the loop below.
+        has_rgb = (decodeInfo.image->numcomps >= 3);
         has_alpha4 = (decodeInfo.image->numcomps == 4);
         has_alpha2 = (decodeInfo.image->numcomps == 2);
         hasAlpha = (has_alpha4 || has_alpha2);

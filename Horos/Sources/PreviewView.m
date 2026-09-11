@@ -37,8 +37,55 @@
 
 #import "PreviewView.h"
 #import "NSFont_OpenGL.h"
+#import "Horos-Swift.h"
 
 @implementation PreviewView
+
+@synthesize windowDelegate;
+
+- (void) setWLWW:(float) wl :(float) ww
+{
+    [super setWLWW: wl : ww];
+    
+    // Everything that is not the policy putting a default back is a person
+    // moving the window, and must survive the next scroll (#608).
+    if( applyingPreviewWindow == 0)
+        [windowDelegate previewView: self didRequestWindowLevel: wl width: ww];
+}
+
+- (void) applyPreviewWindow: (HorosPreviewWindow*) window
+{
+    if( window == nil)
+        return;
+    
+    applyingPreviewWindow++;
+    @try
+    {
+        [self setWLWW: window.level : window.width];
+    }
+    @finally
+    {
+        applyingPreviewWindow--;
+    }
+}
+
+- (void) updatePresentationStateFromSeriesOnlyImageLevel:(BOOL) onlyImage scale:(BOOL) scale offset:(BOOL) offset
+{
+    // In the preview this restores the window the view already has, or the one
+    // the file carries. Either way nobody moved it: recording that as a manual
+    // adjustment made the first frame of every selection look like a choice
+    // somebody had made, and pinned it for the rest of the series (#610).
+    applyingPreviewWindow++;
+    @try
+    {
+        [super updatePresentationStateFromSeriesOnlyImageLevel: onlyImage scale: scale offset: offset];
+    }
+    @finally
+    {
+        applyingPreviewWindow--;
+    }
+}
+
 
 - (void) changeGLFontNotification:(NSNotification*) note
 {

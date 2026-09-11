@@ -37,6 +37,7 @@
 #ifdef _STEREO_VISION_
 
 
+#import "Horos-Swift.h"
 #import "SRController+StereoVision.h"
 #import "SRController.h"
 #import "DCMView.h"
@@ -335,6 +336,9 @@ static NSString*	BackgroundColorViewToolbarItemIdentifier		= @"BackgroundColorVi
 		[toolbarItem release];
 		toolbarItem = nil;
 	}
+	
+	[HorosToolbarPolicy prepareItem: toolbarItem];
+	
 	return [toolbarItem autorelease];
 }
 	

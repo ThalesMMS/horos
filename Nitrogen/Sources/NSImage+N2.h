@@ -54,6 +54,9 @@
 -(NSImage*)imageByScalingProportionallyToSizeUsingNSImage:(NSSize)targetSize;
 -(NSImage*)imageByScalingProportionallyUsingNSImage:(float)ratio;
 
++ (NSImage *)toolbarImageNamed:(NSString *)name;
++ (NSImage *)toolbarImageNamed:(NSString *)name size:(NSSize)size;
+
 @end
 
 @interface N2Image : NSImage {

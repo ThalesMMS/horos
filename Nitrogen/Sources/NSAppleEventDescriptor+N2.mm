@@ -160,6 +160,12 @@
 		case typeBoolean: {
 			bool temp; [descriptor.data getBytes:&temp length:sizeof(temp)]; return [NSNumber numberWithBool:temp];
 		} break;
+        // AppleScript literals can return zero-payload 'true'/'fals' descriptors,
+        // not only a 'bool' descriptor with one data byte.
+        case typeTrue:
+            return @YES;
+        case typeFalse:
+            return @NO;
         case 'obj ': {
             NSMutableDictionary* dict = [NSMutableDictionary dictionary];
             [dict setObject:[[descriptor descriptorAtIndex:1] object] forKey:@"class"];

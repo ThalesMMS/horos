@@ -36,6 +36,7 @@
  ============================================================================*/
 
 #import "ToolbarPanel.h"
+#import "Horos-Swift.h"
 #import "ToolBarNSWindow.h"
 #import "ViewerController.h"
 #import "AppController.h"
@@ -47,15 +48,47 @@ extern BOOL USETOOLBARPANEL;
 
 //static int MacOSVersion109orHigher = -1;
 
+// A floor, not the answer. This was the answer when the toolbar was shorter; on
+// a current system the icons and their labels need more than a hundred points,
+// and what did not fit was the bottom of the labels - the descenders of "Cloud
+// Report" and "Key Image" cut off against the windows tiled underneath. AppKit
+// says so plainly: the panel's contentLayoutRect came back zero points tall,
+// meaning the title bar and the toolbar had already taken everything there was.
 static int fixedHeight = 100;
+static long measuredHeight = 0;
 
 @implementation ToolbarPanelController
 
 @synthesize viewer;
 
+// How tall the title bar and the toolbar are is AppKit's business: the toolbar
+// style, the system font size and the labels themselves all move it. Asking for
+// the frame that would leave no content at all is asking exactly that.
++ (long) heightForPanelWindow: (NSWindow*) window
+{
+    if( window == nil)
+        return 0;
+    
+    NSRect nothing = NSMakeRect( 0, 0, NSWidth( window.frame), 0);
+    
+    return (long) ceil( NSHeight( [window frameRectForContentRect: nothing]));
+}
+
+// The toolbar is the same for every viewer, so the first panel to be asked
+// answers for the class methods too - which the tiling needs, and which have no
+// window of their own to ask.
++ (long) panelHeight
+{
+    return measuredHeight > fixedHeight ? measuredHeight : fixedHeight;
+}
+
 - (long) fixedHeight
 {
-    return fixedHeight;
+    long needed = [ToolbarPanelController heightForPanelWindow: [self window]];
+    if( needed > measuredHeight)
+        measuredHeight = needed;
+    
+    return [ToolbarPanelController panelHeight];
 }
 
 + (long) hiddenHeight {
@@ -63,11 +96,11 @@ static int fixedHeight = 100;
 }
 
 - (long) exposedHeight {
-	return fixedHeight - [ToolbarPanelController hiddenHeight];
+	return [ToolbarPanelController exposedHeight];
 }
 
 + (long) exposedHeight {
-	return fixedHeight - [ToolbarPanelController hiddenHeight];
+	return [ToolbarPanelController panelHeight] - [ToolbarPanelController hiddenHeight];
 }
 
 + (void) checkForValidToolbar
@@ -86,7 +119,11 @@ static int fixedHeight = 100;
 
 -(void)applicationDidChangeScreenParameters:(NSNotification*)aNotification
 {
-	NSRect screenRect = [viewer.window.screen visibleFrame];
+	// Confined to the area this screen may hold Horos windows on, for the same
+	// reason as the thumbnails list: a strip across the whole display would cross
+	// whatever the reserved part is for.
+	NSScreen *thisScreen = viewer.window.screen;
+	NSRect screenRect = [HorosTilingArea rectForScreen: thisScreen visibleFrame: thisScreen.visibleFrame];
 	
 	NSRect dstframe;
 	dstframe.size.height = [self fixedHeight];
@@ -96,6 +133,11 @@ static int fixedHeight = 100;
 	
     if( NSEqualRects( dstframe, self.window.frame) == NO)
         [[self window] setFrame:dstframe display:YES];
+}
+
+- (void) toolbarDidChange: (NSNotification*) aNotification
+{
+    [self applicationDidChangeScreenParameters: aNotification];
 }
 
 - (id)initForViewer:(ViewerController *)v withToolbar:(NSToolbar *)t
@@ -126,6 +168,8 @@ static int fixedHeight = 100;
 		
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(windowDidBecomeMain:) name:NSWindowDidBecomeMainNotification object:0];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(windowDidBecomeKey:) name:NSWindowDidBecomeKeyNotification object:0];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(toolbarDidChange:) name:NSToolbarDidRemoveItemNotification object: toolbar];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(toolbarDidChange:) name:NSToolbarWillAddItemNotification object: toolbar];
         
         [self.window safelySetMovable:NO];
         [self.window setShowsToolbarButton:NO];

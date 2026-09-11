@@ -1,0 +1,11 @@
+{
+  "cryptography": {
+    "url": "https://github.com/pyca/cryptography.git",
+    "revision": "ffde75a2b594822c740a2e4748b56c00548302bf",
+    "version": "50.0.1"
+  },
+  "wycheproof": {
+    "url": "https://github.com/C2SP/wycheproof.git",
+    "revision": "3fa63dd0344abb611f1fb1d77e119938603ea230"
+  }
+}

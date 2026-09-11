@@ -1,0 +1,83 @@
+Horos workbench — notices, credits and provenance
+=================================================
+
+This file is not legal advice. It records the notices that belong with a
+distribution of this workbench and the origin texts that were snapshotted.
+It does not assign exclusive authorship of Horos to this repository.
+
+Credits
+-------
+
+- OsiriX Team — original OsiriX viewer, LGPLv3 (see LICENSE).
+- The Horos Project (www.horosproject.org) — Horos fork, LGPLv3.
+- Contributors to this workbench — local modifications in ThalesMMS/horos-workbench.
+- Yves Starreveld and ystarrev/horos — query/retrieve server excerpts adapted under #371; planar shader sampling order adapted under #373.
+  Snapshot 23722fb552d96fa2d60c7f58a6d4ac2c27950f86 is stored under
+  docs/third-party/ystarrev-horos-23722fb552d96fa2d60c7f58a6d4ac2c27950f86/.
+  Reused excerpts keep origin headers. Local changes stay attributed here.
+
+Local notice that ystarrev LICENSE does not carry
+-----------------------------------------------
+
+(C) Copyright 2018 Nimble Co LLC d/b/a Purview. All Rights Reserved.
+HorosCloud is a Trademark of Purview.
+
+That notice remains in LICENSE. The matching removal in ystarrev/horos is
+not imported. Plugins and HorosCloud are not deleted to simplify licensing.
+
+Grok (AGPLv3)
+-------------
+
+This build links Grok (https://github.com/GrokImageCompression/grok).
+Grok is GNU Affero GPL version 3. It is not LGPL. A distribution that
+includes Grok must follow AGPLv3 for that component, including Corresponding
+Source. See Grok/LICENSE and the Grok section of LICENSE.
+
+Other libraries actually linked or embedded
+--------------------------------------------
+
+| Component | License | Path |
+|---|---|---|
+| DCMTK | BSD-style (OFFIS) | DCMTK/COPYRIGHT |
+| ITK | Apache-2.0 | ITK/LICENSE |
+| VTK | BSD-3-Clause | VTK/Copyright.txt |
+| GDCM | BSD-3-Clause | GDCM/Copyright.txt |
+| OpenJPEG | BSD-2-Clause | OpenJPEG/LICENSE |
+| OpenSSL 3.5.8 | Apache-2.0 | OpenSSL/upstream/LICENSE.txt; bundled Splash/OpenSSL-LICENSE.txt |
+| CharLS | BSD-3-Clause | CharLS/License.txt |
+
+Do not treat the tree as uniformly LGPL. Hashes of these files at the time
+of this notice are in
+docs/third-party/ystarrev-horos-23722fb552d96fa2d60c7f58a6d4ac2c27950f86/MANIFEST.json.
+
+External model weights
+----------------------
+
+No ONNX, PyTorch or HDF5 model weights are imported. Do not copy weights
+without checking their terms.
+
+Distribution
+------------
+
+- Ship LICENSE, COPYING.LESSER and this NOTICE with the application.
+- Keep per-file headers.
+- Offer source for LGPLv3 Horos and for AGPLv3 Grok when you distribute binaries.
+- The DICOMweb client, plugins, report authoring and HorosCloud are preserved.
+- Incompatibilities or doubts must be resolved before distributing the
+  affected component. This file does not authorise a combination.
+
+Modified files relative to the ystarrev license snapshot
+-------------------------------------------------------
+
+- LICENSE — same Horos/OsiriX/Grok text, plus the Purview/HorosCloud notice
+  and the ystarrev credit. Not a blind replacement of the origin file.
+- NOTICE, README.md, Binaries/Splash/about.html, Binaries/Splash/licenses.html,
+  Horos/Sources/LicenseAttribution.swift — local attribution surfaces.
+- #371 adapts the query/retrieve server and diagnostic helpers listed in MANIFEST.json. Host database, transfer and cancellation policies remain application code.
+
+Catalog
+-------
+
+Stable ID L368. tests/test-license-attribution.py and
+tests/test-license-attribution-wiring.py re-run the checkout and bundle
+membership checks. #367 points at those tests; #385 re-runs them.

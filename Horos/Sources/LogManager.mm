@@ -114,7 +114,7 @@ static LogManager *currentLogManager = nil;
             
             NSDate *logEndTime = [dict valueForKey: @"logEndTime"];
             
-            if( [[dict valueForKey: @"logMessage"] isEqualToString:@"Complete"] || [[dict valueForKey: @"logMessage"] isEqualToString:@"Incomplete"])
+            if( ([[dict valueForKey: @"logMessage"] isEqualToString:@"Complete"] || [[dict valueForKey: @"logMessage"] isEqualToString:@"Cancelled"]) || [[dict valueForKey: @"logMessage"] isEqualToString:@"Incomplete"])
             {
                 if( logEndTime == 0)
                     logEndTime = [NSDate date];
@@ -159,7 +159,7 @@ static LogManager *currentLogManager = nil;
             {
                 @try
                 {
-                    if( [[dict valueForKey: @"logMessage"] isEqualToString:@"In Progress"] || [[dict valueForKey: @"logMessage"] isEqualToString:@"Complete"] || [[dict valueForKey: @"logMessage"] isEqualToString:@"Incomplete"])
+                    if( [[dict valueForKey: @"logMessage"] isEqualToString:@"In Progress"] || ([[dict valueForKey: @"logMessage"] isEqualToString:@"Complete"] || [[dict valueForKey: @"logMessage"] isEqualToString:@"Cancelled"]) || [[dict valueForKey: @"logMessage"] isEqualToString:@"Incomplete"])
                     {
                         NSString *uid = [dict valueForKey: @"logUID"];
                         
@@ -193,7 +193,7 @@ static LogManager *currentLogManager = nil;
                             [previousDict setObject: dict forKey: @"dict"];
                             
                             NSTimeInterval lastSave = [[previousDict objectForKey: @"lastSave"] doubleValue];
-                            if( [NSDate timeIntervalSinceReferenceDate] - lastSave > 5 || [[dict valueForKey: @"logMessage"] isEqualToString:@"Complete"])
+                            if( [NSDate timeIntervalSinceReferenceDate] - lastSave > 5 || ([[dict valueForKey: @"logMessage"] isEqualToString:@"Complete"] || [[dict valueForKey: @"logMessage"] isEqualToString:@"Cancelled"]))
                             {
                                 if( [self updateLogDatabase: [[_currentLogs objectForKey:uid] objectForKey: @"dict"] objectID: [[_currentLogs objectForKey:uid] objectForKey: @"objectID"]])
                                 {

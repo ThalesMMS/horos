@@ -39,6 +39,7 @@
 #import "AppController.h"
 #import "NSFileManager+N2.h"
 
+#import <objc/message.h>
 #import <objc/runtime.h>
 
 
@@ -212,6 +213,21 @@ static NSString* purgedDatabasePath = nil;
             [[detector window] makeKeyAndOrderFront:self];
         else
             [NSApp runModalForWindow:[detector window]];
+        return;
+    }
+
+    NSString *databasePath = [ICloudDriveDetector databasePath];
+    Class cloud = NSClassFromString(@"HorosCloudFileAccess");
+    SEL shouldWarn = @selector(shouldWarnAboutActiveDatabaseAtPath:);
+    SEL present = @selector(presentActiveDatabaseWarningForPath:);
+    if (cloud && [cloud respondsToSelector:shouldWarn] && [cloud respondsToSelector:present])
+    {
+        BOOL (*warnImp)(id, SEL, NSString *) = (BOOL (*)(id, SEL, NSString *))objc_msgSend;
+        if (warnImp(cloud, shouldWarn, databasePath))
+        {
+            void (*presentImp)(id, SEL, NSString *) = (void (*)(id, SEL, NSString *))objc_msgSend;
+            presentImp(cloud, present, databasePath);
+        }
     }
 }
    

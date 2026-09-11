@@ -73,7 +73,8 @@ typedef NSInteger CPRViewReformationType;
 @property (nonatomic, readwrite, assign) CPRViewReformationType reformationType;
 
 - (id)reformationView; // returns the actual view that does the reformation. I expect hacky calls that do and do screen grabs and such will need this
-- (void)waitUntilPixUpdate; // returns once the refomration view's DCM pix object has been updated to reflect any changes made to the view. 
+- (void)waitUntilPixUpdate; // returns once the refomration view's DCM pix object has been updated to reflect any changes made to the view.
+- (BOOL)cancelStraightenedGeneration; 
 
 
 // DCMView-like methods

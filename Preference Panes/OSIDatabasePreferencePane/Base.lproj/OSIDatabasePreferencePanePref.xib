@@ -1025,10 +1025,10 @@ If a study is in an album, it will NOT be deleted.</string>
                                         <action selector="resetDateOfBirth:" target="-2" id="625"/>
                                     </connections>
                                 </button>
-                                <button horizontalCompressionResistancePriority="1000" id="630">
+                                <button toolTip="When filtering the database, include other studies belonging to matching patients." horizontalCompressionResistancePriority="1000" id="630">
                                     <rect key="frame" x="8" y="64" width="239" height="18"/>
                                     <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
-                                    <buttonCell key="cell" type="check" title="Always display all studies of each patient" bezelStyle="regularSquare" imagePosition="left" alignment="left" controlSize="small" scrollable="YES" lineBreakMode="clipping" inset="2" id="767">
+                                    <buttonCell key="cell" type="check" title="Include patients’ other studies in results" bezelStyle="regularSquare" imagePosition="left" alignment="left" controlSize="small" scrollable="YES" lineBreakMode="clipping" inset="2" id="767">
                                         <behavior key="behavior" changeContents="YES" doesNotDimImage="YES" lightByContents="YES"/>
                                         <font key="font" metaFont="smallSystem"/>
                                     </buttonCell>

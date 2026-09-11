@@ -35,6 +35,7 @@
      PURPOSE.
  ============================================================================*/
 
+#include "HorosDICOMGlobalAbort.h"
 #import "WADODownload.h"
 #import "BrowserController.h"
 #import "DicomDatabase.h"
@@ -44,6 +45,7 @@
 #import "LogManager.h"
 #import "N2Debug.h"
 #import "NSString+N2.h"
+#import "Horos-Swift.h"
 
 @interface NSURLRequest (DummyInterface)
 + (BOOL)allowsAnyHTTPSCertificateForHost:(NSString*)host;
@@ -53,6 +55,7 @@
 @implementation WADODownload
 
 @synthesize _abortAssociation, showErrorMessage, countOfSuccesses, WADOGrandTotal, WADOBaseTotal, baseStatus, receivedData, totalData;
+@synthesize manifest;
 
 + (void) errorMessage:(NSArray*) msg
 {
@@ -73,12 +76,13 @@
 		NSLog( @"***** WADO http status code error: %d", (int) [httpResponse statusCode]);
 		NSLog( @"***** WADO URL : %@", response.URL);
 		
-		if( firstWadoErrorDisplayed == NO)
-		{
-			firstWadoErrorDisplayed = YES;
-            if( showErrorMessage)
-                [WADODownload performSelectorOnMainThread :@selector(errorMessage:) withObject: [NSArray arrayWithObjects: NSLocalizedString(@"WADO Retrieve Failed", nil), [NSString stringWithFormat: @"WADO http status code error: %d", (int) [httpResponse statusCode]], NSLocalizedString(@"Continue", nil), nil] waitUntilDone:NO];
-		}
+        // The alert waits for the end of the retrieval, where the manifest can
+        // say how many instances are missing instead of repeating the status of
+        // whichever one failed first.
+        if( response.URL)
+            [manifest recordFailureForURL: response.URL
+                               statusCode: [httpResponse statusCode]
+                                   reason: [NSString stringWithFormat: @"HTTP %d", (int) [httpResponse statusCode]]];
 		
 		[WADODownloadDictionary removeObjectForKey: [NSString stringWithFormat:@"%ld", (long) connection]];
 	}
@@ -120,17 +124,15 @@
 {
 	if( connection)
 	{
-		[WADODownloadDictionary removeObjectForKey: [NSString stringWithFormat:@"%ld", (long) connection]];
+		NSString *key = [NSString stringWithFormat:@"%ld", (long) connection];
+		NSURL *url = [[WADODownloadDictionary objectForKey: key] objectForKey: @"url"];
+		[WADODownloadDictionary removeObjectForKey: key];
 		
 		NSLog(@"***** WADO Retrieve error: %@", error);
 		
-		if( firstWadoErrorDisplayed == NO)
-		{
-			firstWadoErrorDisplayed = YES;
-            
-            if( showErrorMessage)
-                [WADODownload performSelectorOnMainThread :@selector(errorMessage:) withObject: [NSArray arrayWithObjects: NSLocalizedString(@"WADO Retrieve Failed", nil), [NSString stringWithFormat: @"%@", [error localizedDescription]], NSLocalizedString(@"Continue", nil), nil] waitUntilDone:NO];
-		}
+        // No status: the request never got one. That is worth asking again.
+        if( url)
+            [manifest recordFailureForURL: url statusCode: 0 reason: [error localizedDescription]];
 		
 		WADOThreads--;
         
@@ -193,15 +195,51 @@
 		
 		if( [d length] > 2)
 		{
-            countOfSuccesses++;
+            NSURL *downloaded = [[WADODownloadDictionary objectForKey: key] objectForKey: @"url"];
             
 			if( [[[[NSString alloc] initWithBytes:d.bytes length:2 encoding:NSUTF8StringEncoding] autorelease] isEqualToString: @"PK"])
 				extension = @"osirixzip";
             
-            NSString *filename = [[NSString stringWithFormat:@".WADO-%d-%ld", WADOThreads, (long) self] stringByAppendingPathExtension: extension];
+            // The name has to be unique across every file this process leaves in
+            // the incoming directory. It used to be the remaining-thread count
+            // and the object pointer, and the count restarts on every call:
+            // -WADORetrieve: calls this object again for each batch of more than
+            // 50 instances, so a batch overwrote files an earlier one had
+            // written and the importer had not yet moved away. That is instances
+            // downloaded and then lost, without a word anywhere.
+            NSString *filename = [[@".WADO-" stringByAppendingString: [[NSUUID UUID] UUIDString]] stringByAppendingPathExtension: extension];
         
             [d writeToFile: [path stringByAppendingPathComponent: filename] atomically: YES];
-                        
+            
+            // A WADO endpoint behind a proxy answers 200 with a login page
+            // often enough to be worth one check, and an empty or tiny reply
+            // costs nothing to spot: a body with no DICOM magic is not a
+            // received instance, whatever the status said. The check is the
+            // magic and not a parse, because a parse of every downloaded file
+            // would cost more than it saves; a body truncated after the magic
+            // still gets through here and is caught by the importer.
+            BOOL looksLikeDICOM = NO;
+            if( d.length > 132)
+                looksLikeDICOM = (strncmp( (const char*) d.bytes + 128, "DICM", 4) == 0);
+            
+            if( [extension isEqualToString: @"dcm"] && looksLikeDICOM == NO)
+            {
+                NSLog( @"***** WADO: what arrived is not a DICOM object (%d bytes): %@", (int) d.length, downloaded);
+                [[NSFileManager defaultManager] removeItemAtPath: [path stringByAppendingPathComponent: filename] error: nil];
+                if( downloaded)
+                    [manifest recordFailureForURL: downloaded statusCode: 0 reason: [NSString stringWithFormat: @"what arrived is not a DICOM object (%d bytes)", (int) d.length]];
+                
+                [d setLength: 0];
+                [WADODownloadDictionary removeObjectForKey: key];
+                WADOThreads--;
+                [pool release];
+                return;
+            }
+            
+            countOfSuccesses++;
+            if( downloaded)
+                [manifest recordSuccessForURL: downloaded];
+            
             if( WADOThreads == WADOTotal) // The first file !
             {
                 [[DicomDatabase activeLocalDatabase] initiateImportFilesFromIncomingDirUnlessAlreadyImporting];
@@ -267,12 +305,15 @@
         N2LogStackTrace( @"connection == nil");
 }
 
-- (void) WADODownload: (NSArray*) urlToDownload
+// One pass over a list of URLs. Returns NO when it gave up early - aborted,
+// cancelled or timed out - because a pass that did not finish is not evidence
+// that the instances it did not reach are missing.
+- (BOOL) WADODownloadPass: (NSArray*) urlToDownload
 {
     if( urlToDownload.count == 0)
     {
         NSLog( @"**** urlToDownload.count == 0 in WADODownload");
-        return;
+        return YES;
     }
     
     NSMutableArray *connectionsArray = [NSMutableArray array];
@@ -292,11 +333,6 @@
 #ifndef NDEBUG
             NSLog( @"------ WADO downloading : %d files", (int) [urlToDownload count]);
 #endif
-            firstWadoErrorDisplayed = NO;
-            
-            if( showErrorMessage == NO)
-                firstWadoErrorDisplayed = YES; // dont show errors
-            
             [WADODownloadDictionary release];
             WADODownloadDictionary = [[NSMutableDictionary dictionary] retain];
             
@@ -310,7 +346,7 @@
 #ifndef NDEBUG
             NSLog( @"------ WADO parameters: timeout:%2.2f [secs] / WADOMaximumConcurrentDownloads:%d [URLRequests]", timeout, WADOMaximumConcurrentDownloads);
 #endif
-            self.countOfSuccesses = 0;
+            const int passStart = countOfSuccesses; // successes accumulate across passes
             WADOTotal = WADOThreads = [urlToDownload count];
             
             NSTimeInterval retrieveStartingDate = [NSDate timeIntervalSinceReferenceDate];
@@ -318,16 +354,17 @@
             BOOL aborted = NO;
             for( NSURL *url in urlToDownload)
             {
-                while( [WADODownloadDictionary count] > WADOMaximumConcurrentDownloads) //Dont download more than XXX images at the same time
+                while( [WADODownloadDictionary count] >= WADOMaximumConcurrentDownloads) //Dont download more than XXX images at the same time
                 {
                     [[NSRunLoop currentRunLoop] runUntilDate: [NSDate dateWithTimeIntervalSinceNow: 0.1]];
                     
-                    if( _abortAssociation || [NSThread currentThread].isCancelled || [[NSFileManager defaultManager] fileExistsAtPath: @"/tmp/kill_all_storescu"] || [NSDate timeIntervalSinceReferenceDate] - retrieveStartingDate > timeout)
+                    if( _abortAssociation || [NSThread currentThread].isCancelled || HorosDICOMGlobalAbortRequested() || [NSDate timeIntervalSinceReferenceDate] - retrieveStartingDate > timeout)
                     {
                         aborted = YES;
                         break;
                     }
                 }
+                if (aborted || _abortAssociation || NSThread.currentThread.isCancelled) { aborted = YES; break; }
                 retrieveStartingDate = [NSDate timeIntervalSinceReferenceDate];
                 
                 @try
@@ -352,7 +389,7 @@
                 if( downloadConnection == nil)
                     WADOThreads--;
                 
-                if( _abortAssociation || [NSThread currentThread].isCancelled || [[NSFileManager defaultManager] fileExistsAtPath: @"/tmp/kill_all_storescu"] || [NSDate timeIntervalSinceReferenceDate] - retrieveStartingDate > timeout)
+                if( _abortAssociation || [NSThread currentThread].isCancelled || HorosDICOMGlobalAbortRequested() || [NSDate timeIntervalSinceReferenceDate] - retrieveStartingDate > timeout)
                 {
                     aborted = YES;
                     break;
@@ -365,7 +402,7 @@
                 {
                     [[NSRunLoop currentRunLoop] runUntilDate: [NSDate dateWithTimeIntervalSinceNow: 0.1]];
                     
-                    if( _abortAssociation || [NSThread currentThread].isCancelled || [[NSFileManager defaultManager] fileExistsAtPath: @"/tmp/kill_all_storescu"]  || [NSDate timeIntervalSinceReferenceDate] - retrieveStartingDate > timeout)
+                    if( _abortAssociation || [NSThread currentThread].isCancelled || HorosDICOMGlobalAbortRequested()  || [NSDate timeIntervalSinceReferenceDate] - retrieveStartingDate > timeout)
                     {
                         aborted = YES;
                         break;
@@ -401,8 +438,9 @@
             if( aborted)
                 NSLog( @"------ WADO downloading ABORTED");
             else
-                NSLog( @"------ WADO downloading : %d files - finished (errors: %d / total: %d)", (int) [urlToDownload count], (int) (urlToDownload.count - countOfSuccesses), (int) urlToDownload.count);
+                NSLog( @"------ WADO downloading : %d files - finished (errors: %d / total: %d)", (int) [urlToDownload count], (int) ([urlToDownload count] - (countOfSuccesses - passStart)), (int) [urlToDownload count]);
 #endif
+            return aborted == NO;
         }
     }
     @catch (NSException *exception) {
@@ -411,6 +449,60 @@
     @finally {
         [pool release];
     }
+    
+    return YES;
+}
+
+- (void) WADODownload: (NSArray*) urlToDownload
+{
+    if( urlToDownload.count == 0)
+    {
+        NSLog( @"**** urlToDownload.count == 0 in WADODownload");
+        return;
+    }
+    
+    // The list is uniqued here rather than in the pass, so the manifest is built
+    // from what will actually be asked for.
+    NSArray *unique = [[NSSet setWithArray: urlToDownload] allObjects];
+    
+    [manifest release];
+    manifest = [[HorosRetrieveManifest alloc] initWithURLs: unique];
+    self.countOfSuccesses = 0;
+    
+    // An instance that did not arrive is worth asking for again when the reason
+    // was transient; one the server refused is not, and repeating a whole study
+    // to collect a handful of instances is what this replaces.
+    NSInteger attempts = [[NSUserDefaults standardUserDefaults] integerForKey: @"WADORetryAttempts"];
+    if( attempts < 0) attempts = 0;
+    if( attempts > 5) attempts = 5;
+    
+    BOOL completed = [self WADODownloadPass: unique];
+    
+    for( NSInteger attempt = 0; completed && attempt < attempts; attempt++)
+    {
+        NSArray *again = [manifest retryableURLs];
+        if( again.count == 0)
+            break;
+        
+        NSLog( @"------ WADO retrying %d instance(s) that did not arrive (attempt %d of %d)", (int) again.count, (int) (attempt + 1), (int) attempts);
+        completed = [self WADODownloadPass: again];
+    }
+    
+    if( completed == NO)
+    {
+        // Nothing was heard about the rest, which is not the same as their
+        // being absent.
+        for( NSURL *url in unique)
+            [manifest recordAbandonedURL: url];
+    }
+    
+    if( manifest.isComplete == NO || manifest.duplicateObjectUIDs.count)
+        NSLog( @"------ WADO retrieve incomplete: %@", [manifest detailWithLimit: 20]);
+    
+    if( manifest.isComplete == NO && showErrorMessage && !NSThread.currentThread.isCancelled)
+        [WADODownload performSelectorOnMainThread: @selector(errorMessage:)
+                                       withObject: [NSArray arrayWithObjects: NSLocalizedString( @"WADO Retrieve Incomplete", nil), manifest.summary, NSLocalizedString( @"Continue", nil), nil]
+                                    waitUntilDone: NO];
 }
 
 

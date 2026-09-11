@@ -49,7 +49,7 @@
 					<tr class="li%Study_Index2%">	
 						<td class="">
 							<a href="study?%Info.getParameters(sortKey=)%&xid=%Study.XID%">
-								<span class="bigger compressed">%X:ZWS:Study.name%</span> <span class="gray details">%X:Study.modality%%[IF:Study.imageSeries.count%, %X:Study.imageSeries.count% series%]IF:Study.imageSeries.count%%[IF:Study.patientID%, %X:Study.patientID%%]IF:Study.patientID%%[IF:Study.accessionNumber%, %X:Study.accessionNumber%%]IF:Study.accessionNumber%</span>
+								<span class="bigger compressed">%X:ZWS:Study.name%</span> <span class="gray details">%X:Study.modality%%[IF:Study.imageSeries.count%, %X:Study.imageSeries.count% series%]IF:Study.imageSeries.count%%[IF:Study.patientID%, %X:Study.patientID%%]IF:Study.patientID%%[IF:Study.accessionNumber%, %X:Study.accessionNumber%%]IF:Study.accessionNumber%%[IF:Study.federatedOrigin%, %X:Study.federatedOrigin%%]IF:Study.federatedOrigin%%[IF:Study.permissionLabel%, %X:Study.permissionLabel%%]IF:Study.permissionLabel%</span>
 								<div class="gray indent compressed">
 									%X:ZWS:Study.studyName%
 									%[IF:Study.comment%<div class="italic indent">%X:ZWS:Study.comment%</div>%]IF:Study.comment%
@@ -94,7 +94,7 @@
 						
 						%[IF:Info.proposeWeasis%
 						<td class="narrow middle">
-							<a href="%Info.baseJnlpUrl%/weasis.jnlp?xid=%Study.XID%&sid=%Info.SID%"><img src="images/weasis.png"/></a>
+							<a href="%Info.baseJnlpUrl%/weasis.jnlp?xid=%Study.XID%%[IF:User%&username=%U:User.name%&token=%U:Info.newToken%%]IF:User%"><img src="images/weasis.png"/></a>
 						</td>
 						%]IF:Info.proposeWeasis%
 					</tr>

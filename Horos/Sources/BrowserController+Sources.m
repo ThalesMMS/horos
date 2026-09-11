@@ -35,6 +35,9 @@
      PURPOSE.
  ============================================================================*/
 
+#import "HorosBoundedTask.h"
+#import "HorosVolumeDiscovery.h"
+#import "Horos-Swift.h"
 #import "BrowserController+Sources.h"
 #import "BrowserController+Sources+Copy.h"
 #import "DataNodeIdentifier.h"
@@ -73,18 +76,23 @@
  #include <IOKit/usb/IOUSBLib.h>
  */
 
-@interface BrowserSourcesHelper : NSObject<NSNetServiceBrowserDelegate, NSNetServiceDelegate>/*<NSTableViewDelegate,NSTableViewDataSource>*/
+@interface BrowserSourcesHelper : NSObject<HorosBonjourBrowserDelegate, NSNetServiceDelegate>/*<NSTableViewDelegate,NSTableViewDataSource>*/
 {
     BrowserController* _browser;
-    NSNetServiceBrowser* _nsbOsirix;
-    NSNetServiceBrowser* _nsbDicom;
+    HorosVolumeDiscovery *_volumeDiscovery;
+    // Discovery is Network.framework and resolution is DNS-SD (#606); the
+    // services handed to the rest of this file are still NSNetService.
+    HorosBonjourBrowser* _nsbOsirix;
+    HorosBonjourBrowser* _nsbDicom;
     NSMutableArray* _bonjourSources, *_bonjourServices;
+    NSMutableDictionary* _federatedCheckboxes;
     
     BOOL dontListenToSourcesChanges;
 }
 
 -(id)initWithBrowser:(BrowserController*)browser;
 -(void)_analyzeVolumeAtPath:(NSString*)path;
+- (void)invalidate;
 
 @end
 
@@ -175,6 +183,7 @@ enum {
 
 -(void)deallocSources
 {
+    [_sourcesHelper invalidate];
     [_sourcesHelper release]; _sourcesHelper = nil;
 }
 
@@ -230,8 +239,17 @@ enum {
     NSInteger i = [self rowForDatabase:_database];
     if (i == -1 && _database != [DicomDatabase defaultDatabase])
     {
-        NSDictionary* source = [NSDictionary dictionaryWithObjectsAndKeys: [_database.baseDirPath stringByDeletingLastPathComponent], @"Path", [_database.baseDirPath.stringByDeletingLastPathComponent.lastPathComponent stringByAppendingString: NSLocalizedString( @" DB", @"DB = DataBase")], @"Description", nil];
-        [[NSUserDefaults standardUserDefaults] setObject:[[[NSUserDefaults standardUserDefaults] objectForKey:@"localDatabasePaths"] arrayByAddingObject:source] forKey:@"localDatabasePaths"];
+        NSString *path = [_database.baseDirPath stringByDeletingLastPathComponent];
+        
+        // A database opened from a temporary place - a CD copied under the
+        // user's temporary directory is the ordinary case - is not somewhere to
+        // come back to. Remembering it leaves an entry that cannot be made
+        // available again by putting the media back.
+        if ([HorosSourceLocation isTemporaryLocation: path] == NO)
+        {
+            NSDictionary* source = [NSDictionary dictionaryWithObjectsAndKeys: path, @"Path", [path.lastPathComponent stringByAppendingString: NSLocalizedString( @" DB", @"DB = DataBase")], @"Description", nil];
+            [[NSUserDefaults standardUserDefaults] setObject:[[[NSUserDefaults standardUserDefaults] objectForKey:@"localDatabasePaths"] arrayByAddingObject:source] forKey:@"localDatabasePaths"];
+        }
         
         i = [self rowForDatabase:_database];
     }
@@ -405,17 +423,19 @@ static void* const SearchDicomNodesContext = @"SearchDicomNodesContext";
     if ((self = [super init]))
     {
         _browser = browser;
+        _volumeDiscovery = [[HorosVolumeDiscovery alloc] init];
         [[NSUserDefaultsController sharedUserDefaultsController] addObserver:self forValuesKey:@"localDatabasePaths" options:NSKeyValueObservingOptionInitial context:LocalBrowserSourcesContext];
         [[NSUserDefaultsController sharedUserDefaultsController] addObserver:self forValuesKey:@"OSIRIXSERVERS" options:NSKeyValueObservingOptionInitial context:RemoteBrowserSourcesContext];
         [[NSUserDefaultsController sharedUserDefaultsController] addObserver:self forValuesKey:@"SERVERS" options:NSKeyValueObservingOptionInitial context:DicomBrowserSourcesContext];
         _bonjourSources = [[NSMutableArray alloc] init];
         _bonjourServices = [[NSMutableArray alloc] init];
+        _federatedCheckboxes = [[NSMutableDictionary alloc] init];
         [[NSUserDefaultsController sharedUserDefaultsController] addObserver:self forValuesKey:@"searchDICOMBonjour" options:NSKeyValueObservingOptionInitial context:SearchDicomNodesContext];
         [[NSUserDefaultsController sharedUserDefaultsController] addObserver:self forValuesKey:@"DoNotSearchForBonjourServices" options:NSKeyValueObservingOptionInitial context:SearchBonjourNodesContext];
-        _nsbOsirix = [[NSNetServiceBrowser alloc] init];
+        _nsbOsirix = [[HorosBonjourBrowser alloc] init];
         [_nsbOsirix setDelegate:self];
         [_nsbOsirix searchForServicesOfType:@"_osirixdb._tcp." inDomain:@""];
-        _nsbDicom = [[NSNetServiceBrowser alloc] init];
+        _nsbDicom = [[HorosBonjourBrowser alloc] init];
         [_nsbDicom setDelegate:self];
         [_nsbDicom searchForServicesOfType:@"_dicom._tcp." inDomain:@""];
         // mounted devices
@@ -463,6 +483,12 @@ static void* const SearchDicomNodesContext = @"SearchDicomNodesContext";
     return self;
 }
 
+- (void)invalidate
+{
+    [_volumeDiscovery cancelAll];
+    _browser = nil;
+}
+
 -(void)dealloc
 {
     [[[NSWorkspace sharedWorkspace] notificationCenter] removeObserver:self name:NSWorkspaceDidMountNotification object:nil];
@@ -476,13 +502,16 @@ static void* const SearchDicomNodesContext = @"SearchDicomNodesContext";
     [[NSUserDefaultsController sharedUserDefaultsController] removeObserver:self forValuesKey:@"OSIRIXSERVERS"];
     [[NSUserDefaultsController sharedUserDefaultsController] removeObserver:self forValuesKey:@"localDatabasePaths"];
     
-    [_nsbDicom release]; _nsbDicom = nil;
-    [_nsbOsirix release]; _nsbOsirix = nil;
+    [_nsbDicom setDelegate: nil]; [_nsbDicom stop]; [_nsbDicom release]; _nsbDicom = nil;
+    [_nsbOsirix setDelegate: nil]; [_nsbOsirix stop]; [_nsbOsirix release]; _nsbOsirix = nil;
     [_bonjourSources release];
     [_bonjourServices release];
+    [_federatedCheckboxes release];
+    _federatedCheckboxes = nil;
     
     //	[[[NSUserDefaults standardUserDefaults] objectForKey:@"localDatabasePaths"] removeObserver:self forValuesKey:@"values"];
     _browser = nil;
+    [_volumeDiscovery release];
     [super dealloc];
 }
 
@@ -890,7 +919,7 @@ static void* const SearchDicomNodesContext = @"SearchDicomNodesContext";
     }
 }
 
--(void)netServiceBrowser:(NSNetServiceBrowser*)nsb didFindService:(NSNetService*)service moreComing:(BOOL)moreComing
+-(void)horosBonjourBrowser:(HorosBonjourBrowser*)nsb didFindService:(HorosBonjourService*)service
 {
     //NSLog(@"Bonjour service found: %@", service);
     
@@ -913,7 +942,30 @@ static void* const SearchDicomNodesContext = @"SearchDicomNodesContext";
     [service resolveWithTimeout:30];
 }
 
--(void)netServiceBrowser:(NSNetServiceBrowser*)nsb didRemoveService:(NSNetService*)service moreComing:(BOOL)moreComing
+// The same peer on another interface, or with a new TXT record: refresh what
+// is already there. Removing and re-adding the row would drop its selection and
+// its liveness state for a peer that never went away (#606).
+-(void)horosBonjourBrowser:(HorosBonjourBrowser*)nsb didUpdateService:(HorosBonjourService*)service
+{
+    BOOL known = NO;
+    @synchronized (_bonjourSources) {
+        known = [_bonjourServices indexOfObject: service] != NSNotFound;
+    }
+    if (!known) {
+        [self horosBonjourBrowser: nsb didFindService: service];
+        return;
+    }
+    NSLog( @"Update Service: %@", service);
+    [service setDelegate: self];
+    [service resolveWithTimeout: 30];
+}
+
+-(void)horosBonjourBrowser:(HorosBonjourBrowser*)nsb didNotSearch:(NSDictionary*)errorDict
+{
+    NSLog( @"Bonjour search failed: %@", errorDict);
+}
+
+-(void)horosBonjourBrowser:(HorosBonjourBrowser*)nsb didRemoveService:(HorosBonjourService*)service
 {
     NSLog(@"Bonjour service gone: %@", service);
     
@@ -958,104 +1010,52 @@ static void* const SearchDicomNodesContext = @"SearchDicomNodesContext";
 
 -(void)_analyzeVolumeAtPath:(NSString*)path
 {
-    for (DataNodeIdentifier* ibs in _browser.sources.arrangedObjects)
-        if ([ibs isKindOfClass:[LocalDatabaseNodeIdentifier class]] && [ibs.location hasPrefix:path])
-        {
-            return; // device is somehow already listed as a source
-        }
-    
-    NSLog( @"--- start diskutil");
-    NSTask* task = [[NSTask alloc] init];
-    [task setLaunchPath:@"/usr/sbin/diskutil"];
-    [task setArguments:[NSArray arrayWithObjects: @"info", @"-plist", path, NULL]];
-    [task setStandardError:[NSPipe pipe]];
-    [task setStandardOutput:[task standardError]];
-    [task launch];
-    while( [task isRunning]) [NSThread sleepForTimeInterval: 0.01];
-    NSLog( @"--- end diskutil");
-    
-    NSData* output = [[[[[task standardError] fileHandleForReading] readDataToEndOfFile] retain] autorelease];
-    [task release];
-    
-    NSDictionary* result = [NSPropertyListSerialization propertyListFromData:output mutabilityOption:NSPropertyListImmutable format:0 errorDescription:NULL];
-    
-    if ([[result objectForKey:@"OpticalMediaType"] length]) // is CD/DVD or other optical media
-        @try {
-            [_browser.sources addObject:[MountedDatabaseNodeIdentifier mountedDatabaseNodeIdentifierWithPath:path description:path.lastPathComponent dictionary:nil type:MountTypeGeneric]];
-        } @catch (NSException* e) {
-            N2LogExceptionWithStackTrace(e);
-        }
-    
-    else if ([[result objectForKey:@"MediaType"] isEqualToString:@"iPod"])
-        @try {
-            [_browser.sources addObject:[MountedDatabaseNodeIdentifier mountedDatabaseNodeIdentifierWithPath:path description:path.lastPathComponent dictionary:nil type:MountTypeIPod]];
-        } @catch (NSException* e) {
-            N2LogExceptionWithStackTrace(e);
-        }
-    else // Is there a DICOMDIR at root?
-    {
-        if( [[NSFileManager defaultManager] fileExistsAtPath: [path stringByAppendingPathComponent: @"DICOMDIR"]])
-        {
-            @try {
-                [_browser.sources addObject:[MountedDatabaseNodeIdentifier mountedDatabaseNodeIdentifierWithPath:path description:path.lastPathComponent dictionary:nil type:MountTypeGeneric]];
-            } @catch (NSException* e) {
-                N2LogExceptionWithStackTrace(e);
-            }
-        }
-        else if( [[NSFileManager defaultManager] fileExistsAtPath: [path stringByAppendingPathComponent: OsirixDataDirName]])
-        {
-            @try {
-                [_browser.sources addObject:[MountedDatabaseNodeIdentifier mountedDatabaseNodeIdentifierWithPath:path description:path.lastPathComponent dictionary:nil type:MountTypeGeneric]];
-            } @catch (NSException* e) {
-                N2LogExceptionWithStackTrace(e);
-            }
-        }
+    if (!path.length) return;
+    if (!NSThread.isMainThread) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self _analyzeVolumeAtPath:path]; });
+        return;
     }
-    
-    /*	OSStatus err;
-     kern_return_t kr;
-     
-     FSRef ref;
-     err = FSPathMakeRef((const UInt8*)[path fileSystemRepresentation], &ref, nil);
-     if (err != noErr) return;
-     FSCatalogInfo catInfo;
-     err = FSGetCatalogInfo(&ref, kFSCatInfoVolume, &catInfo, nil, nil, nil);
-     if (err != noErr) return;
-     
-     GetVolParmsInfoBuffer gvpib;
-     HParamBlockRec hpbr;
-     hpbr.ioParam.ioNamePtr = NULL;
-     hpbr.ioParam.ioVRefNum = catInfo.volume;
-     hpbr.ioParam.ioBuffer = (Ptr)&gvpib;
-     hpbr.ioParam.ioReqCount = sizeof(gvpib);
-     err = PBHGetVolParmsSync(&hpbr);
-     if (err != noErr) return;
-     
-     NSString* bsdName = [NSString stringWithUTF8String:(char*)gvpib.vMDeviceID];
-     NSLog(@"we are mounting %@ ||| %@", path, bsdName);
-     
-     CFDictionaryRef matchingDict = IOBSDNameMatching(kIOMasterPortDefault, 0, (const char*)gvpib.vMDeviceID);
-     io_iterator_t ioIterator = nil;
-     kr = IOServiceGetMatchingServices(kIOMasterPortDefault, matchingDict, &ioIterator);
-     if (kr != kIOReturnSuccess) return;
-     
-     io_service_t ioService;
-     while (ioService = IOIteratorNext(ioIterator)) {
-     CFTypeRef data = IORegistryEntrySearchCFProperty(ioService, kIOServicePlane, CFSTR("BSD Name"), kCFAllocatorDefault, kIORegistryIterateRecursively);
-     NSLog(@"\t%@", data);
-     io_name_t ioName;
-     IORegistryEntryGetName(ioService, ioName);
-     NSLog(@"\t\t%s", ioName);
-     
-     CFRelease(data);
-     IOObjectRelease(ioService);
-     }
-     
-     IOObjectRelease(ioIterator);*/
+    if (!_browser) return;
+    [_volumeDiscovery discoverPath:path worker:^id {
+        NSError *discoveryError = nil;
+        NSData *output = HorosRunBoundedTask(@"/usr/sbin/diskutil", @[@"info", @"-plist", path], 5.0, &discoveryError);
+        id plist = output ? [NSPropertyListSerialization propertyListWithData:output options:NSPropertyListImmutable format:NULL error:NULL] : nil;
+        NSDictionary *result = [plist isKindOfClass:NSDictionary.class] ? plist : nil;
+        if (discoveryError) NSLog(@"Volume metadata discovery failed: %@", discoveryError.localizedDescription);
+        NSString *optical = [result objectForKey:@"OpticalMediaType"], *media = [result objectForKey:@"MediaType"];
+        if ([optical isKindOfClass:NSString.class] && optical.length) return @(MountTypeGeneric);
+        if ([media isKindOfClass:NSString.class] && [media isEqualToString:@"iPod"]) return @(MountTypeIPod);
+        if ([NSFileManager.defaultManager fileExistsAtPath:[path stringByAppendingPathComponent:@"DICOMDIR"]] ||
+            [NSFileManager.defaultManager fileExistsAtPath:[path stringByAppendingPathComponent:OsirixDataDirName]])
+            return @(MountTypeGeneric);
+        return nil;
+    } completion:^(id value) {
+        NSNumber *type = value;
+        if (!_browser || !type) return;
+#ifndef OSIRIX_LIGHT
+        if ([NSUserDefaults.standardUserDefaults integerForKey:@"MOUNT"] == 2) return;
+#endif
+        for (DataNodeIdentifier *source in _browser.sources.arrangedObjects)
+            if ([source isKindOfClass:LocalDatabaseNodeIdentifier.class] &&
+                ([source.location isEqualToString:path] || [source.location hasPrefix:[path stringByAppendingString:@"/"]]))
+                return;
+        @try {
+            [_browser.sources addObject:[MountedDatabaseNodeIdentifier mountedDatabaseNodeIdentifierWithPath:path description:path.lastPathComponent dictionary:nil type:type.integerValue]];
+        } @catch (NSException *exception) { N2LogExceptionWithStackTrace(exception); }
+    }];
 }
 
 -(void)_observeVolumeNotification:(NSNotification*)notification
 {
+    if (!NSThread.isMainThread) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self _observeVolumeNotification:notification]; });
+        return;
+    }
+    NSString *changedPath = [[notification.userInfo objectForKey:NSWorkspaceVolumeURLKey] path];
+    if ([notification.name isEqualToString:NSWorkspaceDidUnmountNotification])
+        [_volumeDiscovery cancelPath:changedPath];
+    if ([notification.name isEqualToString:NSWorkspaceDidRenameVolumeNotification])
+        [_volumeDiscovery cancelPath:[[notification.userInfo objectForKey:NSWorkspaceVolumeOldURLKey] path]];
     int mode = [[NSUserDefaults standardUserDefaults] integerForKey: @"MOUNT"];
 #ifdef OSIRIX_LIGHT
     mode = 0; //display the source
@@ -1065,7 +1065,6 @@ static void* const SearchDicomNodesContext = @"SearchDicomNodesContext";
         return;
     
     NSString* path = [[notification.userInfo objectForKey: NSWorkspaceVolumeURLKey] path];
-    BOOL oldPathWasMounted = NO;
     
     [_browser redrawSources];
     
@@ -1086,7 +1085,6 @@ static void* const SearchDicomNodesContext = @"SearchDicomNodesContext";
             if ([ibs isKindOfClass:[MountedDatabaseNodeIdentifier class]] && [ibs.devicePath isEqualToString:path])
             {
                 mbs = ibs;
-                oldPathWasMounted = YES;
                 break;
             }
         if (mbs)
@@ -1100,7 +1098,7 @@ static void* const SearchDicomNodesContext = @"SearchDicomNodesContext";
         }
     }
     
-    if ([notification.name isEqualToString:NSWorkspaceDidRenameVolumeNotification] && oldPathWasMounted) // Re-mount an renamed path, that was previously mounted
+    if ([notification.name isEqualToString:NSWorkspaceDidRenameVolumeNotification]) // Re-probe even if discovery at the old path was still pending
     {
         [self _analyzeVolumeAtPath:[[notification.userInfo objectForKey: NSWorkspaceVolumeURLKey] path]];
     }
@@ -1151,6 +1149,47 @@ static void* const SearchDicomNodesContext = @"SearchDicomNodesContext";
     DataNodeIdentifier* bs = [_browser sourceIdentifierAtRow:row];
     cell.title = bs.description;
     [bs willDisplayCell:cell];
+    if ([bs isKindOfClass:[LocalDatabaseNodeIdentifier class]] && [bs isKindOfClass:[MountedDatabaseNodeIdentifier class]] == NO)
+    {
+        NSString *key = bs.location ?: @"";
+        NSButton *box = [_federatedCheckboxes objectForKey:key];
+        if (box == nil)
+        {
+            box = [[[NSButton alloc] initWithFrame:NSMakeRect(0, 0, 18, 18)] autorelease];
+            [box setButtonType:NSSwitchButton];
+            [box setTitle:@""];
+            [box setToolTip:NSLocalizedString(@"Include in federated search (UI and web portal)", nil)];
+            [box setTarget:self];
+            [box setAction:@selector(toggleFederatedSearch:)];
+            [_federatedCheckboxes setObject:box forKey:key];
+        }
+        box.tag = row;
+        BOOL included = [HorosFederatedSearch isPath:bs.location
+                                          includedIn:[[NSUserDefaults standardUserDefaults] objectForKey:@"localDatabasePaths"]
+                                         defaultPath:[DicomDatabase defaultDatabase].baseDirPath
+                                    defaultIncluded:[HorosFederatedSearch isDefaultDatabaseIncluded]];
+        box.state = included ? NSOnState : NSOffState;
+        [cell.rightSubviews addObject:box];
+    }
+}
+
+-(void)toggleFederatedSearch:(NSButton *)sender
+{
+    DataNodeIdentifier *bs = [_browser sourceIdentifierAtRow:sender.tag];
+    if ([bs isKindOfClass:[LocalDatabaseNodeIdentifier class]] == NO)
+        return;
+    BOOL included = sender.state == NSOnState;
+    if ([bs isKindOfClass:[DefaultLocalDatabaseNodeIdentifier class]])
+        [HorosFederatedSearch setIsDefaultDatabaseIncluded:included];
+    else
+    {
+        NSArray *updated = [HorosFederatedSearch updatingLocalDatabasePaths:[[NSUserDefaults standardUserDefaults] objectForKey:@"localDatabasePaths"]
+                                                                      path:bs.location
+                                                                  included:included];
+        [[NSUserDefaults standardUserDefaults] setObject:updated forKey:@"localDatabasePaths"];
+    }
+    if (_browser.searchString.length)
+        [_browser setSearchString:_browser.searchString];
 }
 
 
@@ -1183,10 +1222,7 @@ static void* const SearchDicomNodesContext = @"SearchDicomNodesContext";
 -(BOOL)tableView:(NSTableView*)tableView acceptDrop:(id<NSDraggingInfo>)info row:(NSInteger)row dropOperation:(NSTableViewDropOperation)operation
 {
     NSPasteboard* pb = [info draggingPasteboard];
-    NSArray* xids = [NSPropertyListSerialization propertyListFromData:[pb propertyListForType:[pb availableTypeFromArray:BrowserController.DatabaseObjectXIDsPasteboardTypes]]
-                                                     mutabilityOption:NSPropertyListImmutable
-                                                               format:NULL
-                                                     errorDescription:NULL];
+    NSArray* xids = [BrowserController databaseObjectXIDsOnPasteboard:pb]; // every dragged row (#605)
     NSMutableArray* items = [NSMutableArray array];
     for (NSString* xid in xids)
         [items addObject:[_browser.database objectWithID:[NSManagedObject UidForXid:xid]]];
@@ -1376,7 +1412,7 @@ static void* const SearchDicomNodesContext = @"SearchDicomNodesContext";
 +(id)mountedDatabaseNodeIdentifierWithPath:(NSString*)devicePath description:(NSString*)description dictionary:(NSDictionary*)dictionary type:(NSInteger)type
 {
     BOOL scan = YES;
-    NSString* path = [[NSFileManager defaultManager] tmpFilePathInTmp];
+    NSString* path = nil;
     
     // does it contain an Horos Data folder?
     BOOL isDir;
@@ -1390,6 +1426,8 @@ static void* const SearchDicomNodesContext = @"SearchDicomNodesContext";
         scan = NO;
     }
     
+    if (scan) path = [NSFileManager.defaultManager tmpDirectoryPathInTmp];
+
     MountedDatabaseNodeIdentifier* bs = [[self class] localDatabaseNodeIdentifierWithPath:path description:description dictionary:dictionary];
     bs.devicePath = devicePath;
     bs.mountType = type;

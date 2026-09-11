@@ -42,11 +42,24 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/un.h>
+#include <errno.h>
 
 NSString* N2ConnectionListenerOpenedConnectionNotification = @"N2ConnectionListenerOpenedConnectionNotification";
 NSString* N2ConnectionListenerOpenedConnection = @"N2ConnectionListenerOpenedConnection";
 
+static int sLastBindErrno = 0;
+
 @implementation N2ConnectionListener
+
++ (int)lastBindErrno {
+    return sLastBindErrno;
+}
+
+static void recordBindFailure(void) {
+    sLastBindErrno = errno;
+    if (sLastBindErrno == 0)
+        sLastBindErrno = EADDRINUSE;
+}
 
 @synthesize threadPerConnection = _threadPerConnection;
 
@@ -145,8 +158,13 @@ static void accept(CFSocketRef socket, CFSocketCallBackType type, CFDataRef addr
 }
 
 -(id)initWithPort:(NSInteger)port connectionClass:(Class)classs {
+    return [self initWithPort:port loopbackOnly:NO connectionClass:classs];
+}
+
+-(id)initWithPort:(NSInteger)port loopbackOnly:(BOOL)loopbackOnly connectionClass:(Class)classs {
     
     self = [super init];
+    sLastBindErrno = 0;
     
 	_clients = [[NSMutableArray alloc] init];
 	_class = classs;
@@ -170,11 +188,12 @@ static void accept(CFSocketRef socket, CFSocketCallBackType type, CFDataRef addr
 	addr4.sin_len = sizeof(addr4);
 	addr4.sin_family = AF_INET;
 	addr4.sin_port = htons(port);
-	addr4.sin_addr.s_addr = htonl(INADDR_ANY);
+	addr4.sin_addr.s_addr = htonl(loopbackOnly? INADDR_LOOPBACK : INADDR_ANY);
 	NSData *address4 = [NSData dataWithBytes:&addr4 length:sizeof(addr4)];
 	
 	if (kCFSocketSuccess != CFSocketSetAddress(ipv4socket, (CFDataRef)address4)) {
 		//		if (error) *error = [[NSError alloc] initWithDomain:TCPServerErrorDomain code:kTCPServerCouldNotBindToIPv4Address userInfo:nil];
+		recordBindFailure();
 		if (ipv4socket) CFRelease(ipv4socket);
 		if (ipv6socket) CFRelease(ipv6socket);
 		ipv4socket = NULL;
@@ -196,11 +215,12 @@ static void accept(CFSocketRef socket, CFSocketCallBackType type, CFDataRef addr
 	addr6.sin6_len = sizeof(addr6);
 	addr6.sin6_family = AF_INET6;
 	addr6.sin6_port = htons(port);
-	memcpy(&(addr6.sin6_addr), &in6addr_any, sizeof(addr6.sin6_addr));
+	memcpy(&(addr6.sin6_addr), loopbackOnly? &in6addr_loopback : &in6addr_any, sizeof(addr6.sin6_addr));
 	NSData *address6 = [NSData dataWithBytes:&addr6 length:sizeof(addr6)];
 	
 	if (kCFSocketSuccess != CFSocketSetAddress(ipv6socket, (CFDataRef)address6)) {
 		//	  if (error) *error = [[NSError alloc] initWithDomain:TCPServerErrorDomain code:kTCPServerCouldNotBindToIPv6Address userInfo:nil];
+		recordBindFailure();
 		if (ipv4socket) CFRelease(ipv4socket);
 		if (ipv6socket) CFRelease(ipv6socket);
 		ipv4socket = NULL;
@@ -219,12 +239,14 @@ static void accept(CFSocketRef socket, CFSocketCallBackType type, CFDataRef addr
 	CFRunLoopAddSource(cfrl, source6, kCFRunLoopCommonModes);
 	CFRelease(source6);
 	
+	sLastBindErrno = 0;
 	return self;
 }
 
 -(id)initWithPath:(NSString*)path connectionClass:(Class)classs {
     
     self = [super init];
+    sLastBindErrno = 0;
     
 	_clients = [[NSMutableArray alloc] init];
 	_class = classs;
@@ -250,6 +272,7 @@ static void accept(CFSocketRef socket, CFSocketCallBackType type, CFDataRef addr
 	
 	if (kCFSocketSuccess != CFSocketSetAddress(ipv4socket, (CFDataRef)address)) {
 		//		if (error) *error = [[NSError alloc] initWithDomain:TCPServerErrorDomain code:kTCPServerCouldNotBindToIPv4Address userInfo:nil];
+		recordBindFailure();
 		if (ipv4socket) CFRelease(ipv4socket);
 		if (ipv6socket) CFRelease(ipv6socket);
 		ipv4socket = NULL;
@@ -268,6 +291,7 @@ static void accept(CFSocketRef socket, CFSocketCallBackType type, CFDataRef addr
 	CFRunLoopAddSource(cfrl, source6, kCFRunLoopCommonModes);
 	CFRelease(source6);
 	
+	sLastBindErrno = 0;
 	return self;
 }
 

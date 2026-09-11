@@ -39,16 +39,17 @@
 
 #undef verify
 
-#include "osconfig.h"
-#include "dcmjpeg/djdecode.h"  /* for dcmjpeg decoders */
-#include "dcmjpeg/djencode.h"  /* for dcmjpeg encoders */
-#include "dcrledrg.h"  /* for DcmRLEDecoderRegistration */
-#include "dcrleerg.h"  /* for DcmRLEEncoderRegistration */
+#include "HorosDCMTKCompatibility.h"
+#include <dcmtk/config/osconfig.h>
+#include <dcmtk/dcmjpeg/djdecode.h>  /* for dcmjpeg decoders */
+#include <dcmtk/dcmjpeg/djencode.h>  /* for dcmjpeg encoders */
+#include <dcmtk/dcmdata/dcrledrg.h>  /* for DcmRLEDecoderRegistration */
+#include <dcmtk/dcmdata/dcrleerg.h>  /* for DcmRLEEncoderRegistration */
 
-#include "dcmjpls/djdecode.h" //JPEG-LS
-#include "dcmjpls/djencode.h" //JPEG-LS
+#include <dcmtk/dcmjpls/djdecode.h> //JPEG-LS
+#include <dcmtk/dcmjpls/djencode.h> //JPEG-LS
 
-extern int gPutSrcAETitleInSourceApplicationEntityTitle, gPutDstAETitleInPrivateInformationCreatorUID;
+
 
 @implementation AppController (AppControllerDCMTKCategory)
 
@@ -56,14 +57,13 @@ extern int gPutSrcAETitleInSourceApplicationEntityTitle, gPutDstAETitleInPrivate
 {
 	#ifndef OSIRIX_LIGHT
     // register global JPEG decompression codecs
-    DJDecoderRegistration::registerCodecs();
+    DJDecoderRegistration::registerCodecs(EDC_photometricInterpretation, EUC_never);
     DJLSDecoderRegistration::registerCodecs();
     
     // register global JPEG compression codecs
     DJEncoderRegistration::registerCodecs(
 	 	ECC_lossyRGB,
 		EUC_never,
-		OFFalse,
 		OFFalse,
 		0,
 		0,
@@ -94,8 +94,7 @@ extern int gPutSrcAETitleInSourceApplicationEntityTitle, gPutDstAETitleInPrivate
     // register RLE decompression codec
     DcmRLEDecoderRegistration::registerCodecs();
     
-    gPutSrcAETitleInSourceApplicationEntityTitle = [[NSUserDefaults standardUserDefaults] boolForKey: @"putSrcAETitleInSourceApplicationEntityTitle"];
-    gPutDstAETitleInPrivateInformationCreatorUID = [[NSUserDefaults standardUserDefaults] boolForKey: @"putDstAETitleInPrivateInformationCreatorUID"];
+    // Per-store metadata policy is applied by HorosStoreSCP.
     #endif
 }
 - (void)destroyDCMTK

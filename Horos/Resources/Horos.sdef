@@ -17,6 +17,9 @@
 			<parameter name="from" code="impt" description="The URL path" type="text">
 				<cocoa key="URL"/>
 			</parameter>
+		<result description="Local paths written by the import">
+                <type type="text" list="yes"/>
+            </result>
 		</command>
 		<command name="DeleteSelected" code="deledele" description="Delete selected series">
 			<cocoa name="DeleteSelected" class="OsiriXScripts"/>
@@ -41,6 +44,7 @@
 		</value-type>
 		<class name="rich text" code="ctxt" description="Rich (styled) text" plural="rich text">
 			<cocoa class="NSTextStorage"/>
+			<type type="text"/>
 			<element type="character"/>
 			<element type="paragraph"/>
 			<element type="word"/>
@@ -55,10 +59,10 @@
 			<property name="size" code="ptsz" description="The size in points of the first character." type="integer">
 				<cocoa key="fontSize"/>
 			</property>
-			<type type="text"/>
 		</class>
 		<class name="character" code="cha " description="This subdivides the text into characters.">
 			<cocoa class="NSTextStorage"/>
+			<type type="text"/>
 			<element type="character"/>
 			<element type="paragraph"/>
 			<element type="word"/>
@@ -73,10 +77,10 @@
 			<property name="size" code="ptsz" description="The size in points of the first character." type="integer">
 				<cocoa key="fontSize"/>
 			</property>
-			<type type="text"/>
 		</class>
 		<class name="paragraph" code="cpar" description="This subdivides the text into paragraphs.">
 			<cocoa class="NSTextStorage"/>
+			<type type="text"/>
 			<element type="character"/>
 			<element type="paragraph"/>
 			<element type="word"/>
@@ -91,10 +95,10 @@
 			<property name="size" code="ptsz" description="The size in points of the first character." type="integer">
 				<cocoa key="fontSize"/>
 			</property>
-			<type type="text"/>
 		</class>
 		<class name="word" code="cwor" description="This subdivides the text into words.">
 			<cocoa class="NSTextStorage"/>
+			<type type="text"/>
 			<element type="character"/>
 			<element type="paragraph"/>
 			<element type="word"/>
@@ -109,10 +113,10 @@
 			<property name="size" code="ptsz" description="The size in points of the first character." type="integer">
 				<cocoa key="fontSize"/>
 			</property>
-			<type type="text"/>
 		</class>
 		<class name="attribute run" code="catr" description="This subdivides the text into chunks that all have the same attributes.">
 			<cocoa class="NSTextStorage"/>
+			<type type="text"/>
 			<element type="character"/>
 			<element type="paragraph"/>
 			<element type="word"/>
@@ -127,7 +131,6 @@
 			<property name="size" code="ptsz" description="The size in points of the first character." type="integer">
 				<cocoa key="fontSize"/>
 			</property>
-			<type type="text"/>
 		</class>
 		<class name="attachment" code="atts" description="Represents an inline text attachment. This class is used mainly for make commands." inherits="rich text">
 			<cocoa class="NSAttachmentTextStorage"/>

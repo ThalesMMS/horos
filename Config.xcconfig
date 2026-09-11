@@ -6,11 +6,27 @@
 //  Copyright © 2022 The Horos Project. All rights reserved.
 //
 
-/// Team ID of a development team to use for signing certificates and provisioning profiles
-DEVELOPMENT_TEAM = TPT6TVH8UY
+/// Apple Developer team used for signing certificates and provisioning profiles.
+/// Empty by default so a checkout carrying no personal credentials still builds
+/// and runs locally: script/build_and_run.sh compiles with CODE_SIGNING_ALLOWED=NO
+/// and signs the result ad hoc.
+///
+/// To sign with your own identity, put your team in an untracked
+/// Config.local.xcconfig beside this file (see Config.local.xcconfig.example),
+/// or pass it on the command line:
+///
+///     xcodebuild -project Horos.xcodeproj -scheme Horos HOROS_DEVELOPMENT_TEAM=<your team>
+HOROS_DEVELOPMENT_TEAM =
+DEVELOPMENT_TEAM = $(HOROS_DEVELOPMENT_TEAM)
 
-/// Architecture for which the product will be built. Only a single architecture is supported currently (arm64 or x86_64)
+/// Architecture for which the product will be built. Horos is Apple Silicon only.
 ARCHS = arm64
+EXCLUDED_ARCHS[sdk=macosx*] = x86_64 i386 ppc ppc64
 
-/// Target will load on this and later versions of macOS
-MACOSX_DEPLOYMENT_TARGET = 11.0
+/// Product minimum macOS 26.0 (#369), encoded using a compatible compile SDK.
+/// HorosPlatformPolicy owns the product number and update eligibility.
+/// Preserve local signing configuration rather than copying the upstream team.
+MACOSX_DEPLOYMENT_TARGET = 26.0
+
+/// Personal settings, never tracked. Values here override everything above.
+#include? "Config.local.xcconfig"

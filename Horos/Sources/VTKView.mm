@@ -91,14 +91,62 @@
     // not be what is wanted. If you allow this code then what you end up with is the
     // typical empty black OpenGL view which seems more 'correct' or at least is
     // more soothing to the eye.
+    [self prepareRenderWindow];
+    
+    // Let the vtkCocoaGLView do its regular drawing
+    [super drawRect:theRect];
+}
+
+// initializeVTKSupport runs while the nib is being unarchived, when this view
+// is in no window at all, so the render window was told its window was nil and
+// never told otherwise. Everything that renders outside drawRect: - the volume
+// the MPR views ask for, the blended volume - was then rendering through a
+// render window that did not know where it was, and an interactor that had
+// never been initialised, because only drawRect: did that.
+//
+// Idempotent on purpose: every render path can call it, and it costs nothing
+// once the window is set and the interactor is running.
+- (BOOL)prepareRenderWindow
+{
+    if (_cocoaRenderWindow == NULL)
+        return NO;
+    
+    NSWindow* window = [self window];
+    if (window == nil)
+    {
+        // No window means no drawable, and it also means: hand the render
+        // window nothing. VTK keeps the view and the window in a dictionary,
+        // which retains them, and prepareForRelease empties it at teardown for
+        // exactly that reason - handing them back here would keep this view
+        // alive for good.
+        if (_cocoaRenderWindow->GetRootWindow() != NULL)
+            _cocoaRenderWindow->SetRootWindow(NULL);
+        
+        return NO;
+    }
+    
+    if (_cocoaRenderWindow->GetRootWindow() != (void*) window)
+        _cocoaRenderWindow->SetRootWindow(window);
+    if (_cocoaRenderWindow->GetWindowId() != (void*) self)
+        _cocoaRenderWindow->SetWindowId(self);
+    
     vtkRenderWindowInteractor* theRenWinInt = [self getInteractor];
     if (theRenWinInt && (theRenWinInt->GetInitialized() == NO))
     {
         theRenWinInt->Initialize();
     }
     
-    // Let the vtkCocoaGLView do its regular drawing
-    [super drawRect:theRect];
+    return YES;
+}
+
+// A view moves between windows - and out of every window when its controller
+// closes. The render window has to follow it, or it keeps a window that is on
+// its way to being destroyed.
+- (void)viewDidMoveToWindow
+{
+    [super viewDidMoveToWindow];
+    
+    [self prepareRenderWindow];
 }
 
 - (void)initializeVTKSupport

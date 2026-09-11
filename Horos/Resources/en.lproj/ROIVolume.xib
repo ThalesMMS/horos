@@ -134,7 +134,7 @@ D</string>
                                     <behavior key="behavior" changeContents="YES" doesNotDimImage="YES" lightByContents="YES"/>
                                     <font key="font" metaFont="smallSystem"/>
                                 </buttonCell>
-                                <buttonCell type="radio" title="Iso Contour" bezelStyle="regularSquare" imagePosition="left" alignment="left" controlSize="small" inset="2" id="8oL-6d-Q4I">
+                                <buttonCell type="radio" title="Iso Contour" bezelStyle="regularSquare" imagePosition="left" alignment="left" controlSize="small" tag="0" inset="2" id="8oL-6d-Q4I">
                                     <behavior key="behavior" changeContents="YES" doesNotDimImage="YES" lightByContents="YES"/>
                                     <font key="font" metaFont="smallSystem"/>
                                 </buttonCell>
@@ -142,7 +142,7 @@ D</string>
                         </cells>
                         <connections>
                             <action selector="reload:" target="-2" id="788"/>
-                            <binding destination="781" name="selectedIndex" keyPath="values.UseDelaunayFor3DRoi" id="QaT-sA-nvJ"/>
+                            <binding destination="781" name="selectedTag" keyPath="values.UseDelaunayFor3DRoi" id="QaT-sA-nvJ"/>
                         </connections>
                     </matrix>
                     <textField verticalHuggingPriority="750" misplaced="YES" translatesAutoresizingMaskIntoConstraints="NO" id="786">

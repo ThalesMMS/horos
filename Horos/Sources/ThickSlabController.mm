@@ -40,6 +40,7 @@
 
 #import "ThickSlabVR.h"
 #import "ThickSlabController.h"
+#import "Horos-Swift.h"
 
 @implementation ThickSlabController
 
@@ -48,6 +49,8 @@
 	self = [super initWithWindowNibName:@"ThickSlab"];
 	[[self window] setDelegate:self];
 	[[self window] orderOut:self];
+	// An accessory of the 2D viewer, like the loupe: no Space of its own.
+	[HorosFullScreenWindowSupport declineNativeFullScreen: [self window]];
 	return self;
 }
 

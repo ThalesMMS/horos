@@ -36,9 +36,10 @@
  ============================================================================*/
 
 #import "DicomDatabase+Scan.h"
+#import "HorosBoundedTask.h"
 #import "NSThread+N2.h"
 #import "NSDate+N2.h"
-#import "dcdicdir.h"
+#import <dcmtk/dcmdata/dcdicdir.h>
 #import "NSString+N2.h"
 #import "NSFileManager+N2.h"
 #import "DicomImage.h"
@@ -49,6 +50,7 @@
 #import "DCMPix.h"
 #import "ThreadsManager.h"
 #import "DiscMountedAskTheUserDialogController.h"
+#import "Horos-Swift.h"
 #import "DCMAbstractSyntaxUID.h"
 #import "N2Stuff.h"
 #import "DICOMToNSString.h"
@@ -233,7 +235,11 @@ static NSString* _dcmElementKey(DcmElement* element) {
             
             //NSLog(@"\n\n%@\nDICOMDIR info:%@", path, elements);
             
-            if ([[[elements objectForKeyRemove: @"0004,1512"] stringValue] isEqualToString:@"1.2.840.10008.1.2.4.100"])
+            // Both MPEG-2 syntaxes, Main Level and High Level: the viewer decodes
+            // neither, and only the first was being recognised.
+            NSString *dicomdirTransferSyntax = [[elements objectForKeyRemove: @"0004,1512"] stringValue];
+            if ([dicomdirTransferSyntax isEqualToString:@"1.2.840.10008.1.2.4.100"] ||
+                [dicomdirTransferSyntax isEqualToString:@"1.2.840.10008.1.2.4.101"])
                 [item setObject:@"DICOMMPEG2" forKey:@"fileType"];
             else [item setObject:@"DICOM" forKey:@"fileType"];
             
@@ -292,7 +298,8 @@ static NSString* _dcmElementKey(DcmElement* element) {
             else
                 [item conditionallySetObject:[[elements objectForKeyRemove: @"0020,000E"] stringValue] forKey:@"seriesDICOMUID"]; // SeriesInstanceUID
             
-            NSString *seriesNumber = [[elements objectForKeyRemove: @"0020,0011"] stringValue];
+            id seriesNumberAttribute = [elements objectForKeyRemove:@"0020,0011"];
+            NSString *seriesNumber = [seriesNumberAttribute stringValue];
             if( seriesNumber)
             {
                 NSString *n = [NSString stringWithFormat:@"%8.8d %@", [seriesNumber intValue] , [item objectForKey: @"seriesDICOMUID"]];
@@ -302,7 +309,7 @@ static NSString* _dcmElementKey(DcmElement* element) {
                 [item conditionallySetObject: [item objectForKey: @"seriesDICOMUID"] forKey:@"seriesID"];
             
             [item conditionallySetObject:[[elements objectForKeyRemove: @"0008,103E"] stringValueWithEncodings: encodings] forKey:@"seriesDescription"];
-            [item conditionallySetObject:[[elements objectForKeyRemove: @"0020,0011"] integerNumberValue] forKey:@"seriesNumber"];
+            [item conditionallySetObject:[seriesNumberAttribute integerNumberValue] forKey:@"seriesNumber"];
             [item conditionallySetObject:[[elements objectForKeyRemove: @"0020,0013"] integerNumberValue] forKey:@"imageID"];
             
             [item conditionallySetObject:[[elements objectForKeyRemove: @"0008,0080"] stringValueWithEncodings: encodings] forKey:@"institutionName"];
@@ -411,9 +418,17 @@ static NSString* _dcmElementKey(DcmElement* element) {
             NSTask *aTask = [[[NSTask alloc] init] autorelease];
             [aTask setLaunchPath: [[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"/Decompress"]];
             [aTask setArguments: [NSArray arrayWithObjects: path, @"testDICOMDIR", nil]];
-            [aTask launch];
-            while( [aTask isRunning])
-                [NSThread sleepForTimeInterval: 0.1];
+            
+            // A DICOMDIR that cannot be validated is refused, which is what the
+            // termination status below already did; a validator that will not
+            // start, or will not finish, now reaches the same answer instead of
+            // raising or waiting forever.
+            NSError *taskError = nil;
+            if( HorosRunTaskUntilExit( aTask, 60, &taskError) == NO)
+            {
+                NSLog( @"****** could not validate DICOMDIR %@: %@", path, taskError.localizedDescription);
+                return nil;
+            }
             
             if( [aTask terminationStatus] != 0)
             {
@@ -539,8 +554,17 @@ static NSString* _dcmElementKey(DcmElement* element) {
     {
         NSArray* dicomImages = [NSArray array];
 
+        // "Minutes per image" is the report, and one elapsed time cannot say which
+        // part of the import spent them. Listing the medium, reading its index,
+        // opening every file to see whether it is DICOM, parsing and indexing the
+        // ones that are, and copying them into the database are five different
+        // things, slow for five different reasons. They are timed apart.
+        HorosMediaScanTiming *timing = [[[HorosMediaScanTiming alloc] initWithMedium: path.lastPathComponent] autorelease];
+        
         thread.status = NSLocalizedString(@"Scanning directories...", nil);
+        [timing begin: @"listing"];
         NSMutableArray* allpaths = [[[path stringsByAppendingPaths:[[NSFileManager.defaultManager enumeratorAtPath:path filesOnly:YES] allObjects]] mutableCopy] autorelease];
+        [timing end: @"listing" count: allpaths.count noun: @"file"];
         NSMutableArray* pathsToScanAnyway = [NSMutableArray array];
         
         // first read the DICOMDIR file
@@ -553,25 +577,55 @@ static NSString* _dcmElementKey(DcmElement* element) {
                 NSLog(@"(scanAtPath): Scanning DICOMDIR at %@", dicomdirPath);
                 thread.status = NSLocalizedString(@"Reading DICOMDIR...", nil);
                 
+                [timing begin: @"reading the index for"];
                 @try {
                     dicomImages = [self scanDicomdirAt:dicomdirPath withPaths:allpaths pathsToScanAnyway:pathsToScanAnyway];
                 }
                 @catch (NSException *e) {
                     N2LogExceptionWithStackTrace( e);
                 }
+                [timing end: @"reading the index for" count: dicomImages.count noun: @"instance"];
             }
         }
         
-        BOOL doScan = (![NSUserDefaults.standardUserDefaults boolForKey:@"UseDICOMDIRFileCD"]) || (!dicomImages.count && [NSUserDefaults.standardUserDefaults boolForKey:@"ScanDiskIfDICOMDIRZero"]);
+        // What the index accounted for. A DICOMDIR is supposed to name every
+        // instance on the medium; some name fewer. Trusting it and stopping there
+        // left eight of twelve instances on a disc that was then ejected, with
+        // nothing said - so the disc is read as well, and only the files the index
+        // already brought in are skipped.
+        NSMutableSet *indexedPaths = [NSMutableSet set];
+        for( NSString *indexed in [dicomImages valueForKey: @"completePath"])
+            if( [indexed isKindOfClass: NSString.class])
+                [indexedPaths addObject: indexed];
+        
+        BOOL usedDicomdir = (dicomImages.count > 0);
+        BOOL scanBeyondDicomdir = [NSUserDefaults.standardUserDefaults boolForKey:@"ScanDiskBeyondDICOMDIR"];
+        
+        BOOL doScan = (![NSUserDefaults.standardUserDefaults boolForKey:@"UseDICOMDIRFileCD"])
+                   || (!dicomImages.count && [NSUserDefaults.standardUserDefaults boolForKey:@"ScanDiskIfDICOMDIRZero"])
+                   || (usedDicomdir && scanBeyondDicomdir);
                
+        NSUInteger namedByIndex = dicomImages.count;
+        
         if (pathsToScanAnyway.count || doScan)
         {
             NSMutableArray* dicomFilePaths = [NSMutableArray arrayWithArray:pathsToScanAnyway];
+            // Files the loop below actually opened. Saying it read everything on the
+            // medium would be wrong on a disc whose index already named most of it,
+            // and that is exactly the disc whose timing is in question.
+            NSUInteger examined = 0;
+            
+            // And the ones it opened and would not take. This is where a damaged
+            // medium loses its files: they never reach addFilesAtPaths:, because
+            // isDICOMFile: has already said no. Measured on a disc carrying five
+            // broken files, four were dropped here without a word.
+            HorosImportRefusals *refusals = [[[HorosImportRefusals alloc] initWithConsidered: 0] autorelease];
             
             if (doScan)
             {
                 thread.status = NSLocalizedString(@"Looking for DICOM files...", nil);
                 thread.supportsCancel = YES;
+                [timing begin: @"reading"];
                 
                 NSTimeInterval start = [NSDate timeIntervalSinceReferenceDate];
                 for (NSInteger i = 0; i < allpaths.count; ++i)
@@ -584,6 +638,9 @@ static NSString* _dcmElementKey(DcmElement* element) {
                     NSString* path = [allpaths objectAtIndex:i];
                     
                     if ([dicomFilePaths containsObject:path])
+                        continue;
+                    
+                    if ([indexedPaths containsObject:path])
                         continue;
                     
                     NSString *extension = path.pathExtension.lowercaseString;
@@ -633,6 +690,8 @@ static NSString* _dcmElementKey(DcmElement* element) {
                     if ([path.lowercaseString rangeOfString:@".app"].location != NSNotFound) //Don't scan the content of MacOS application: Horos Lite
                         continue;
                         
+                    examined++;
+                    
                     if ([DicomFile isDICOMFile:path])
                     {
                         // avoid DICOMDIR files
@@ -644,26 +703,61 @@ static NSString* _dcmElementKey(DcmElement* element) {
                         [thread enterOperation];
                         thread.status = NSLocalizedString(@"Processing ZIP file...", @"");
 
-                        // unzip file to a temporary place and add the files to allpaths
-                        [NSFileManager.defaultManager confirmDirectoryAtPath:self.tempDirPath];
-                        NSString* tempPath = [NSFileManager.defaultManager tmpFilePathInDir:self.tempDirPath];
-                        [NSFileManager.defaultManager confirmDirectoryAtPath:tempPath];
-                        
-                        if ([BrowserController unzipFile:path withPassword:nil destination:tempPath] == NO)
-                        { // needs password
-                            [self performSelectorOnMainThread:@selector(_requestZipPassword:) withObject:[NSArray arrayWithObjects: path, tempPath, NULL] waitUntilDone:YES];
+                        // One archive must not be able to take the medium down with
+                        // it. This asked tmpFilePathInDir: for a place to expand
+                        // into and then made a directory there - and mkstemp creates
+                        // the file, so confirmDirectoryAtPath: found a file in its
+                        // way and raised. The exception left scanAtPath: through its
+                        // @throw, so a disc carrying any ZIP imported nothing at all:
+                        //   NSGenericException (in -[MountedDatabaseNodeIdentifier
+                        //   volumeScanThread]): Cannot create directory: an existing
+                        //   file occupies /private/var/folders/...
+                        // A temporary directory is asked for now, and whatever else
+                        // an archive manages to raise is caught here.
+                        @try
+                        {
+                            NSString* tempPath = [NSFileManager.defaultManager tmpDirectoryPathInDir:self.tempDirPath];
+                            
+                            if ([BrowserController unzipFile:path withPassword:nil destination:tempPath] == NO)
+                            { // needs password
+                                [self performSelectorOnMainThread:@selector(_requestZipPassword:) withObject:[NSArray arrayWithObjects: path, tempPath, NULL] waitUntilDone:YES];
+                            }
+                            
+                            [self scanAtPath:tempPath isVolume:NO];
                         }
-                        
-                        [self scanAtPath:tempPath isVolume:NO];
+                        @catch (NSException *e)
+                        {
+                            NSLog( @"(scanAtPath): %@ could not be expanded (%@); the rest of the medium is still read",
+                                  path.lastPathComponent, e.reason);
+                        }
                         [thread exitOperation];
                     }
+                    else [refusals refuse: path];
                     
                     if (thread.isCancelled)
                         return NO;
                 }
             }
             
+            NSUInteger foundByScan = dicomFilePaths.count;
+            [timing end: @"reading" count: examined noun: @"file"];
+            
+            refusals.considered = examined;
+            if (refusals.count)
+                NSLog( @"(scanAtPath): %@: %@", path.lastPathComponent, refusals.summary);
+            
+            [timing begin: @"indexing"];
             dicomImages = [dicomImages arrayByAddingObjectsFromArray: [self objectsWithIDs:[self addFilesAtPaths:dicomFilePaths postNotifications:NO dicomOnly:NO rereadExistingItems:NO generatedByOsiriX:NO importedFiles:YES returnArray:YES]]];
+            [timing end: @"indexing" count: foundByScan noun: @"file"];
+            
+            // What the medium holds, what its index named, and what is actually
+            // going to be taken off it. A disc is ejected after this, so the three
+            // numbers are the only record of what was left behind.
+            NSLog( @"(scanAtPath): %@: %lu file(s) on the medium, %lu named by the index, "
+                  @"%lu more found by reading it, %lu instance(s) to take",
+                  path.lastPathComponent, (unsigned long) allpaths.count,
+                  (unsigned long) namedByIndex, (unsigned long) foundByScan,
+                  (unsigned long) dicomImages.count);
         }
         
         if (!dicomImages.count)
@@ -694,6 +788,7 @@ static NSString* _dcmElementKey(DcmElement* element) {
             [paths removeDuplicatedStrings];
             
             thread.supportsCancel = YES;
+            [timing begin: @"copying"];
             
             NSThread* copyFilesThread = [NSThread performBlockInBackground:^{
                 NSThread* cft = [NSThread currentThread];
@@ -709,28 +804,28 @@ static NSString* _dcmElementKey(DcmElement* element) {
                                                                                         NULL]];
             }];
             
-            //  NOTE - sometimes the while() below is reached before copyFilesThread.isExecuting
-            //gets true. This is why we check for the copyFilesThread.progress
-            
             float sleepInterval = 0.1f;
-            float threadHung = 0.0f; // As we don't check isRunning, we need this get off the while()
             
-            int check = false;
+            // A thread that has not started yet is not a thread that is stuck. This
+            // waited one second for isExecuting and then gave up - and what follows
+            // the loop ejects the disc, so on a busy machine the medium could be
+            // ejected before the copy had begun. It waits for the thread to start,
+            // and then for it to finish, which is what "the copy is done" means:
+            // progress reaching 1.0 is the copy's own report, not its end.
+            NSTimeInterval waitedForStart = 0;
             
-            while (copyFilesThread.progress < 1.0)
+            while (copyFilesThread.isFinished == NO)
             {
-                if(!copyFilesThread.isExecuting) {
-                    threadHung += sleepInterval;
-                } else {
-                    threadHung = 0.0f;
-                }
-                if(threadHung > 1.0f) { // ten passes stuck... break
-                    break;
+                if (copyFilesThread.isExecuting == NO)
+                {
+                    waitedForStart += sleepInterval;
+                    if (waitedForStart > 60.0)
+                    {
+                        NSLog( @"(scanAtPath): the copy did not start within a minute");
+                        break;
+                    }
                 }
                 
-                if(!check) {
-                    check = true;
-                }
                 if (thread.isCancelled && !copyFilesThread.isCancelled) {
                     [copyFilesThread cancel];
                 }
@@ -751,7 +846,25 @@ static NSString* _dcmElementKey(DcmElement* element) {
             
             thread.supportsCancel = NO; // why now?
             
-            if (isVolume && [NSUserDefaults.standardUserDefaults boolForKey:@"CDDVDEjectAfterAutoCopy"] && ![copyFilesThread isCancelled])
+            // A copy that was stopped part way did not copy the files it was given,
+            // and saying "copying 1200 files" of it would be a claim. How many did
+            // arrive is copyFilesThread's to report, and it does.
+            if (copyFilesThread.isCancelled)
+            {
+                [timing end: @"copying"];
+                NSLog( @"(scanAtPath): %@: the copy was stopped before it finished; what had "
+                      @"already been copied was indexed", path.lastPathComponent);
+            }
+            else
+                [timing end: @"copying" count: paths.count noun: @"file"];
+            
+            // Where the import spent its time, and what one instance of this medium
+            // cost. Written before the eject, like the tally above it.
+            NSLog( @"(scanAtPath): %@ (%@)", timing.summary, [timing perInstance: dicomImages.count]);
+            
+            // Only a copy that finished is a copy that can be ejected after.
+            if (isVolume && [NSUserDefaults.standardUserDefaults boolForKey:@"CDDVDEjectAfterAutoCopy"]
+                && ![copyFilesThread isCancelled] && copyFilesThread.isFinished)
             {
                 NSLog(@"(scanAtPath): Ejecting...");
                 thread.status = NSLocalizedString(@"Ejecting...", nil);
@@ -777,6 +890,12 @@ static NSString* _dcmElementKey(DcmElement* element) {
                 
                 return NO;
             }
+        }
+        else
+        {
+            // Nothing is copied when the medium is only being browsed, so the
+            // report is written here instead.
+            NSLog( @"(scanAtPath): %@ (%@)", timing.summary, [timing perInstance: dicomImages.count]);
         }
         
     //    if (![[[BrowserController currentBrowser] sourceForDatabase:self] isBeingEjected]) {

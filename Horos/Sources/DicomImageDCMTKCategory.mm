@@ -39,14 +39,14 @@
 
 #undef verify
 
-#include "osconfig.h"    /* make sure OS specific configuration is included first */
+#include "HorosDCMTKCompatibility.h"
+#include <dcmtk/config/osconfig.h>    /* make sure OS specific configuration is included first */
 
-#include "ofstream.h"
-#include "dsrdoc.h"
-#include "dcuid.h"
-#include "dcfilefo.h"
-#include "dsrtypes.h"
-#include "dsrimgtn.h"
+#include <dcmtk/ofstd/ofstream.h>
+#include "HorosStructuredReportBridge.h"
+#include <dcmtk/dcmdata/dcuid.h>
+#include <dcmtk/dcmdata/dcfilefo.h>
+#include <dcmtk/dcmsr/dsrtypes.h>
 
 @implementation DicomImage(DicomImageDCMTKCategory)
 
@@ -54,7 +54,7 @@
 {
 	NSString *type = nil;
 	DcmFileFormat fileformat;
-	DSRDocument *doc = new DSRDocument();
+	HorosSRDocument *doc = new HorosSRDocument();
 	OFCondition status = fileformat.loadFile([[self completePath] UTF8String]);
 	if (status.good())
 		status = doc->read(*fileformat.getDataset());
@@ -71,22 +71,19 @@
 {
 	NSMutableArray *references = [NSMutableArray array];
 	DcmFileFormat fileformat;
-	DSRDocument *doc = new DSRDocument();
+	HorosSRDocument *doc = new HorosSRDocument();
 	OFCondition status = fileformat.loadFile([[self completePath] UTF8String]);
 	if (status.good())
 		status = doc->read(*fileformat.getDataset());
 	if (status.good())
 	{
-		DSRDocumentTreeNode *node = NULL; 
 		//DSRDocumentTree  *tree = doc->getTree();
 		/* iterate over all nodes */ 
-        do { 
-            node = OFstatic_cast(DSRDocumentTreeNode *, doc->getTree().getNode()); 
-            if (node->getValueType() == DSRTypes::VT_Image)
+        do {
+            if (!doc->getTree().currentImageSOPInstanceUID().empty())
 			{
 				//image node get SOPCInstance
-				DSRImageTreeNode *imageNode = OFstatic_cast(DSRImageTreeNode *, node);
-				OFString sopInstance = imageNode->getSOPInstanceUID();
+				OFString sopInstance = doc->getTree().currentImageSOPInstanceUID();
 				NSString *uid = [NSString stringWithUTF8String:sopInstance.c_str()];
 				if (uid)
 					[references addObject:uid];
