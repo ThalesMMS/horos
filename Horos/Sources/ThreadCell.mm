@@ -44,10 +44,26 @@
 #import "N2Operators.h"
 #import "AppController.h"
 
+// The legacy image-only cell otherwise reports AXUnknown and is ignored by AppKit.
+@interface HorosActivityCancelButton : NSButton
+@end
+@implementation HorosActivityCancelButton
+- (BOOL)accessibilityIsIgnored { return NO; }
+- (BOOL)isAccessibilityElement { return YES; }
+- (NSString *)accessibilityRole { return NSAccessibilityButtonRole; }
+- (BOOL)accessibilityPerformPress
+{
+    if (!self.enabled || self.hidden) return NO;
+    [self performClick:nil];
+    return YES;
+}
+@end
+
 @implementation ThreadCell
 
 @synthesize progressIndicator = _progressIndicator;
 @synthesize cancelButton = _cancelButton;
+@synthesize activityAccessibilityRow;
 @synthesize thread = _thread;
 @synthesize manager = _manager;
 @synthesize view = _view;
@@ -63,7 +79,7 @@
 	[_progressIndicator setMinValue:0];
 	[_progressIndicator setMaxValue:1];
 	
-	_cancelButton = [[NSButton alloc] initWithFrame:NSZeroRect];
+	_cancelButton = [[HorosActivityCancelButton alloc] initWithFrame:NSZeroRect];
 	[_cancelButton setImage:[NSImage imageNamed:@"Activity_Stop"]];
 	[_cancelButton setAlternateImage:[NSImage imageNamed:@"Activity_StopPressed"]];
 	[_cancelButton setBordered:NO];
@@ -88,6 +104,10 @@
     
     @synchronized( _thread)
     {
+        self.activityAccessibilityRow.accessibilityChildren = @[];
+        _cancelButton.accessibilityParent = nil;
+        _progressIndicator.accessibilityParent = nil;
+        self.activityAccessibilityRow = nil;
         [_progressIndicator removeFromSuperview];
         [_progressIndicator autorelease]; _progressIndicator = nil;
         

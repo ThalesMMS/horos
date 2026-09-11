@@ -16,13 +16,13 @@
 
 
 #undef verify
-#include "dsrdoc.h"
+#include "HorosStructuredReportBridge.h"
 
 /** \brief  DICOM Structured Report */
 
 @interface StructuredReport : NSObject {
 	id _study;
-	DSRDocument *_doc;
+	HorosSRDocument *_doc;
 	NSMutableArray *_findings;
 	NSMutableArray *_conclusions;
 	NSArray *_keyImages;

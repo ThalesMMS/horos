@@ -92,7 +92,7 @@ static NSString* UserDefaultsObservingContext = @"UserDefaultsObservingContext";
     
     if( [keyPath isEqualToString: @"values.UseFloatingThumbnailsList"])
     {
-        [ViewerController closeAllWindows];
+        // AppController moves the existing lists after the defaults update.
         [[NSUserDefaults standardUserDefaults] setBool: YES forKey: @"SeriesListVisible"];
     }
 }

@@ -36,6 +36,7 @@
  ============================================================================*/
 
 #include "options.h"
+#import "Horos-Swift.h"
 #import "SplashScreen.h"
 
 #include <mach/mach.h>
@@ -142,6 +143,9 @@ BOOL useQuartz() {
         //theURL = [NSURL URLWithString:@"http://127.0.0.1:8887/about.html"];
         //theURLRequest = [NSURLRequest requestWithURL:theURL];
         //[mf loadRequest:theURLRequest];;
+        NSArray<NSString *> *missingNotices = [HorosLicenseAttribution missingNoticesIn:[NSBundle mainBundle]];
+        if (missingNotices.count)
+            NSLog(@"Horos: missing bundled license notices: %@", [missingNotices componentsJoinedByString:@", "]);
     }
     
     

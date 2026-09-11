@@ -41,9 +41,26 @@
 #import <AppKit/AppKit.h>
 #import "DCMView.h"
 
+@class PreviewView;
+@class HorosPreviewWindow;
+
+/** Told when a person changes the preview's window, so that the window policy
+    can tell a manual adjustment from a default it may replace (#608). */
+@protocol PreviewViewWindowDelegate <NSObject>
+- (void) previewView:(PreviewView*) view didRequestWindowLevel:(float) wl width:(float) ww;
+@end
+
 /** \brief Image/Frame View for BrowserController */
 @interface PreviewView : DCMView {
-
+    NSInteger applyingPreviewWindow;
+    __unsafe_unretained id <PreviewViewWindowDelegate> windowDelegate;
 }
+
+/** Not retained: the browser owns this view. */
+@property (nonatomic, assign) id <PreviewViewWindowDelegate> windowDelegate;
+
+/** Apply a window the policy chose. Unlike setWLWW:: this is not reported back
+    as a manual adjustment. */
+- (void) applyPreviewWindow: (HorosPreviewWindow*) window;
 
 @end

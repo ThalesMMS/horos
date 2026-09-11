@@ -38,6 +38,7 @@
 
 #import "DCMValueRepresentation.h"
 #import "DCMAttributeTag.h"
+#import "DCMTagNameAlias.h"
 #import "DCMAttribute.h"
 #import "DCMSequenceAttribute.h"
 #import "DCMDataContainer.h"

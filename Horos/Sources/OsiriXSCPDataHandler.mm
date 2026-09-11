@@ -1,3 +1,4 @@
+#include "HorosDCMTKCompatibility.h"
 /*=========================================================================
  This file is part of the Horos Project (www.horosproject.org)
  
@@ -56,7 +57,7 @@
 #import "MutableArrayCategory.h"
 #import "DCMAbstractSyntaxUID.h"
 
-#include "dctk.h"
+#include <dcmtk/dcmdata/dctk.h>
 
 char currentDestinationMoveAET[ 60] = "";
 
@@ -1719,6 +1720,13 @@ extern BOOL forkedProcess;
 
 - (OFCondition)prepareMoveForDataSet:( DcmDataset *)dataset
 {
+    // A database handle can serve several C-GET/C-MOVE requests on one
+    // association. Never retain the previous request's list or cursor, even
+    // when this request fails validation or has no matching objects.
+    [moveArray release];
+    moveArray = nil;
+    moveArrayEnumerator = 0;
+
 	NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
     
 	OFCondition cond = EC_IllegalParameter;
@@ -1931,6 +1939,19 @@ extern BOOL forkedProcess;
 	return EC_Normal;
 }
 
+- (void)cancelMove
+{
+    if( logDictionary)
+    {
+        [logDictionary setObject: @"Cancelled" forKey: @"logMessage"];
+        [logDictionary setObject: [NSDate date] forKey: @"logEndTime"];
+        [[LogManager currentLogManager] addLogLine: logDictionary];
+    }
+    [moveArray release];
+    moveArray = nil;
+    moveArrayEnumerator = 0;
+}
+
 - (OFCondition)nextMoveObject:(char *)imageFileName
 {
 	OFCondition ret = EC_Normal;
@@ -1944,7 +1965,9 @@ extern BOOL forkedProcess;
     if( moveArray == nil)
         return EC_IllegalParameter;
     
-    strcpy(imageFileName, [[moveArray objectAtIndex: moveArrayEnumerator] UTF8String]);
+    if (!imageFileName || ![[moveArray objectAtIndex:moveArrayEnumerator]
+            getFileSystemRepresentation:imageFileName maxLength:MAXPATHLEN + 1])
+        return EC_IllegalParameter;
     
 	moveArrayEnumerator++;
 	

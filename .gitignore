@@ -38,3 +38,19 @@ Binaries/EmbeddedPlugins/HorosCloud.horosplugin
 *.xcscmblueprint
 DICOMPrint/DICOMPrint
 Horos.xcodeproj/project.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
+/local-validation
+.codex/environments/environment.toml
+
+# Personal signing settings, kept out of the repository
+Config.local.xcconfig
+
+# Python bytecode from the local tools
+__pycache__/
+*.pyc
+
+# Local virtual environment used by the test workflow
+.venv/
+/docs
+AGENTS.md
+CLAUDE.md
+HANDOFF.md

@@ -332,7 +332,15 @@
     glMultMatrixd(dicomToPixGLTransform);
     
     glLineWidth(3.0);
-    glColor3f(1, 0, 0);
+    NSColor *drawColor = [self.strokeColor colorUsingColorSpaceName:NSCalibratedRGBColorSpace];
+    if (drawColor == nil) {
+        glPopMatrix();
+        return;
+    }
+    glEnable(GL_BLEND);
+    glBlendEquation(GL_FUNC_ADD);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glColor4f((float)[drawColor redComponent], (float)[drawColor greenComponent], (float)[drawColor blueComponent], (float)[drawColor alphaComponent]);
     glBegin(GL_LINE_STRIP);
     for (i = 0; i < [flattenedPath elementCount]; i++) {
         [flattenedPath elementAtIndex:i control1:NULL control2:NULL endpoint:&endpoint];
@@ -354,7 +362,10 @@
     mask = [self ROIMaskForFloatVolumeData:[self homeFloatVolumeData]];
     maskRuns = [mask maskRuns];
 
-    glColor3f(1, 0, 1);
+    NSColor *maskColor = [self.fillColor colorUsingColorSpaceName:NSCalibratedRGBColorSpace];
+    if (maskColor == nil)
+        maskColor = drawColor;
+    glColor4f((float)[maskColor redComponent], (float)[maskColor greenComponent], (float)[maskColor blueComponent], (float)[maskColor alphaComponent]);
     glBegin(GL_LINES);
     for (maskRunValue in maskRuns) {
         maskRun = [maskRunValue OSIROIMaskRunValue];
@@ -369,6 +380,7 @@
         glVertex3d(lineEnd.x, lineEnd.y, lineEnd.z);
     }
     glEnd();
+    glDisable(GL_BLEND);
     
     glPopMatrix();
 }

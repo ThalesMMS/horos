@@ -46,6 +46,7 @@
 #import "N2CustomTitledPopUpButtonCell.h"
 #import "NSUserDefaultsController+N2.h"
 #import "BrowserController.h"
+#import "Horos-Swift.h"
 #include <cmath>
 #include <algorithm>
 
@@ -111,6 +112,9 @@
 {
 	self = [super initWithNibName:@"AnonymizationView" bundle:NULL];
 	[self view]; // load
+    [HorosAnonymizationFieldsScroll installInBox:annotationsBox document:tagsView];
+    [saveTemplateButton setKeyEquivalent:@"s"];
+    [saveTemplateButton setKeyEquivalentModifierMask:NSEventModifierFlagCommand];
 	
 	self.tags = [NSMutableArray array];
 	
@@ -145,10 +149,7 @@
 }
 
 -(void)adaptBoxToAnnotations {
-	NSSize annotationsBoxPadding = ((NSView*)annotationsBox.contentView).frame.size - tagsView.frame.size;
-	NSSize idealAnnotationsBoxSize = [self.tagsView idealSize];
-	
-	[annotationsBox adaptContainersToIdealSize:NSMakeSize(((NSView*)annotationsBox.contentView).frame.size.width, idealAnnotationsBoxSize.height+annotationsBoxPadding.height)];	
+    [HorosAnonymizationFieldsScroll updateDocument:tagsView height:[tagsView idealSize].height];
 }
 
 -(void)addTag:(DCMAttributeTag*)tag {

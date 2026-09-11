@@ -42,6 +42,7 @@ The Horos Project was based originally upon the OsiriX Project which at the time
 //
 
 
+#import "Horos-Swift.h"
 #import "KBPopUpToolbarItem.h"
 
 static float backgroundInset = 1.5;
@@ -323,11 +324,10 @@ static float backgroundInset = 1.5;
 	[regularImage autorelease];
 	[smallImage autorelease];
 	
-	regularImage = [anImage copy];
-    [regularImage setSize:NSMakeSize(32,32)];
-    
-	smallImage = [anImage copy];
-	[smallImage setSize:NSMakeSize(24,24)];
+	// Sizing both edges to the box squashed non-square artwork; scale the
+	// longest edge instead so the icon keeps its proportions at each size mode.
+	regularImage = [[HorosToolbarImage imageScalingImage: anImage toLongestEdge: 32] retain];
+	smallImage = [[HorosToolbarImage imageScalingImage: anImage toLongestEdge: 24] retain];
 
 	if ([[self toolbar] sizeMode] == NSToolbarSizeModeSmall)
         anImage = smallImage;

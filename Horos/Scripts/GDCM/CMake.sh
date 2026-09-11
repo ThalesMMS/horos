@@ -5,8 +5,9 @@ export PATH="$PATH:/opt/local/bin:/opt/local/sbin:/opt/homebrew/bin/"
 path="$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )/$(basename "${BASH_SOURCE[0]}")"
 cd "$TARGET_NAME"; pwd
 
-env=$(env|sort|grep -v 'LLBUILD_BUILD_ID=\|LLBUILD_LANE_ID=\|LLBUILD_TASK_ID=\|Apple_PubSub_Socket_Render=\|DISPLAY=\|SHLVL=\|SSH_AUTH_SOCK=\|SECURITYSESSIONID=')
-hash="$(git describe --always --tags --dirty) $(md5 -q "$path")-$(md5 -qs "$env")"
+# One narrow hash for every dependency; see Horos/Scripts/dependency-hash.sh.
+. "$(dirname "$path")/../dependency-hash.sh"
+dependency_hash "$path"
 
 set -e; set -o xtrace
 
@@ -46,6 +47,7 @@ args+=(-DGDCM_BUILD_DOCBOOK_MANPAGES=OFF)
 
 args+=(-DGDCM_USE_SYSTEM_OPENJPEG=ON)
 
+args+=(-DCMAKE_POLICY_VERSION_MINIMUM=3.5)
 args+=(-DCMAKE_IGNORE_PATH="/opt/local/include;/opt/local/lib")
 
 openjpeg_install="$CONFIGURATION_TEMP_DIR/OpenJPEG.build/Install"
@@ -53,8 +55,12 @@ openjpeg_include="$openjpeg_install/include/openjpeg-2.5"
 if [ ! -d "$openjpeg_include" ]; then
     openjpeg_include="$openjpeg_install/include/openjpeg-2.3"
 fi
+if [ ! -d "$openjpeg_include" ]; then
+    openjpeg_include="$openjpeg_install/include/OpenJPEG"
+fi
 args+=(-DOPENJPEG_LIBRARIES="$openjpeg_install/lib/libopenjp2.a")
 args+=(-DOPENJPEG_INCLUDE_DIRS="$openjpeg_include")
+args+=(-DOPENJPEG_VERSION=2.5.0)
 
 # currently, GDCM 2.8.3 uses CharLS 1.1, using our CharLS 2.0.0 won't compile
 #args+=(-DGDCM_USE_SYSTEM_CHARLS=ON)

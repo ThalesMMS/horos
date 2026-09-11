@@ -263,7 +263,7 @@
 	NSInteger i;
 	N3Vector endpoint;
     N3BezierPath *flattenedPath;
-    NSColor *deviceStrokeColor = [self.strokeColor colorUsingColorSpaceName:NSDeviceRGBColorSpace];
+    NSColor *deviceStrokeColor = [self.strokeColor colorUsingColorSpaceName:NSCalibratedRGBColorSpace];
     
     if (self.strokeThickness != 0 && self.strokeColor != nil) {
         N3AffineTransformGetOpenGLMatrixd(dicomToPixTransform, dicomToPixGLTransform);
@@ -273,6 +273,7 @@
         glEnable(GL_LINE_SMOOTH);
         glEnable(GL_POLYGON_SMOOTH);
         glEnable(GL_BLEND);
+        glBlendEquation(GL_FUNC_ADD);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         
         glLineWidth(self.strokeThickness);

@@ -38,11 +38,15 @@
 #include "vtkHorosFixedPointVolumeRayCastMapper.h"
 
 #include <vtkObjectFactory.h>
+#include <vtkImageData.h>
+#include <vtkAlgorithm.h>
 #include <vtkRenderWindow.h>
 #include <vtkRenderer.h>
 #include <vtkTimerLog.h>
 #include <vtkRayCastImageDisplayHelper.h>
+#include <vtkFixedPointRayCastImage.h>
 #include "vtkHorosFixedPointVolumeRayCastMIPHelper.h"
+#include "VRRayCastZBufferGuard.h"
 
 #include <math.h>
 
@@ -77,9 +81,69 @@ void vtkHorosFixedPointVolumeRayCastMapper::DisplayRenderedImage( vtkRenderer *r
 }
 
 
+bool vtkHorosFixedPointVolumeRayCastMapper::PrepareMPRGeometry(vtkRenderer *ren, vtkVolume *vol)
+{
+    vtkImageData *input = this->GetInput();
+    if (!input || !ren || !vol)
+        return false;
+    this->GetInputAlgorithm()->UpdateWholeExtent();
+
+    // Use the host's requested LOD, independent of previous CPU render timings.
+    this->ImageSampleDistance = this->MinimumImageSampleDistance;
+    int width, height;
+    ren->GetTiledSize(&width, &height);
+    if (width <= 0 || height <= 0 || this->ImageSampleDistance <= 0)
+        return false;
+    this->RayCastImage->SetImageSampleDistance(this->ImageSampleDistance);
+    this->RayCastImage->SetImageViewportSize(
+        static_cast<int>(width / this->ImageSampleDistance),
+        static_cast<int>(height / this->ImageSampleDistance));
+
+    double origin[3], spacing[3];
+    int extent[6];
+    input->GetOrigin(origin);
+    input->GetSpacing(spacing);
+    input->GetExtent(extent);
+    // restoreCamera installs six planes even for the uncropped volume.
+    // Accept those, but use the CPU if any plane cuts into the voxel centres.
+    for (int planeIndex = 0; planeIndex < this->GetNumberOfClippingPlanes(); ++planeIndex)
+    {
+        double plane[4];
+        this->GetClippingPlaneInDataCoords(vol->GetMatrix(), planeIndex, plane);
+        for (int corner = 0; corner < 8; ++corner)
+        {
+            double distance = plane[3];
+            for (int axis = 0; axis < 3; ++axis)
+                distance += plane[axis] * (origin[axis] + spacing[axis] *
+                    extent[2 * axis + ((corner >> axis) & 1)]);
+            if (distance < -1e-4)
+                return false;
+        }
+    }
+    this->ComputeMatrices(origin, spacing, extent, ren, vol);
+    this->RenderWindow = ren->GetRenderWindow();
+    this->UpdateCroppingRegions();
+    // Keep row bounds allocated so switching back to the CPU remains valid.
+    // No transfer tables, gradients, ray casting, or texture presentation here.
+    return this->ComputeRowBounds(ren, 1, 1, extent) != 0;
+}
+
 void vtkHorosFixedPointVolumeRayCastMapper::Render( vtkRenderer *ren, vtkVolume *vol )
 {
   this->Timer->StartTimer();
+
+  if (!dontRenderVolumeRenderingOsiriX)
+    {
+    this->ExternalImageValid = this->RenderImage &&
+      this->RenderImage(this->RenderImageContext, this, ren, vol);
+    }
+  if (this->ExternalImageValid)
+    {
+    this->DisplayRenderedImage(ren, vol);
+    this->Timer->StopTimer();
+    this->TimeToDraw = this->Timer->GetElapsedTime();
+    return;
+    }
 
   // Since we are passing in a value of 0 for the multiRender flag
   // (this is a single render pass - not part of a multipass AMR render)
@@ -112,6 +176,8 @@ void vtkHorosFixedPointVolumeRayCastMapper::Render( vtkRenderer *ren, vtkVolume 
     return;
     }
 
+  this->SanitizeRayCastZBuffer();
+
   if( dontRenderVolumeRenderingOsiriX == 0)
 	this->RenderSubVolume();
 
@@ -136,4 +202,19 @@ void vtkHorosFixedPointVolumeRayCastMapper::Render( vtkRenderer *ren, vtkVolume 
 			   this->OldSampleDistance ) );
 
   this->SampleDistance = this->OldSampleDistance;
+}
+
+void vtkHorosFixedPointVolumeRayCastMapper::SanitizeRayCastZBuffer()
+{
+    vtkFixedPointRayCastImage *image = this->GetRayCastImage();
+    if (!image || !image->GetUseZBuffer())
+    {
+        return;
+    }
+    int size[2] = {0, 0};
+    image->GetZBufferSize(size);
+    if (!HorosRayCastZBufferIsUsable(1, image->GetZBuffer(), size[0], size[1]))
+    {
+        image->UseZBufferOff();
+    }
 }

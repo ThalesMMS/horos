@@ -9349,6 +9349,22 @@ static const DBI_SimpleEntry simpleBuiltinDict[] = {
       EVR_LO, "FunctionalGroupPrivateCreator", 1, 1, "dicom2003",
       DcmDictRange_Unspecified, DcmDictRange_Unspecified,
       NULL }
+  , { 0x0020, 0x9301, 0x0020, 0x9301,
+      EVR_FD, "ImagePositionVolume", 3, 3, "dicom2003",
+      DcmDictRange_Unspecified, DcmDictRange_Unspecified,
+      NULL }
+  , { 0x0020, 0x9302, 0x0020, 0x9302,
+      EVR_FD, "ImageOrientationVolume", 6, 6, "dicom2003",
+      DcmDictRange_Unspecified, DcmDictRange_Unspecified,
+      NULL }
+  , { 0x0020, 0x930e, 0x0020, 0x930e,
+      EVR_SQ, "PlanePositionVolumeSequence", 1, 1, "dicom2003",
+      DcmDictRange_Unspecified, DcmDictRange_Unspecified,
+      NULL }
+  , { 0x0020, 0x930f, 0x0020, 0x930f,
+      EVR_SQ, "PlaneOrientationVolumeSequence", 1, 1, "dicom2003",
+      DcmDictRange_Unspecified, DcmDictRange_Unspecified,
+      NULL }
   , { 0x0020, 0x9421, 0x0020, 0x9421,
       EVR_LO, "DimensionDescriptionLabel", 1, 1, "dicom2005",
       DcmDictRange_Unspecified, DcmDictRange_Unspecified,
@@ -19464,6 +19480,14 @@ static const DBI_SimpleEntry simpleBuiltinDict[] = {
 #endif
   , { 0x7fe0, 0x0000, 0x7fe0, 0x0000,
       EVR_UL, "PixelDataGroupLength", 1, 1, "dicom98",
+      DcmDictRange_Unspecified, DcmDictRange_Unspecified,
+      NULL }
+  , { 0x7fe0, 0x0008, 0x7fe0, 0x0008,
+      EVR_OF, "FloatPixelData", 1, 1, "dicom2015",
+      DcmDictRange_Unspecified, DcmDictRange_Unspecified,
+      NULL }
+  , { 0x7fe0, 0x0009, 0x7fe0, 0x0009,
+      EVR_UN, "DoubleFloatPixelData", 1, 1, "dicom2015",
       DcmDictRange_Unspecified, DcmDictRange_Unspecified,
       NULL }
   , { 0x7fe0, 0x0010, 0x7fe0, 0x0010,

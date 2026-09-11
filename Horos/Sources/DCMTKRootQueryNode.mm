@@ -39,7 +39,7 @@
 #import "DCMCalendarDate.h"
 #import "DicomFile.h"
 
-#include "dcdeftag.h"
+#include <dcmtk/dcmdata/dcdeftag.h>
 
 
 @implementation DCMTKRootQueryNode

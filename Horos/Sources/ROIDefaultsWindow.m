@@ -104,7 +104,7 @@
     {
 		if( roiNames == nil) roiNames = [[self generateROINamesArray] retain];
 		
-		return [roiNames objectAtIndex: index];
+		return index < [roiNames count] ? [roiNames objectAtIndex: index] : nil;
     }
     
     return nil;

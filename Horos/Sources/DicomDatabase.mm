@@ -35,7 +35,13 @@
      PURPOSE.
  ============================================================================*/
 
+#import "HorosFileCopy.h"
+#import "Horos-Swift.h"
+#import <objc/message.h>
+#import <objc/runtime.h>
 #import "DicomDatabase.h"
+#import "HorosImportFileSafety.h"
+#import "HorosReportFileReplacement.h"
 #import "NSString+N2.h"
 #import "NSString+SymlinksAndAliases.h"
 #import "Notifications.h"
@@ -44,6 +50,7 @@
 #import "N2MutableUInteger.h"
 #import "NSFileManager+N2.h"
 #import "N2Debug.h"
+#import "HorosDerivedUID.h"
 #import "DicomImage.h"
 #import "DicomStudy.h"
 #import "DicomSeries.h"
@@ -92,6 +99,8 @@ NSString* const CurrentDatabaseVersion = @"2.5";
 +(NSString*)sqlFilePathForBasePath:(NSString*)basePath;
 -(void)modifyDefaultAlbums;
 +(void)recomputePatientUIDsInContext:(NSManagedObjectContext*)context;
++(void)repairEmptySeriesIdentifiersInContext:(NSManagedObjectContext*)context;
++(void)repairFabricatedPatientIdentifiersInContext:(NSManagedObjectContext*)context;
 -(BOOL)upgradeSqlFileFromModelVersion:(NSString*)databaseModelVersion;
 
 @end
@@ -116,19 +125,10 @@ NSString* const OsirixDataDirName = @"Horos Data";
 NSString* const O2ScreenCapturesSeriesName = NSLocalizedString(@"OsiriX Screen Captures", nil);;
 
 +(NSString*)baseDirPathForPath:(NSString*)path {
-    // were we given a path inside a OsirixDataDirName dir?
-    NSArray* pathParts = path.pathComponents;
-    for (int i = (long)pathParts.count-1; i >= 0; --i)
-        if ([[pathParts objectAtIndex:i] isEqualToString:OsirixDataDirName]) {
-            path = [NSString pathWithComponents:[pathParts subarrayWithRange:NSMakeRange(0,i+1)]];
-            break;
-        }
-    
-    // otherwise, consider the path was incomplete and just append the OsirixDataDirName element to tho path
-    if (![[path lastPathComponent] isEqualToString:OsirixDataDirName])
-        path = [path stringByAppendingPathComponent:OsirixDataDirName];
-    
-    return path;
+    // A folder that carries the data directory's name only when it has not been
+    // renamed; a backup usually has been. HorosDatabaseLocation also recognises
+    // a folder by the index inside it, and the index file itself.
+    return [HorosDatabaseLocation baseDirectoryForPath: path];
 }
 
 +(NSString*)baseDirPathForMode:(int)mode path:(NSString*)path {
@@ -163,7 +163,22 @@ NSString* const O2ScreenCapturesSeriesName = NSLocalizedString(@"OsiriX Screen C
                 return nil; // not mounted
         }
         
+        // Reopening a database that moved and creating one are different events,
+        // and the folder that was chosen is not always the one that ends up
+        // being used. Say which, once, where the location is decided.
+        BOOL existing = [HorosDatabaseLocation pathHoldsExistingDatabase: path];
         [NSFileManager.defaultManager confirmDirectoryAtPath:path];
+        // This is asked repeatedly for the same location; say it when it changes.
+        static NSString *lastReportedLocation = nil;
+        @synchronized( [DicomDatabase class])
+        {
+            if( [lastReportedLocation isEqualToString: path] == NO)
+            {
+                [lastReportedLocation release];
+                lastReportedLocation = [path copy];
+                NSLog( @"---- database location: %@ (%@)", path, existing? @"opening the database already there" : @"no index there yet; a new database will be created");
+            }
+        }
     }
     
     return path;
@@ -190,6 +205,8 @@ NSString* const O2ScreenCapturesSeriesName = NSLocalizedString(@"OsiriX Screen C
 static DicomDatabase* defaultDatabase = nil;
 
 +(DicomDatabase*)defaultDatabase {
+    // Nib loading can request the database before first-use setup is complete.
+    if ([HorosDatabaseFirstUse hasPendingChoice]) return nil;
     @synchronized(self) {
         if (!defaultDatabase)
         {
@@ -485,6 +502,8 @@ static DicomDatabase* activeLocalDatabase = nil;
             if (isNewFile && ![p hasPrefix:@"/tmp/"])
                 [self addDefaultAlbums];
             [self modifyDefaultAlbums];
+            [DicomDatabase repairEmptySeriesIdentifiersInContext: self.managedObjectContext];
+            [DicomDatabase repairFabricatedPatientIdentifiersInContext: self.managedObjectContext];
             
             [DicomDatabase syncImportFilesFromIncomingDirTimerWithUserDefaults];
         }
@@ -538,6 +557,9 @@ static DicomDatabase* activeLocalDatabase = nil;
         return;
     _deallocating = YES;
     
+    [_lastImportRefusalSummary release];
+    _lastImportRefusalSummary = nil;
+    
     BOOL found = NO;
     for(id key in [NSDictionary dictionaryWithDictionary: databasesDictionary])
     {
@@ -548,7 +570,13 @@ static DicomDatabase* activeLocalDatabase = nil;
         }
     }
     if( found == NO)
-        N2LogStackTrace( @"*************** WTF");
+    {
+        // A database whose -initWithPath: threw - the usual cause is its volume
+        // going away under it - never reached the registry, so this is a real
+        // situation and not a mystery. Name it instead of logging a stack trace
+        // under "WTF", which said nothing about what had happened.
+        NSLog( @"---- database at %@ was released without ever being registered; it did not finish opening", self.baseDirPath? self.baseDirPath : @"an unknown path");
+    }
     
 #ifndef NDEBUG
     if( databasesDictionary.count > 50)
@@ -785,7 +813,12 @@ NSString* const DicomDatabaseLogEntryEntityName = @"LogEntry";
 }
 
 -(NSString*)errorsDirPath {
-    return [[self.dataBaseDirPath stringByAppendingPathComponent:@"NOT READABLE"] stringByResolvingSymlinksAndAliases];
+    NSString *path = [[self.dataBaseDirPath stringByAppendingPathComponent:@"NOT READABLE"] stringByResolvingSymlinksAndAliases];
+    // Nothing created this directory, so every -moveItemAtPath: into it failed
+    // and the fallback removed the file instead: the preference that is meant to
+    // keep unreadable files for inspection kept nothing.
+    [NSFileManager.defaultManager confirmDirectoryAtPath: path];
+    return path;
 }
 
 -(NSString*)reportsDirPath {
@@ -1286,7 +1319,7 @@ NSString* const DicomDatabaseLogEntryEntityName = @"LogEntry";
             _timeOfLastIsFileSystemFreeSizeLimitReachedVerification = currentTime;
             
             if (_isFileSystemFreeSizeLimitReached)
-                NSLog(@"Warning: the volume used to store data for %@ is full, incoming files will be deleted and DICOM transferts will be rejected", self.name);
+                NSLog(@"Warning: the volume used to store data for %@ is full; queued incoming files are preserved and new DICOM transfers will be rejected", self.name);
         } else return YES;
     }
     
@@ -1342,7 +1375,7 @@ NSString* const DicomDatabaseLogEntryEntityName = @"LogEntry";
     return [DicomDatabase decompressDicomFilesAtPaths:paths intoDirAtPath:destDir];
 }
 
--(void)_processFilesAtPaths_processChunk:(NSArray*)io {
+-(NSNumber*)_processFilesAtPaths_processChunk:(NSArray*)io {
     NSArray* chunk = [io objectAtIndex:0];
     int mode = [[io objectAtIndex:1] intValue];
     NSString* destDir = nil;
@@ -1350,13 +1383,20 @@ NSString* const DicomDatabaseLogEntryEntityName = @"LogEntry";
         destDir = [io objectAtIndex:2];
     
     if (mode == Compress)
-        [DicomDatabase compressDicomFilesAtPaths:chunk intoDirAtPath:destDir];
+        return [NSNumber numberWithBool:[DicomDatabase compressDicomFilesAtPaths:chunk intoDirAtPath:destDir]];
     else
-        [DicomDatabase decompressDicomFilesAtPaths:chunk intoDirAtPath:destDir];
+        return [NSNumber numberWithBool:[DicomDatabase decompressDicomFilesAtPaths:chunk intoDirAtPath:destDir]];
 }
 
 -(void)processFilesAtPaths:(NSArray*)paths intoDirAtPath:(NSString*)destDir mode:(int)mode
 {
+    [self processFilesAtPaths:paths intoDirAtPath:destDir mode:mode error:NULL];
+}
+
+-(BOOL)processFilesAtPaths:(NSArray*)paths intoDirAtPath:(NSString*)destDir mode:(int)mode error:(NSError**)error
+{
+    BOOL succeeded = YES;
+    NSOperationQueue* queue = nil;
     NSThread* thread = [NSThread currentThread];
     
     if (mode == Compress)
@@ -1381,11 +1421,16 @@ NSString* const DicomDatabaseLogEntryEntityName = @"LogEntry";
         
         NSArray* chunks = [paths splitArrayIntoArraysOfMinSize:chunkSize maxArrays:nTasks];
         
-        NSOperationQueue* queue = [NSOperationQueue new];
+        queue = [NSOperationQueue new];
+        NSMutableArray *operations = [NSMutableArray array];
         NSUInteger nProcs = [[NSProcessInfo processInfo] processorCount];
         queue.maxConcurrentOperationCount = MAX(nProcs-1, 1);
         for (NSArray* chunk in chunks)
-            [queue addOperation:[[[NSInvocationOperation alloc] initWithTarget:self selector:@selector(_processFilesAtPaths_processChunk:) object:[NSArray arrayWithObjects: chunk, [NSNumber numberWithInt:mode], destDir, nil]] autorelease]]; // Warning! DestDir can be nil : at the end !
+        {
+            NSInvocationOperation *operation = [[[NSInvocationOperation alloc] initWithTarget:self selector:@selector(_processFilesAtPaths_processChunk:) object:[NSArray arrayWithObjects:chunk, [NSNumber numberWithInt:mode], destDir, nil]] autorelease];
+            [operations addObject:operation];
+            [queue addOperation:operation];
+        }
         
         NSUInteger initialOpCount = queue.operationCount;
         while (queue.operationCount) {
@@ -1395,17 +1440,28 @@ NSString* const DicomDatabaseLogEntryEntityName = @"LogEntry";
         }
         
         [queue waitUntilAllOperationsAreFinished];
-        [queue release];
+        for (NSInvocationOperation *operation in operations)
+            if (![[operation result] boolValue])
+                succeeded = NO;
     }
     @catch (NSException* e)
     {
+        succeeded = NO;
         N2LogExceptionWithStackTrace(e);
     }
     @finally
     {
+        [queue waitUntilAllOperationsAreFinished];
+        [queue release];
         [_processFilesLock unlock];
         //		[thread popLevel];
     }
+    if (!succeeded && error)
+        *error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSFileWriteUnknownError userInfo:@{
+            NSLocalizedDescriptionKey: NSLocalizedString(@"DICOM conversion could not be completed.", nil),
+            NSLocalizedFailureReasonErrorKey: NSLocalizedString(@"The compression or decompression process failed. Check that the input files are accessible and valid DICOM files.", nil)
+        }];
+    return succeeded;
 }
 
 -(void)threadBridgeForProcessFilesAtPaths:(NSDictionary*)params
@@ -1472,6 +1528,10 @@ NSString* const DicomDatabaseLogEntryEntityName = @"LogEntry";
     [self initiateProcessFilesAtPaths:paths intoDirAtPath:destDir mode:Decompress];
 }
 
+// Defined further down, beside the incoming folder's own use of it: two archives
+// can each hold a readme.txt, and moving the second onto the first fails.
+static NSString *availablePathInDirectory( NSString *directory, NSString *name);
+
 -(NSArray*)addFilesAtPaths:(NSArray*)paths
 {
     return [self addFilesAtPaths:paths postNotifications:YES];
@@ -1536,6 +1596,55 @@ NSString* const DicomDatabaseLogEntryEntityName = @"LogEntry";
         BOOL DELETEFILELISTENER = [[NSUserDefaults standardUserDefaults] boolForKey: @"DELETEFILELISTENER"], addFailed = NO;
         NSMutableArray *dicomFilesArray = [NSMutableArray arrayWithCapacity:chunkRange.length];
         
+        // A file that cannot be turned into an instance was dropped in silence
+        // unless it was already inside the database folder. On a medium that means
+        // a study quietly missing images, with nothing to say which.
+        HorosImportRefusals *refusals = [[[HorosImportRefusals alloc] initWithConsidered: chunkRange.length] autorelease];
+        
+        // What the previous import refused stops being current the moment another
+        // one has files of its own. An idle scan - the usual case, several times a
+        // minute - leaves the line alone, so a refusal stays readable.
+        if (chunkIndex == 0 && chunkRange.length)
+            [self setLastImportRefusalSummary: nil];
+        
+        // A file inside the database folder that cannot be indexed has to leave it,
+        // or it sits there for ever with no row pointing at it. This used to be
+        // done only for a file that opened and produced no dictionary; a file that
+        // -[DicomFile init:] could not construct at all fell outside the enclosing
+        // if( curFile) and was left where it was. Measured on an import of 1204
+        // files, one truncated: the database folder ended with 1201 files for 1200
+        // images, and NOT READABLE was empty.
+        void (^disposeOfUnreadable)(NSString*) = ^(NSString *unreadable)
+        {
+            if (dataDirPath == nil || [unreadable hasPrefix: dataDirPath] == NO)
+                return;
+            
+            if (DELETEFILELISTENER)
+            {
+                NSError *removeError = nil;
+                if ([[NSFileManager defaultManager] removeItemAtPath: unreadable error: &removeError])
+                    NSLog( @"---- import: %@ could not be indexed; deleted (DELETEFILELISTENER)",
+                          unreadable.lastPathComponent);
+                else
+                    NSLog( @"---- import: %@ could not be indexed and could not be deleted (%@); "
+                          @"it stays in the database folder", unreadable.lastPathComponent,
+                          removeError.localizedDescription);
+                return;
+            }
+            
+            NSString *kept = availablePathInDirectory( errorsDirPath, unreadable.lastPathComponent);
+            NSError *moveError = nil;
+            if ([[NSFileManager defaultManager] moveItemAtPath: unreadable toPath: kept error: &moveError])
+                NSLog( @"---- import: %@ could not be indexed; kept in %@",
+                      unreadable.lastPathComponent, errorsDirPath.lastPathComponent);
+            else
+            {
+                NSLog( @"---- import: %@ could not be indexed and could not be kept (%@); deleted",
+                      unreadable.lastPathComponent, moveError.localizedDescription);
+                [[NSFileManager defaultManager] removeItemAtPath: unreadable error: NULL];
+            }
+        };
+        
         if ([[NSFileManager defaultManager] fileExistsAtPath: dataDirPath] == NO)
             [[NSFileManager defaultManager] createDirectoryAtPath: dataDirPath withIntermediateDirectories:YES attributes:nil error:NULL];
         
@@ -1544,9 +1653,6 @@ NSString* const DicomDatabaseLogEntryEntityName = @"LogEntry";
         
         if (chunkRange.length == 0)
             break;
-        
-        BOOL isCDMedia = [BrowserController isItCD:[paths objectAtIndex:chunkRange.location]];
-        [DicomFile setFilesAreFromCDMedia:isCDMedia];
         
         NSTimeInterval start = [NSDate timeIntervalSinceReferenceDate];
         
@@ -1575,13 +1681,30 @@ NSString* const DicomDatabaseLogEntryEntityName = @"LogEntry";
                     N2LogExceptionWithStackTrace(e);
                 }
                 
+                if (curFile == nil)
+                {
+                    [refusals refuse: newFile];
+                    disposeOfUnreadable( newFile);
+                }
+                
                 if (curFile)
                 {
                     curDict = [curFile dicomElements];
+                    // A file the reader understood, refused because this database
+                    // indexes only DICOM. Saying it could not be read would send
+                    // someone looking for a fault in a file that has none.
+                    NSString *refusedByPolicy = nil;
                     if (dicomOnly)
                     {
-                        if ([[curDict objectForKey: @"fileType"] hasPrefix:@"DICOM"] == NO)
+                        NSString *kind = [curDict objectForKey: @"fileType"];
+                        if ([kind hasPrefix:@"DICOM"] == NO)
+                        {
+                            refusedByPolicy = [NSString stringWithFormat:
+                                NSLocalizedString(@"is %@, and this database indexes only DICOM "
+                                                  @"(see the onlyDICOM preference)", nil),
+                                kind.length ? kind : NSLocalizedString(@"not DICOM", nil)];
                             curDict = nil;
+                        }
                     }
                     
                     if (curDict)
@@ -1590,23 +1713,11 @@ NSString* const DicomDatabaseLogEntryEntityName = @"LogEntry";
                     }
                     else
                     {
-                        // This file was not readable -> If it is located in the DATABASE folder, we have to delete it or to move it to the 'NOT READABLE' folder
-                        if (dataDirPath && [newFile hasPrefix: dataDirPath])
-                        {
-                            NSLog(@"**** Unreadable file: %@", newFile);
-                            
-                            if ( DELETEFILELISTENER)
-                            {
-                                [[NSFileManager defaultManager] removeItemAtPath: newFile error:NULL];
-                            }
-                            else
-                            {
-                                NSLog(@"**** This file in the DATABASE folder: move it to the unreadable folder");
-                                
-                                if ([[NSFileManager defaultManager] moveItemAtPath:newFile toPath:[errorsDirPath stringByAppendingPathComponent:[newFile lastPathComponent]] error:NULL] == NO)
-                                    [[NSFileManager defaultManager] removeItemAtPath: newFile error:NULL];
-                            }
-                        }
+                        if (refusedByPolicy)
+                            [refusals refuse: newFile reason: refusedByPolicy];
+                        else
+                            [refusals refuse: newFile];
+                        disposeOfUnreadable( newFile);
                     }
                     
                     [curFile release];
@@ -1640,6 +1751,15 @@ NSString* const DicomDatabaseLogEntryEntityName = @"LogEntry";
             }
         }
         
+        if (refusals.count)
+        {
+            NSLog( @"(addFilesAtPaths): %@", refusals.summary);
+            // The incoming scanner calls this once per batch, so a refusal in one
+            // batch must not be erased by the next batch being clean. The scan
+            // clears the line when it starts.
+            [self addImportRefusalSummary: refusals.summary];
+        }
+        
         [thread enterOperationIgnoringLowerLevels];
         thread.status = [NSString stringWithFormat:NSLocalizedString(@"Adding %@", nil), N2LocalizedSingularPluralCount(dicomFilesArray.count, NSLocalizedString(@"file", nil), NSLocalizedString(@"files", nil))];
         //        NSLog(@"before: %X", self.managedObjectContext);
@@ -1654,7 +1774,6 @@ NSString* const DicomDatabaseLogEntryEntityName = @"LogEntry";
         
         [thread exitOperation];
         
-        [DicomFile setFilesAreFromCDMedia: NO];
         
         //	[[NSFileManager defaultManager] removeItemAtPath: @"/tmp/dicomsr_osirix" error:NULL]; // nooooooo because other threads may be using it
         
@@ -1752,6 +1871,74 @@ static BOOL protectionAgainstReentry = NO;
     return [self addFilesDescribedInDictionaries: dicomFilesArray postNotifications: postNotifications rereadExistingItems: rereadExistingItems generatedByOsiriX: generatedByOsiriX importedFiles: NO returnArray: returnArray];
 }
 
+static BOOL HorosIncomingLooksLikeCloudReport(NSDictionary *dict)
+{
+    NSString *sop = [dict objectForKey:@"SOPClassUID"];
+    NSString *mod = [dict objectForKey:@"modality"];
+    NSString *desc = [dict objectForKey:@"seriesDescription"];
+    NSString *mfr = [dict objectForKey:@"manufacturer"];
+    if ([DCMAbstractSyntaxUID isPDF:sop] || [DCMAbstractSyntaxUID isStructuredReport:sop])
+        return YES;
+    if ([mod caseInsensitiveCompare:@"DOC"] == NSOrderedSame)
+        return YES;
+    if ([desc rangeOfString:@"Cloud" options:NSCaseInsensitiveSearch].location != NSNotFound)
+        return YES;
+    if ([mfr rangeOfString:@"Cloud" options:NSCaseInsensitiveSearch].location != NSNotFound)
+        return YES;
+    return NO;
+}
+
+// Group a Cloud/PDF report with the study it references. Name alone does not
+// join patients or studies. The file keeps its original Study Instance UID.
+static void HorosAssociateCloudReports(NSArray *dicomFilesArray, NSArray *studiesArray)
+{
+    Class assoc = NSClassFromString(@"HorosCloudReportAssociation");
+    if (assoc == Nil)
+        return;
+    SEL sel = @selector(associateReportsInFiles:existingStudies:);
+    if (![assoc respondsToSelector:sel])
+        return;
+
+    BOOL maybeReport = NO;
+    for (id item in dicomFilesArray)
+    {
+        if ([item isKindOfClass:[NSDictionary class]] && HorosIncomingLooksLikeCloudReport(item))
+        {
+            maybeReport = YES;
+            break;
+        }
+    }
+    if (!maybeReport)
+        return;
+
+    NSMutableArray *known = [NSMutableArray array];
+    for (DicomStudy *study in studiesArray)
+    {
+        NSMutableArray *sops = [NSMutableArray array];
+        for (DicomSeries *series in [[study valueForKey:@"series"] allObjects])
+        {
+            for (id image in [[series valueForKey:@"images"] allObjects])
+            {
+                NSString *uid = [image valueForKey:@"sopInstanceUID"];
+                if ([uid length])
+                    [sops addObject:uid];
+            }
+        }
+        NSMutableDictionary *entry = [NSMutableDictionary dictionary];
+        if (study.studyInstanceUID)
+            [entry setObject:study.studyInstanceUID forKey:@"studyID"];
+        if (study.patientUID)
+            [entry setObject:study.patientUID forKey:@"patientUID"];
+        if (study.name)
+            [entry setObject:study.name forKey:@"patientName"];
+        if (study.patientID)
+            [entry setObject:study.patientID forKey:@"patientID"];
+        [entry setObject:sops forKey:@"SOPUIDs"];
+        [known addObject:entry];
+    }
+    ((void (*)(id, SEL, id, id))objc_msgSend)(assoc, sel, dicomFilesArray, known);
+}
+
 -(NSArray*)addFilesDescribedInDictionaries:(NSArray*)dicomFilesArray postNotifications:(BOOL)postNotifications rereadExistingItems:(BOOL)rereadExistingItems generatedByOsiriX:(BOOL)generatedByOsiriX importedFiles: (BOOL) importedFiles returnArray: (BOOL) returnArray
 {
 #ifndef NDEBUG
@@ -1761,6 +1948,7 @@ static BOOL protectionAgainstReentry = NO;
     NSThread* thread = [NSThread currentThread];
     thread.status = [NSString stringWithFormat:NSLocalizedString(@"Adding %@", nil), N2LocalizedSingularPluralCount(dicomFilesArray.count, NSLocalizedString(@"file", nil), NSLocalizedString(@"files", nil))];
     
+    NSUInteger rejectedReports = 0;
     NSMutableArray* newStudies = [NSMutableArray array];
     
     NSMutableArray* addedImageObjects = nil;
@@ -1809,6 +1997,8 @@ static BOOL protectionAgainstReentry = NO;
         BOOL COMMENTSAUTOFILLSeriesLevel = [[NSUserDefaults standardUserDefaults] boolForKey: @"COMMENTSAUTOFILLSeriesLevel"];
         BOOL COMMENTSAUTOFILLStudyLevel = [[NSUserDefaults standardUserDefaults] boolForKey: @"COMMENTSAUTOFILLStudyLevel"];
         
+        HorosAssociateCloudReports(dicomFilesArray, studiesArray);
+        
         NSString* newFile = nil;
         NSTimeInterval start = [NSDate timeIntervalSinceReferenceDate];
         // Add the new files
@@ -1821,6 +2011,7 @@ static BOOL protectionAgainstReentry = NO;
             
             @autoreleasepool
             {
+                NSString *preparedReportPath = nil;
                 @try
                 {
                     NSMutableDictionary *curDict = [dicomFilesArray objectAtIndex:i];
@@ -1855,6 +2046,14 @@ static BOOL protectionAgainstReentry = NO;
                         // Check if it is an OsiriX Report SR
                         if ([[curDict valueForKey:@"seriesDescription"] isEqualToString: @"OsiriX Report SR"])
                         {
+                            NSError *extractionError = nil;
+                            preparedReportPath = [DicomDatabase extractReportSR:newFile contentDate:[curDict objectForKey:@"studyDate"] error:&extractionError];
+                            if (extractionError) {
+                                ++rejectedReports;
+                                HorosQuarantineUnindexedImport((N2ManagedObjectContext *)self.managedObjectContext, newFile, dataDirPath, errorsDirPath);
+                                NSLog(@"Report import rejected before indexing: %@", extractionError.localizedDescription);
+                                continue;
+                            }
                             [curDict setValue: @"OsiriX Report SR" forKey: @"seriesID"];
                             
                             inParseExistingObject = YES;
@@ -1959,7 +2158,13 @@ static BOOL protectionAgainstReentry = NO;
                                         
                                         if( study == nil)
                                         {
-                                            NSLog( @"-*-*-*-*-* same studyUID (%@), but not same patientUID (%@ versus %@)", [curDict objectForKey: @"studyID"], [curDict objectForKey: @"patientUID"], [[studiesArray objectAtIndex: index] valueForKey: @"patientUID"]);
+                                            // Two identifiers side by side leave the reader to
+                                            // spot the difference and then work out which tag
+                                            // produced it. A differing key can be a genuinely
+                                            // different person, so name what differs.
+                                            NSString *existingUID = [[studiesArray objectAtIndex: index] valueForKey: @"patientUID"];
+                                            NSString *arrivingUID = [curDict objectForKey: @"patientUID"];
+                                            NSLog( @"-*-*-*-*-* same studyUID (%@), but not same patientUID: %@", [curDict objectForKey: @"studyID"], [HorosPatientIdentity differenceBetweenUID: arrivingUID? arrivingUID : @"" andUID: existingUID? existingUID : @""]);
                                             
                                             if( self.hasPotentiallySlowDataAccess) //It's a CD... be less restrictive !
                                                 study = tstudy;
@@ -2162,8 +2367,7 @@ static BOOL protectionAgainstReentry = NO;
                                         
                                         if ([[image valueForKey:@"inDatabaseFolder"] boolValue] && [imPath isEqualToString: newFile] == NO)
                                         {
-                                            if ([[NSFileManager defaultManager] fileExistsAtPath: imPath])
-                                                [[NSFileManager defaultManager] removeItemAtPath: imPath error:NULL];
+                                            HorosRetireImportedFileAfterSave((N2ManagedObjectContext *)self.managedObjectContext, imPath, newFile);
                                         }
                                     }
                                 }
@@ -2206,6 +2410,14 @@ static BOOL protectionAgainstReentry = NO;
                                             imageInstance += f;
                                             [image setValue: [NSNumber numberWithLong: imageInstance] forKey:@"instanceNumber"];
                                         }
+                                        else if( [[curDict objectForKey: @"instanceNumberArray"] count] > f)
+                                        {
+                                            // The acquisition numbered its own frames.
+                                            // Adding the file's instance number to the
+                                            // frame index numbers them by where they
+                                            // happen to be stored instead.
+                                            [image setValue: [[curDict objectForKey: @"instanceNumberArray"] objectAtIndex: f] forKey:@"instanceNumber"];
+                                        }
                                         else
                                         {
                                             int instanceNumber = [[curDict objectForKey: [@"imageID" stringByAppendingString: SeriesNum]] intValue];
@@ -2223,6 +2435,18 @@ static BOOL protectionAgainstReentry = NO;
                                     [image setValue:[curDict objectForKey: @"studyDate"]  forKey:@"date"];
                                     
                                     [image setValue:SOPUID forKey:@"sopInstanceUID"];
+                                    
+                                    if (NSString *originalUID = [curDict objectForKey:@"cloudReportOriginalStudyUID"])
+                                    {
+                                        if ([originalUID length])
+                                        {
+                                            NSString *provenance = [NSString stringWithFormat:@"Horos Cloud report originally StudyInstanceUID %@", originalUID];
+                                            if ([image valueForKey:@"comment"] == nil)
+                                                [image setValue:provenance forKey:@"comment"];
+                                            if ([seriesTable valueForKey:@"comment"] == nil)
+                                                [seriesTable setValue:provenance forKey:@"comment"];
+                                        }
+                                    }
                                     
                                     if( [[curDict objectForKey: @"sliceLocationArray"] count] > f)
                                         [image setValue: [[curDict objectForKey: @"sliceLocationArray"] objectAtIndex: f] forKey:@"sliceLocation"];
@@ -2362,15 +2586,7 @@ static BOOL protectionAgainstReentry = NO;
                                     
                                     if (DICOMSR && [[curDict valueForKey:@"seriesDescription"] isEqualToString: @"OsiriX Report SR"])
                                     {
-                                        BOOL reportUpToDate = NO;
-                                        NSString *p = [study reportURL];
-                                        
-                                        if (p && [[NSFileManager defaultManager] fileExistsAtPath: p])
-                                        {
-                                            NSDictionary *fattrs = [[NSFileManager defaultManager] attributesOfItemAtPath: p error: nil];
-                                            if ([[curDict objectForKey: @"studyDate"] isEqualToDate: [fattrs objectForKey: NSFileModificationDate]])
-                                                reportUpToDate = YES;
-                                        }
+                                        BOOL reportUpToDate = HorosReportsHaveSameContents([study reportURL], preparedReportPath);
                                         
                                         if (reportUpToDate == NO)
                                         {
@@ -2380,7 +2596,7 @@ static BOOL protectionAgainstReentry = NO;
                                             
                                             if (reportSR == image) // Because we can have multiple reports -> only the most recent one is valid
                                             {
-                                                NSString *reportURL = nil, *reportPath = [DicomDatabase extractReportSR: newFile contentDate: [curDict objectForKey: @"studyDate"]];
+                                                NSString *reportURL = nil, *reportPath = preparedReportPath;
                                                 
                                                 if (reportPath)
                                                 {
@@ -2390,17 +2606,11 @@ static BOOL protectionAgainstReentry = NO;
                                                     }
                                                     else // It's a file!
                                                     {
-                                                        NSString *reportFilePath = nil;
-                                                        
-                                                        //														if (isBonjour)
-                                                        //															reportFilePath = [tempDirPath stringByAppendingPathComponent: [reportPath lastPathComponent]];
-                                                        //														else
-                                                        reportFilePath = [reportsDirPath stringByAppendingPathComponent: [reportPath lastPathComponent]];
-                                                        
-                                                        [[NSFileManager defaultManager] removeItemAtPath: reportFilePath error: nil];
-                                                        [[NSFileManager defaultManager] moveItemAtPath: reportPath toPath: reportFilePath error: nil];
-                                                        
-                                                        reportURL = [@"REPORTS/" stringByAppendingPathComponent: [reportPath lastPathComponent]];
+                                                        NSError *reportError = nil;
+                                                        reportURL = HorosPrepareImportedReport((N2ManagedObjectContext *)self.managedObjectContext,
+                                                            reportPath, reportsDirPath, &reportError);
+                                                        if (!reportURL)
+                                                            [NSException raise:@"ReportImport" format:@"Could not prepare the extracted report: %@", reportError.localizedDescription];
                                                     }
                                                     
                                                     NSLog( @"--- DICOM SR -> Report : %@", [curDict valueForKey: @"patientName"]);
@@ -2502,6 +2712,12 @@ static BOOL protectionAgainstReentry = NO;
                 {
                     N2LogExceptionWithStackTrace(e);
                 }
+                @finally {
+                    if (preparedReportPath.length && ![preparedReportPath hasPrefix:@"http://"] && ![preparedReportPath hasPrefix:@"https://"]) {
+                        [NSFileManager.defaultManager removeItemAtPath:preparedReportPath error:NULL];
+                        HorosCleanReportExtractionParent(preparedReportPath);
+                    }
+                }
             }
         }
         
@@ -2519,18 +2735,57 @@ static BOOL protectionAgainstReentry = NO;
         thread.status = NSLocalizedString(@"Synchronizing database...", nil);
         thread.progress = -1;
         
+        // This is the step the progress panel stops on when an import goes wrong,
+        // and it used to be the one step that could not say anything: the error
+        // was thrown away with save:NULL, and a save that raised left
+        // protectionAgainstReentry set, so every later import in the session
+        // skipped its save in silence - the images were in the context and never
+        // written. The flag is cleared whatever happens, and the outcome is
+        // named.
         if( protectionAgainstReentry == NO)
         {
             protectionAgainstReentry = YES;
-            [self.managedObjectContext save:NULL];
-            protectionAgainstReentry = NO;
+            @try
+            {
+                NSError *saveError = nil;
+                if( [self.managedObjectContext save: &saveError] == NO)
+                {
+                    // The files are already in the database folder and their rows
+                    // are not written, so say what state that leaves: they are not
+                    // lost, and rebuilding the index finds them.
+                    NSLog( @"(addFilesDescribedInDictionaries): the database could not be saved: %@; "
+                          @"%lu file(s) are in the database folder and not in the index, and "
+                          @"rebuilding the database index will bring them in",
+                          saveError.localizedDescription ?: @"no reason given",
+                          (unsigned long) dicomFilesArray.count);
+                    thread.status = [NSString stringWithFormat:
+                        NSLocalizedString(@"The database could not be saved: %@", nil),
+                        saveError.localizedDescription ?: NSLocalizedString(@"unknown error", nil)];
+                }
+            }
+            @finally
+            {
+                protectionAgainstReentry = NO;
+            }
         }
+        else
+            NSLog( @"(addFilesDescribedInDictionaries): another import is saving; these %lu file(s) "
+                  @"are written with it", (unsigned long) dicomFilesArray.count);
     }
     @catch (NSException* e)
     {
         N2LogExceptionWithStackTrace(e);
     }
     
+    if (rejectedReports && ![(N2ManagedObjectContext *)self.managedObjectContext defersSaves]) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            NSRunAlertPanel(NSLocalizedString(@"Report import", nil), @"%@",
+                NSLocalizedString(@"OK", nil), nil, nil,
+                [NSString stringWithFormat:NSLocalizedString(@"%lu report(s) could not be imported because their contents could not be read. Existing reports were preserved.", nil), (unsigned long)rejectedReports]);
+        });
+    }
+
+    void (^publishImportChanges)(void) = ^{
     @try
     {
         thread.progress = -1;
@@ -2575,7 +2830,13 @@ static BOOL protectionAgainstReentry = NO;
                 }
             }
             if (self.isLocal && returnArray && [[NSUserDefaults standardUserDefaults] boolForKey: @"AUTOROUTINGACTIVATED"] && [self allowAutoroutingWithPostNotifications:postNotifications rereadExistingItems:rereadExistingItems])
+            {
+                // What set the routing going. Without it a send that repeats
+                // cannot be told from one the rules asked for.
+                NSLog( @" Autorouting trigger: %d image(s) %@", (int) addedImageObjects.count,
+                      rereadExistingItems ? @"re-read from disk" : @"added to the database");
                 [self alertToApplyRoutingRules:nil toImages:addedImageObjects];
+            }
         }
         @catch( NSException *ne)
         {
@@ -2597,6 +2858,13 @@ static BOOL protectionAgainstReentry = NO;
         N2LogExceptionWithStackTrace(e);
     }
     
+    };
+    N2ManagedObjectContext *importContext = (N2ManagedObjectContext *)self.managedObjectContext;
+    if ([importContext respondsToSelector:@selector(defersSaves)] && importContext.defersSaves)
+        [importContext performAfterNextSuccessfulSave:publishImportChanges];
+    else
+        publishImportChanges();
+
     [pool release];
     
     return [addedImageObjects valueForKey:@"objectID"];
@@ -2616,6 +2884,13 @@ static BOOL protectionAgainstReentry = NO;
         
         BOOL onlyDICOM = [[dict objectForKey: @"onlyDICOM"] boolValue], copyFiles = [[dict objectForKey: @"copyFiles"] boolValue];
         __block BOOL studySelected = NO;
+        NSUInteger failedCopies = 0;
+        NSMutableArray *copyFailureDetails = [NSMutableArray array];
+        // What was taken and what became a row. A medium pulled out mid-import
+        // leaves the files it managed to copy in the database folder; whether any
+        // of them were indexed was not written down anywhere, so the two counts
+        // are kept and reported together at the end.
+        __block NSUInteger copiedTotal = 0, indexedTotal = 0;
         NSArray *filesInput = [[dict objectForKey: @"filesInput"] sortedArrayUsingSelector:@selector(compare:)]; // sorting the array should make the data access faster on optical media
         
         for( int i = 0; i < [filesInput count];)
@@ -2663,26 +2938,23 @@ static BOOL protectionAgainstReentry = NO;
                                     static NSString *oneCopyAtATime = @"oneCopyAtATime";
                                     @synchronized( oneCopyAtATime)
                                     {
-                                        if( [[dict objectForKey: @"mountedVolume"] boolValue])
-                                        {
-                                            NSTask *t = [NSTask launchedTaskWithLaunchPath: @"/bin/cp" arguments: @[srcPath, dstPath]];
-                                            while( [t isRunning]){};
+                                        NSError *copyError = nil;
+                                        BOOL copySucceeded = HorosCopyFileForPublication(NSFileManager.defaultManager, srcPath, dstPath,
+                                            [[dict objectForKey:@"mountedVolume"] boolValue], &copyError);
+                                        if (!copySucceeded) {
+                                            failedCopies++;
+                                            if (!copyFailureDetails.count)
+                                                [copyFailureDetails addObject:copyError.localizedDescription ?: NSLocalizedString(@"The file could not be copied.", nil)];
                                         }
-                                        else
-                                        {
-                                            if( [[NSFileManager defaultManager] copyItemAtPath: srcPath toPath: dstPath error: nil] == NO)
-                                                NSLog( @"***** copyItemAtPath %@ failed", srcPath);
-                                        }
-                                        
-                                        if( [[NSFileManager defaultManager] fileExistsAtPath: dstPath])
+                                        if (copySucceeded)
                                         {
                                             if( [extension isEqualToString: @"dcm"] == NO)
                                             {
                                                 if([DicomFile isDICOMFile:dstPath])
                                                 {
                                                     NSString *newPathExtension = [[dstPath stringByDeletingPathExtension] stringByAppendingPathExtension: @"dcm"];
-                                                    [[NSFileManager defaultManager] moveItemAtPath: dstPath toPath: newPathExtension error: nil];
-                                                    dstPath = newPathExtension;
+                                                    if ([[NSFileManager defaultManager] moveItemAtPath:dstPath toPath:newPathExtension error:NULL])
+                                                        dstPath = newPathExtension;
                                                 }
                                             }
                                             
@@ -2757,6 +3029,12 @@ static BOOL protectionAgainstReentry = NO;
                             
                             objects = [idatabase addFilesAtPaths:copiedFiles postNotifications:YES dicomOnly:onlyDICOM rereadExistingItems:YES generatedByOsiriX:NO importedFiles:YES returnArray:YES];
                             
+                            @synchronized( copyFailureDetails)
+                            {
+                                copiedTotal += copiedFiles.count;
+                                indexedTotal += objects.count;
+                            }
+                            
                             DicomDatabase* mdatabase = self.isMainDatabase? self : self.mainDatabase;
                             if( [[BrowserController currentBrowser] database] == mdatabase && [[dict objectForKey:@"addToAlbum"] boolValue])
                             {
@@ -2827,19 +3105,40 @@ static BOOL protectionAgainstReentry = NO;
             }
         }
         
+        // The queued work indexes files that are already in the database folder; it
+        // does not touch the medium. Cancelling it threw that away: pulling a disc
+        // out cancels the scan thread, which cancels this one, and the operation
+        // holding the files copied so far was cancelled before it could run.
+        // Measured on a disc of 1200 instances pulled out one second in: 373 files
+        // copied, 0 indexed, and 373 files left in the database folder that no row
+        // pointed at. Cancelling stops the copying; what is already copied is
+        // indexed, so a cut-short import is a smaller import and not a hidden one.
         if (queue.operationCount) {
             [NSThread currentThread].status = NSLocalizedString(@"Waiting for subtasks to complete...", nil);
             while (queue.operationCount)
-            {
                 [NSThread sleepForTimeInterval:0.05];
-                
-                
-                if( [[NSThread currentThread] isCancelled])
-                    [queue cancelAllOperations];
-            }
         }
         
-        if( [[dict objectForKey: @"ejectCDDVD"] boolValue] == YES && copyFiles == YES)
+        // An import that took less than it was given says so, whether the shortfall
+        // was in the copying or in the indexing. Both counts matter: files copied
+        // into the database folder and never indexed are invisible to the browser
+        // and to every clean-up that works from the database.
+        if (failedCopies || copiedTotal != indexedTotal)
+            NSLog( @"(copyFilesThread): %lu file(s) offered, %lu copied, %lu indexed, "
+                  @"%lu could not be copied%@%@",
+                  (unsigned long) filesInput.count, (unsigned long) copiedTotal,
+                  (unsigned long) indexedTotal, (unsigned long) failedCopies,
+                  copyFailureDetails.firstObject ? @": " : @"",
+                  copyFailureDetails.firstObject ?: @"");
+        
+        if (failedCopies) {
+            NSString *message = [NSString stringWithFormat:NSLocalizedString(@"%lu file(s) could not be copied and were not indexed. Source files were preserved.\n\n%@\n\nFor OneDrive or another cloud provider, make the files available offline and retry. Also check access permissions and free disk space.", nil), (unsigned long)failedCopies, copyFailureDetails.firstObject];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                NSRunAlertPanel(NSLocalizedString(@"Import incomplete", nil), @"%@", NSLocalizedString(@"OK", nil), nil, nil, message);
+            });
+        }
+
+        if( !failedCopies && [[dict objectForKey: @"ejectCDDVD"] boolValue] == YES && copyFiles == YES)
         {
             if( [[NSUserDefaults standardUserDefaults] boolForKey: @"EJECTCDDVD"])
                 [[NSWorkspace sharedWorkspace] unmountAndEjectDeviceAtPath: [filesInput objectAtIndex:0]];
@@ -2866,6 +3165,25 @@ static BOOL protectionAgainstReentry = NO;
     return NO;
 }
 
+// Two archives can each hold a readme.txt, and two senders can each send a file
+// called IM1. Moving the second one onto the first fails, and the fallback then
+// deletes it - the opposite of what the preference that keeps unreadable files
+// asks for. Give it a name of its own instead.
+static NSString *availablePathInDirectory( NSString *directory, NSString *name)
+{
+    NSString *candidate = [directory stringByAppendingPathComponent: name];
+    NSString *stem = [name stringByDeletingPathExtension];
+    NSString *extension = [name pathExtension];
+    for( int attempt = 1; [NSFileManager.defaultManager fileExistsAtPath: candidate] && attempt < 1000; attempt++)
+    {
+        NSString *unique = [NSString stringWithFormat: @"%@-%d", stem, attempt];
+        if( extension.length)
+            unique = [unique stringByAppendingPathExtension: extension];
+        candidate = [directory stringByAppendingPathComponent: unique];
+    }
+    return candidate;
+}
+
 -(NSInteger)importFilesFromIncomingDir
 {
     return [self importFilesFromIncomingDir: @NO];
@@ -2877,6 +3195,8 @@ static BOOL protectionAgainstReentry = NO;
                 listenerCompressionSettings: [[NSUserDefaults standardUserDefaults] integerForKey: @"ListenerCompressionSettings"]];
 }
 
+// A scan reports for itself: whatever the last one refused stops being current
+// the moment a new one starts.
 -(NSInteger)importFilesFromIncomingDir: (NSNumber*) showGUI
            listenerCompressionSettings: (int) listenerCompressionSettings
 {
@@ -2885,6 +3205,7 @@ static BOOL protectionAgainstReentry = NO;
     NSUInteger addedFilesCount = 0;
     BOOL activityFeedbackShown = NO;
     
+
     [NSFileManager.defaultManager confirmNoIndexDirectoryAtPath:self.decompressionDirPath];
     
     N2DirectoryEnumerator *enumer = [NSFileManager.defaultManager enumeratorAtPath:self.incomingDirPath limitTo:-1];
@@ -2893,8 +3214,11 @@ static BOOL protectionAgainstReentry = NO;
     @try {
         if ([self isFileSystemFreeSizeLimitReached]) {
             [self cleanForFreeSpace];
+            // Cleanup may have just freed space; do not reuse the pre-cleanup
+            // capacity result cached for up to twenty seconds.
+            _timeOfLastIsFileSystemFreeSizeLimitReachedVerification = 0;
             if ([self isFileSystemFreeSizeLimitReached]) {
-                NSLog(@"WARNING! THE DATABASE DISK IS FULL!!");
+                NSLog(@"Incoming import paused: database storage is full or unavailable; queued files are preserved");
                 return 0;
             }
         }
@@ -2926,6 +3250,13 @@ static BOOL protectionAgainstReentry = NO;
             NSString *srcPath = [self.incomingDirPath stringByAppendingPathComponent:pathname];
             NSString *originalPath = srcPath;
             NSString *lastPathComponent = [srcPath lastPathComponent];
+            
+            // An archive is expanded into a directory of its own name inside this
+            // folder, and its entries are then imported one by one - here, and
+            // possibly over several scans. Each entry says what became of it; the
+            // running tally is what lets the archive itself say so too.
+            NSString *enclosingArchiveComponent = [HorosArchiveImportLedger archiveComponentOfRelativePath: pathname];
+            NSString *enclosingArchive = enclosingArchiveComponent? [self.incomingDirPath stringByAppendingPathComponent: enclosingArchiveComponent] : nil;
             
             if ([[lastPathComponent uppercaseString] isEqualToString:@".DS_STORE"])
             {
@@ -2988,7 +3319,29 @@ static BOOL protectionAgainstReentry = NO;
                         BOOL dirContainsStuff = ([[[NSFileManager defaultManager] enumeratorAtPath:srcPath filesOnly:NO] nextObject] != nil);
                         
                         if (!dirContainsStuff)
+                        {
+                            // The expansion has run out: this is the last moment
+                            // at which anything can still say what the archive
+                            // held. Without it an archive containing no DICOM at
+                            // all left no trace whatsoever.
+                            if (enclosingArchive == nil && [HorosArchiveImportLedger isArchiveName: lastPathComponent])
+                                NSLog( @"---- import: %@", [[HorosArchiveImportLedger shared] verdictForArchive: srcPath keptDirectoryName: [self.errorsDirPath lastPathComponent]]);
+                            
                             [[NSFileManager defaultManager] removeItemAtPath:srcPath error:NULL];
+                        }
+                    }
+                }
+                else if ([[fattrs objectForKey:NSFileSize] longLongValue] == 0)
+                {
+                    // An empty file matched neither branch and stayed in the
+                    // incoming folder for ever, re-enumerated on every scan. A
+                    // transfer that has written nothing for five minutes has
+                    // stopped writing.
+                    NSDate *modified = [fattrs objectForKey: NSFileModificationDate];
+                    if( modified == nil || [modified timeIntervalSinceNow] < -60*5)
+                    {
+                        NSLog( @"---- import: %@ is empty; removed from the incoming folder", lastPathComponent);
+                        [[NSFileManager defaultManager] removeItemAtPath: srcPath error: NULL];
                     }
                 }
                 else if ([[fattrs objectForKey:NSFileSize] longLongValue] > 0)
@@ -3089,7 +3442,16 @@ static BOOL protectionAgainstReentry = NO;
                             }
                         }
                         [file closeFile];
-                        if (dicomFileCreated)[[NSFileManager defaultManager] removeItemAtPath:srcPath error:NULL];
+                        if (dicomFileCreated)
+                        {
+                            // The parts were written out as separate files and
+                            // this one no longer exists: continuing would test a
+                            // missing path and report it as unreadable.
+                            [[NSFileManager defaultManager] removeItemAtPath:srcPath error:NULL];
+                            if (enclosingArchive)
+                                [[HorosArchiveImportLedger shared] recordIndexedEntryInArchive: enclosingArchive];
+                            continue;
+                        }
                         
                     }
                     //===========================
@@ -3102,8 +3464,31 @@ static BOOL protectionAgainstReentry = NO;
                         [[srcPath pathExtension] isEqualToString: @"osirixzip"])
                     {
                         NSString *compressedPath = [self.decompressionDirPath stringByAppendingPathComponent: lastPathComponent];
-                        [[NSFileManager defaultManager] moveItemAtPath:srcPath toPath:compressedPath error:NULL];
-                        [compressedPathArray addObject: compressedPath];
+                        NSError *moveError = nil;
+                        if ([[NSFileManager defaultManager] moveItemAtPath:srcPath toPath:compressedPath error:&moveError])
+                        {
+                            [compressedPathArray addObject: compressedPath];
+                            if (enclosingArchive)
+                                [[HorosArchiveImportLedger shared] recordNestedArchiveInArchive: enclosingArchive];
+                        }
+                        else
+                        {
+                            // It stays here and is retried on every scan - which
+                            // is what makes it recoverable once the cause is
+                            // fixed - so say it once per file rather than once
+                            // per scan, and once rather than not at all.
+                            static NSMutableSet *reportedUnmovableArchives = nil;
+                            static dispatch_once_t once;
+                            dispatch_once( &once, ^{ reportedUnmovableArchives = [[NSMutableSet alloc] init]; });
+                            @synchronized( reportedUnmovableArchives)
+                            {
+                                if( [reportedUnmovableArchives containsObject: srcPath] == NO)
+                                {
+                                    [reportedUnmovableArchives addObject: srcPath];
+                                    NSLog( @"---- import: %@ could not be moved to the decompression folder (%@); it stays here and is tried again on the next scan", lastPathComponent, moveError.localizedDescription);
+                                }
+                            }
+                        }
                     }
                     else
                     {
@@ -3112,10 +3497,61 @@ static BOOL protectionAgainstReentry = NO;
                         
                         isDicomFile = [DicomFile isDICOMFile:srcPath compressed: &isJPEGCompressed image: &isImage];
                         
+                        // Detection, enhanced reading and the thumbnail stack are
+                        // decided before a file leaves INCOMING. A zero-size or
+                        // unloadable image still crashes series icons; keep it
+                        // out of the indexed store and say why. The manufacturer
+                        // is not consulted - the same gate applies to any vendor.
+                        if (isDicomFile)
+                        {
+                            HorosEnhancedImportAssessment *stack = [HorosEnhancedImportTriage assessPath: srcPath];
+                            HorosIVUSImportAssessment *ivus = [HorosIVUSImportTriage assessPath: srcPath];
+                            BOOL mayMerge = stack.mayMergeIntoIncoming;
+                            NSString *why = stack.recordedError.length ? stack.recordedError
+                                : @"the pixel/thumbnail stack cannot load this object";
+                            // IVUS/US objects decide for themselves: Implicit VR
+                            // Volcano-shaped cines that the Enhanced parser does
+                            // not read still have a size and a diagnosis here.
+                            // A file this gate does not apply to keeps the
+                            // Enhanced answer. The manufacturer is not consulted.
+                            if (ivus.appliesToFile)
+                            {
+                                mayMerge = ivus.mayMergeIntoIncoming;
+                                why = ivus.recordedError.length ? ivus.recordedError
+                                    : @"the thumbnail stack cannot load this IVUS/US object";
+                            }
+                            if (mayMerge == NO)
+                            {
+                                [self addImportRefusalSummary: [NSString stringWithFormat: @"%@: %@", lastPathComponent, why]];
+                                NSLog( @"---- import: %@ not merged into the incoming index (%@)", lastPathComponent, why);
+                                NSString *kept = availablePathInDirectory( self.errorsDirPath, lastPathComponent);
+                                NSError *moveError = nil;
+                                if ([[NSFileManager defaultManager] moveItemAtPath: srcPath toPath: kept error: &moveError] == NO)
+                                    NSLog( @"---- import: %@ could not be kept aside (%@); it stays in incoming",
+                                          lastPathComponent, moveError.localizedDescription);
+                                continue;
+                            }
+                        }
+                        
+                        // A database that indexes anything readable takes the
+                        // formats the raster reader handles as well: -getImageFile
+                        // reads png, jpg, jp2, pdf, pct and gif beside tiff, and
+                        // refusing them at the door meant a valid PNG or PDF never
+                        // reached it. When only DICOM is indexed they are left
+                        // alone, rather than moved in and thrown away.
+                        BOOL indexesAnything = ![[NSUserDefaults standardUserDefaults] boolForKey: @"onlyDICOM"];
+                        
+                        // NIfTI belongs in this list for the same reason NRRD
+                        // does: DCMPix reads it. Leaving it out meant a valid .nii
+                        // dropped into the incoming folder was called "not a DICOM
+                        // file this database can index" and, with DELETEFILELISTENER,
+                        // deleted - a file the viewer can open, destroyed on arrival.
                         if (isDicomFile == YES ||
                             (([DicomFile isFVTiffFile:srcPath] ||
                               [DicomFile isTiffFile:srcPath] ||
-                              [DicomFile isNRRDFile:srcPath])
+                              [DicomFile isNRRDFile:srcPath] ||
+                              [DicomFile isNIfTIFile:srcPath] ||
+                              (indexesAnything && [DicomFile isImageFile:srcPath]))
                              && [[NSFileManager defaultManager] fileExistsAtPath:dstPath] == NO))
                         {
                             if (isDicomFile && isImage)
@@ -3131,6 +3567,8 @@ static BOOL protectionAgainstReentry = NO;
                                     NSString *compressedPath = [self.decompressionDirPath stringByAppendingPathComponent: lastPathComponent];
                                     [[NSFileManager defaultManager] moveItemAtPath:srcPath toPath:compressedPath error:NULL];
                                     [compressedPathArray addObject: compressedPath];
+                                    if (enclosingArchive)
+                                        [[HorosArchiveImportLedger shared] recordQueuedEntryInArchive: enclosingArchive];
                                     continue;
                                 }
                                 
@@ -3156,15 +3594,66 @@ static BOOL protectionAgainstReentry = NO;
                             }
                             
                             if (result == YES)
+                            {
+                                // A file that is not DICOM has no identity but
+                                // its name, and the copy above replaced it with
+                                // a number. -[DicomFile getImageFile] makes the
+                                // study and the series out of that name, so
+                                // every raster file came out with the same
+                                // empty stem and they all fell into one series.
+                                if (isDicomFile == NO)
+                                    [HorosImportedFileNames rememberName: lastPathComponent forPath: dstPath];
+                                
                                 [filesArray addObject:dstPath];
+                                if (enclosingArchive)
+                                    [[HorosArchiveImportLedger shared] recordIndexedEntryInArchive: enclosingArchive];
+                            }
                         }
                         else // DELETE or MOVE THIS UNKNOWN FILE ?
                         {
+                            // Every file that arrives ends either as a study or
+                            // as a refusal that says so. This branch used to be
+                            // silent, so a file that was accepted by whatever
+                            // put it here simply disappeared.
+                            // An archive the decompression helper could not expand
+                            // is handed back under this name, so that it is
+                            // reported here instead of being left in a folder
+                            // nothing reads. The helper's own diagnosis goes to
+                            // its stderr, which the application does not capture,
+                            // so say here what the file actually was.
+                            if ([[lastPathComponent pathExtension] isEqualToString: @"horos-unexpanded"])
+                                NSLog( @"---- import: %@ could not be expanded as an archive", [lastPathComponent stringByDeletingPathExtension]);
+                            
+                            // The scan refuses a file before it ever reaches
+                            // -addFilesAtPaths:, so it has to report for itself, or
+                            // the window says nothing about the file that was
+                            // dropped - which is what "rejected with no visible
+                            // error" means to the person who sent it.
+                            [self addImportRefusalSummary: [NSString stringWithFormat: NSLocalizedString( @"%@ is not a DICOM file this database can index", nil), lastPathComponent]];
+                            
                             if ([[NSUserDefaults standardUserDefaults] boolForKey:@"DELETEFILELISTENER"])
+                            {
+                                NSLog( @"---- import: %@ is not a DICOM file this database can index; deleted (DELETEFILELISTENER)", lastPathComponent);
                                 [[NSFileManager defaultManager] removeItemAtPath:srcPath error:NULL];
+                                if (enclosingArchive)
+                                    [[HorosArchiveImportLedger shared] recordDeletedEntryInArchive: enclosingArchive];
+                            }
                             else {
-                                if (![NSFileManager.defaultManager moveItemAtPath:srcPath toPath:[self.errorsDirPath stringByAppendingPathComponent:lastPathComponent] error:NULL])
+                                NSString *kept = availablePathInDirectory( self.errorsDirPath, lastPathComponent);
+                                NSError *moveError = nil;
+                                if (![NSFileManager.defaultManager moveItemAtPath:srcPath toPath:kept error:&moveError])
+                                {
+                                    NSLog( @"---- import: %@ is not a DICOM file this database can index, and could not be kept (%@); deleted", lastPathComponent, moveError.localizedDescription);
                                     [NSFileManager.defaultManager removeItemAtPath:srcPath error:NULL];
+                                    if (enclosingArchive)
+                                        [[HorosArchiveImportLedger shared] recordDeletedEntryInArchive: enclosingArchive];
+                                }
+                                else
+                                {
+                                    NSLog( @"---- import: %@ is not a DICOM file this database can index; kept in %@", lastPathComponent, [self.errorsDirPath lastPathComponent]);
+                                    if (enclosingArchive)
+                                        [[HorosArchiveImportLedger shared] recordKeptEntryInArchive: enclosingArchive];
+                                }
                             }
                         }
                     }
@@ -3211,6 +3700,17 @@ static BOOL protectionAgainstReentry = NO;
                 addedFiles = [self addFilesAtPaths:filesArray]; // these are IDs!
             
             addedFilesCount = addedFiles.count;
+            
+            // What this pass took and what it indexed. The incoming folder is the
+            // local half of the same question the medium scan answers for a
+            // mounted volume, and comparing the two needs the same three numbers
+            // from both.
+            if( filesArray.count)
+                NSLog( @"(importFilesFromIncomingDir): %lu file(s) taken from the incoming folder, "
+                      @"%lu indexed, in %.1f s (%.1f ms per file)",
+                      (unsigned long) filesArray.count, (unsigned long) addedFilesCount,
+                      [NSDate timeIntervalSinceReferenceDate] - startTime,
+                      1000.0 * ([NSDate timeIntervalSinceReferenceDate] - startTime) / filesArray.count);
             
             if (!addedFiles) // Add failed.... Keep these files: move them back to the INCOMING folder and try again later....
             {
@@ -3328,12 +3828,6 @@ static BOOL protectionAgainstReentry = NO;
                         todo = [[_compressQueue copy] autorelease];
                         [_compressQueue removeAllObjects];
                     }
-                    if (todo.count)
-                    {
-                        if (self.isMainDatabase)
-                            [self.independentDatabase processFilesAtPaths:todo intoDirAtPath:self.incomingDirPath mode:Compress];
-                        else [self processFilesAtPaths:todo intoDirAtPath:self.incomingDirPath mode:Compress];
-                    }
                 }
                 else // decompression
                 {
@@ -3341,11 +3835,33 @@ static BOOL protectionAgainstReentry = NO;
                         todo = [[_decompressQueue copy] autorelease];
                         [_decompressQueue removeAllObjects];
                     }
-                    if (todo.count)
+                }
+                if (todo.count)
+                {
+                    DicomDatabase *worker = self.isMainDatabase ? self.independentDatabase : self;
+                    NSError *conversionError = nil;
+                    if (![worker processFilesAtPaths:todo intoDirAtPath:self.incomingDirPath
+                                               mode:i == 0 ? Compress : Decompress error:&conversionError])
                     {
-                        if (self.isMainDatabase)
-                            [self.independentDatabase processFilesAtPaths:todo intoDirAtPath:self.incomingDirPath mode:Decompress];
-                        else [self processFilesAtPaths:todo intoDirAtPath:self.incomingDirPath mode:Decompress];
+                        NSString *verdict = [HorosConversionImportFallback recoverFiles:todo
+                            allocateDestination:^NSString * {
+                                @try { return [worker uniquePathForNewDataFileWithExtension:@"dcm"]; }
+                                @catch (NSException *exception) { return nil; }
+                            }
+                            importFile:^NSInteger(NSString *path) {
+                                @try {
+                                    return [worker addFilesAtPaths:@[path] postNotifications:YES dicomOnly:YES
+                                              rereadExistingItems:NO generatedByOsiriX:NO].count;
+                                } @catch (NSException *exception) {
+                                    N2LogExceptionWithStackTrace(exception);
+                                    return 0;
+                                }
+                            }];
+                        if (verdict.length)
+                        {
+                            NSLog(@"---- conversion fallback: %@", verdict);
+                            [NSThread currentThread].status = verdict;
+                        }
                     }
                 }
             }
@@ -3433,6 +3949,79 @@ static BOOL protectionAgainstReentry = NO;
     }
 }
 
+// The window reads this from the main database, whichever context did the import.
+- (NSString*)lastImportRefusalSummary {
+    if (self.isMainDatabase == NO)
+        return [(DicomDatabase *)self.mainDatabase lastImportRefusalSummary];
+    @synchronized (self) { return [[_lastImportRefusalSummary copy] autorelease]; }
+}
+
+- (void)addImportRefusalSummary:(NSString*) summary {
+    if (summary.length == 0)
+        return;
+    if (self.isMainDatabase == NO)
+    {
+        [(DicomDatabase *)self.mainDatabase addImportRefusalSummary: summary];
+        return;
+    }
+    @synchronized (self)
+    {
+        NSString *joined = _lastImportRefusalSummary.length ? [_lastImportRefusalSummary stringByAppendingFormat: @"; %@", summary] : summary;
+        [_lastImportRefusalSummary release];
+        _lastImportRefusalSummary = [joined copy];
+    }
+}
+
+- (void)setLastImportRefusalSummary:(NSString*) summary {
+    if (self.isMainDatabase == NO)
+    {
+        [(DicomDatabase *)self.mainDatabase setLastImportRefusalSummary: summary];
+        return;
+    }
+    @synchronized (self)
+    {
+        if (_lastImportRefusalSummary == summary || [_lastImportRefusalSummary isEqualToString: summary])
+            return;
+        [_lastImportRefusalSummary release];
+        _lastImportRefusalSummary = [summary copy];
+    }
+}
+
+- (BOOL)incomingImportWaitingForSpace {
+    return self.isMainDatabase ? _incomingImportSpaceWarningShown : [(DicomDatabase *)self.mainDatabase incomingImportWaitingForSpace];
+}
+
+// Shared by the incoming scheduler and cleanup workers. Own episode state on the
+// main database/main thread so independent contexts cannot duplicate warnings.
+- (void)updateStorageAvailabilityWarning {
+    if (![NSThread isMainThread]) {
+        [self performSelectorOnMainThread:@selector(updateStorageAvailabilityWarning) withObject:nil waitUntilDone:NO];
+        return;
+    }
+    if (!self.isMainDatabase) {
+        [(DicomDatabase *)self.mainDatabase updateStorageAvailabilityWarning];
+        return;
+    }
+    BOOL storageUnavailable = [self isFileSystemFreeSizeLimitReached];
+    BOOL stateChanged = _incomingImportSpaceWarningShown != storageUnavailable;
+    _incomingImportSpaceWarningShown = storageUnavailable;
+    if (stateChanged && [BrowserController currentBrowser].database == self)
+        [[BrowserController currentBrowser] performSelector:@selector(outlineViewRefresh) withObject:nil afterDelay:0];
+    if (storageUnavailable && stateChanged) {
+        NSLog(@"Incoming import paused: database storage is full or unavailable; queued files are preserved");
+        if (![NSUserDefaults.standardUserDefaults boolForKey:@"hideListenerError"]) {
+            @try {
+                [[AppController sharedAppController] notificationTitle:NSLocalizedString(@"Import Paused", nil)
+                    description:NSLocalizedString(@"The database volume is full or unavailable. Incoming files are preserved. Free space or reconnect the volume; Horos will retry automatically.", nil)
+                    name:@"newfiles"];
+            } @catch (NSException *e) {
+                // Notification availability must not prevent import retries.
+                N2LogExceptionWithStackTrace(e);
+            }
+        }
+    }
+}
+
 -(void)initiateImportFilesFromIncomingDirUnlessAlreadyImporting {
     //if ([[AppController sharedAppController] isSessionInactive])
     //	return;
@@ -3448,12 +4037,8 @@ static BOOL protectionAgainstReentry = NO;
     
     if ([_importFilesFromIncomingDirLock tryLock])
     {
-        if ([self isFileSystemFreeSizeLimitReached]) {
-            [NSFileManager.defaultManager removeItemAtPath:[self incomingDirPath] error:nil]; // Kill the incoming directory
-            [[AppController sharedAppController] notificationTitle:NSLocalizedString(@"Warning", nil) description: NSLocalizedString(@"The database volume is full! Incoming files are ignored.", nil) name:@"newfiles"];
-        }
-        
         @try {
+            [self updateStorageAvailabilityWarning];
             [self performSelectorInBackground:@selector(importFilesFromIncomingDirThread) withObject:nil];
         } @catch (NSException* e) {
             N2LogExceptionWithStackTrace(e);
@@ -3889,6 +4474,102 @@ static BOOL protectionAgainstReentry = NO;
 
 
 
+// Series indexed before the importer derived an identifier for a file that
+// carried none have an empty seriesDICOMUID, and the C-FIND SCP answers with it:
+// an empty UI, in every response about that series. The value is derived from
+// what the row is already grouped on, so it is the same identifier a re-import
+// would produce.
++(void)repairEmptySeriesIdentifiersInContext:(NSManagedObjectContext*)context {
+    NSFetchRequest* request = [[[NSFetchRequest alloc] init] autorelease];
+    [request setEntity:[NSEntityDescription entityForName:@"Series" inManagedObjectContext:context]];
+    [request setPredicate:[NSPredicate predicateWithFormat: @"seriesDICOMUID == nil OR seriesDICOMUID == %@", @""]];
+    
+    [context lock];
+    @try {
+        NSArray* series = [context executeFetchRequest:request error:nil];
+        if( series.count == 0)
+            return;
+        
+        NSLog( @"-------------- %d series have no DICOM identifier; deriving one for each", (int) series.count);
+        
+        for( NSManagedObject* one in series)
+        {
+            @try {
+                NSString* grouping = [one valueForKey: @"seriesInstanceUID"];
+                NSString* study = [one valueForKeyPath: @"study.studyInstanceUID"];
+                NSString* derived = [HorosDerivedUID seriesUIDForKey:
+                                     [NSString stringWithFormat: @"%@|%@", study? study : @"", grouping? grouping : @""]];
+                [one setValue: derived forKey: @"seriesDICOMUID"];
+            }
+            @catch (NSException* e) {
+                N2LogExceptionWithStackTrace(e);
+            }
+        }
+        
+        // The context is what holds the changes; this is a class method, so
+        // there is no database instance to ask.
+        NSError* error = nil;
+        if( [context save: &error] == NO)
+            NSLog( @"**** could not save the derived series identifiers: %@", error.localizedDescription);
+    }
+    @catch (NSException* e) {
+        N2LogExceptionWithStackTrace(e);
+    }
+    @finally {
+        [context unlock];
+    }
+}
+
++(void)repairFabricatedPatientIdentifiersInContext:(NSManagedObjectContext*)context {
+    // A patient with no date of birth used to be given one, so the identifier
+    // stored for those studies carries a date that was never in any file. Left
+    // there, every instance of that patient arriving from now on computes an
+    // identifier without it and lands in a third study instead of the one it
+    // belongs to - the same split again, by the other route.
+    NSFetchRequest* request = [[[NSFetchRequest alloc] init] autorelease];
+    [request setEntity:[NSEntityDescription entityForName:@"Study" inManagedObjectContext:context]];
+    [request setPredicate:[NSPredicate predicateWithFormat: @"dateOfBirth == nil AND patientUID != nil"]];
+    
+    [context lock];
+    @try {
+        NSArray* studies = [context executeFetchRequest:request error:nil];
+        int repaired = 0;
+        
+        for( NSManagedObject* study in studies)
+        {
+            @try {
+                NSString* stored = [study valueForKey: @"patientUID"];
+                if( [HorosPatientIdentity uidCarriesABirthDate: stored] == NO)
+                    continue;
+                
+                NSString* corrected = [HorosPatientIdentity uidWithoutBirthDate: stored];
+                if( [corrected isEqualToString: stored])
+                    continue;
+                
+                NSLog( @"---- patient identity: %@ has no date of birth; %@ becomes %@", [study valueForKey: @"name"], stored, corrected);
+                [study setValue: corrected forKey: @"patientUID"];
+                repaired++;
+            }
+            @catch (NSException* e) {
+                N2LogExceptionWithStackTrace(e);
+            }
+        }
+        
+        if( repaired)
+        {
+            NSError* error = nil;
+            if( [context save: &error] == NO)
+                NSLog( @"**** could not save the repaired patient identifiers: %@", error.localizedDescription);
+        }
+    }
+    @catch (NSException* e) {
+        N2LogExceptionWithStackTrace(e);
+    }
+    @finally {
+        [context unlock];
+    }
+}
+
 +(void)recomputePatientUIDsInContext:(NSManagedObjectContext*)context {
     
     // Find all studies
@@ -3970,32 +4651,53 @@ static BOOL protectionAgainstReentry = NO;
     
     [_importFilesFromIncomingDirLock lock];
     
-#define SAVEDALBUMS @"/tmp/rebuildDB_savedAlbums"
-    
-    if (complete) {	// Delete the database file
-        
-        //First back-up albums
-        [self saveAlbumsToPath: SAVEDALBUMS];
-        
-        thread.status = NSLocalizedString(@"Locking database...", nil);
-        NSManagedObjectContext* oldContext = [self.managedObjectContext retain];
-        [oldContext lock];
-        self.managedObjectContext = nil;
-        [oldContext unlock];
-        [oldContext release];
-        
-        if ([NSFileManager.defaultManager fileExistsAtPath:self.sqlFilePath]) {
-            [NSFileManager.defaultManager removeItemAtPath:[self.sqlFilePath stringByAppendingString:@" - old"] error:NULL];
-            [NSFileManager.defaultManager moveItemAtPath:self.sqlFilePath toPath:[self.sqlFilePath stringByAppendingString:@" - old"] error:NULL];
-        }
-        
-        [NSFileManager.defaultManager removeItemAtPath:self.modelVersionFilePath error:NULL];
-        
-        self.managedObjectContext = [self contextAtPath:self.sqlFilePath];
-    } else [self save:NULL];
-    
-    [self lock];
+    NSString *recoveryFolder = nil;
+    NSString *savedAlbumsPath = nil;
+    BOOL contextLocked = NO;
     @try {
+        if (complete) {
+            NSError *error = nil;
+            if (self.managedObjectContext && ![self save:&error])
+                @throw [NSException exceptionWithName:@"DatabaseRebuildFailure" reason:error.localizedDescription userInfo:@{NSUnderlyingErrorKey: error}];
+
+            // Finish a verified recovery snapshot before retiring any active file.
+            if ([NSFileManager.defaultManager fileExistsAtPath:self.sqlFilePath]) {
+                NSString *metadata = [NSFileManager.defaultManager fileExistsAtPath:self.modelVersionFilePath] ? self.modelVersionFilePath : nil;
+                recoveryFolder = [HorosDatabaseIndexBackup snapshotAtPath:self.sqlFilePath metadataPath:metadata error:&error];
+                if (!recoveryFolder)
+                    @throw [NSException exceptionWithName:@"DatabaseRebuildFailure" reason:error.localizedDescription userInfo:@{NSUnderlyingErrorKey: error}];
+            } else {
+                recoveryFolder = [[self.sqlFilePath.stringByDeletingLastPathComponent stringByAppendingPathComponent:@"Index Backups"] stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
+                if (![NSFileManager.defaultManager createDirectoryAtPath:recoveryFolder withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions: @0700} error:&error])
+                    @throw [NSException exceptionWithName:@"DatabaseRebuildFailure" reason:error.localizedDescription userInfo:@{NSUnderlyingErrorKey: error}];
+            }
+            savedAlbumsPath = [recoveryFolder stringByAppendingPathComponent:@"Albums.plist"];
+            [self saveAlbumsToPath:savedAlbumsPath];
+
+            thread.status = NSLocalizedString(@"Locking database...", nil);
+            NSManagedObjectContext *oldContext = [self.managedObjectContext retain];
+            [oldContext lock];
+            @try {
+                self.managedObjectContext = nil;
+                if ([NSFileManager.defaultManager fileExistsAtPath:self.sqlFilePath]) {
+                    NSString *retiredPath = [recoveryFolder stringByAppendingPathComponent:@"RetiredDatabase.sql"];
+                    if (![NSFileManager.defaultManager moveItemAtPath:self.sqlFilePath toPath:retiredPath error:&error]) {
+                        self.managedObjectContext = oldContext;
+                        @throw [NSException exceptionWithName:@"DatabaseRebuildFailure" reason:error.localizedDescription userInfo:@{NSUnderlyingErrorKey: error}];
+                    }
+                }
+            } @finally {
+                [oldContext unlock];
+                [oldContext release];
+            }
+            [NSFileManager.defaultManager removeItemAtPath:self.modelVersionFilePath error:NULL];
+            self.managedObjectContext = [self contextAtPath:self.sqlFilePath];
+            if (!self.managedObjectContext)
+                @throw [NSException exceptionWithName:@"DatabaseRebuildFailure" reason:NSLocalizedString(@"The reconstructed database index could not be opened.", nil) userInfo:nil];
+        } else [self save:NULL];
+
+        [self lock];
+        contextLocked = YES;
         thread.status = NSLocalizedString(@"Scanning database directory...", nil);
         
         NSMutableArray *filesArray = [[NSMutableArray alloc] initWithCapacity: 10000];
@@ -4088,22 +4790,33 @@ static BOOL protectionAgainstReentry = NO;
         else
         {
             //Restore albums
-            if( [[NSFileManager defaultManager] fileExistsAtPath: SAVEDALBUMS])
+            if( [[NSFileManager defaultManager] fileExistsAtPath: savedAlbumsPath])
             {
-                [self loadAlbumsFromPath: SAVEDALBUMS];
-                [[NSFileManager defaultManager] removeItemAtPath: SAVEDALBUMS error: nil];
+                [self loadAlbumsFromPath: savedAlbumsPath];
+                [[NSFileManager defaultManager] removeItemAtPath: savedAlbumsPath error: nil];
             }
         }
         
-        [self save:NULL];
-        
+        NSError *saveError = nil;
+        if (![self save:&saveError])
+            @throw [NSException exceptionWithName:@"DatabaseRebuildFailure" reason:saveError.localizedDescription userInfo:saveError ? @{NSUnderlyingErrorKey: saveError} : nil];
+
         thread.status = NSLocalizedString(@"Checking reports consistency...", nil);
         [self checkReportsConsistencyWithDICOMSR];
     } @catch (NSException* e) {
         N2LogExceptionWithStackTrace(e);
+        NSString *description;
+        if (recoveryFolder)
+            description = [NSString stringWithFormat:NSLocalizedString(@"Database reconstruction stopped: %@\nRecovery files: %@", nil), e.reason, recoveryFolder];
+        else if (complete)
+            description = [NSString stringWithFormat:NSLocalizedString(@"Database reconstruction stopped before the index could be backed up: %@", nil), e.reason];
+        else
+            description = [NSString stringWithFormat:NSLocalizedString(@"Database maintenance stopped: %@", nil), e.reason];
+        NSError *error = [NSError errorWithDomain:@"HorosDatabaseRebuild" code:1 userInfo:@{NSLocalizedDescriptionKey: description}];
+        dispatch_async(dispatch_get_main_queue(), ^{ [NSApp presentError:error]; });
     } @finally {
+        if (contextLocked) [self unlock];
         [_importFilesFromIncomingDirLock unlock];
-        [self unlock];
     }
 }
 
@@ -4131,6 +4844,9 @@ static BOOL protectionAgainstReentry = NO;
 
 -(void)checkForExistingReportForStudy:(DicomStudy*)study {
 #ifndef OSIRIX_LIGHT
+    NSString *attached = study.reportURL;
+    if (attached.length && ([attached hasPrefix:@"http://"] || [attached hasPrefix:@"https://"] ||
+        [NSFileManager.defaultManager fileExistsAtPath:attached])) return;
     @try { // is there a report?
         NSArray* filenames = [NSArray arrayWithObjects: [Reports getUniqueFilename:study], [Reports getOldUniqueFilename:study], NULL];
         NSArray* extensions = [NSArray arrayWithObjects: @"pages", @"odt", @"doc", @"docx", @"rtf", NULL];

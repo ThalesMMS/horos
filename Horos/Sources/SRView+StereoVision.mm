@@ -51,9 +51,11 @@
 // =========================================================================
 #ifdef _STEREO_VISION_
 #import "SRView+StereoVision.h"
+#include "VRFramebufferCapture.h"
 
 
 #import "SRView.h"
+#import "Horos-Swift.h"
 #import "SRController.h"
 #import "DCMPix.h"
 #import "DCMView.h"
@@ -336,8 +338,7 @@ static void  updateRight(vtkObject*, unsigned long eid, void* clientdata, void *
 	}
 	catch (...)
 	{
-		if( NSRunAlertPanel( NSLocalizedString(@"32-bit",nil), NSLocalizedString( @"Cannot use the 3D engine.\r\rUpgrade to OsiriX 64-bit or OsiriX MD to solve this issue.",nil), NSLocalizedString(@"OK", nil), NSLocalizedString(@"OsiriX 64-bit", nil), nil) == NSAlertAlternateReturn)
-			[[AppController sharedAppController] osirix64bit: self];
+		NSRunAlertPanel( NSLocalizedString( @"Not enough memory", nil), NSLocalizedString( @"Cannot use the 3D engine.\r\rClose other studies or open a smaller series. Nothing was reduced silently.", nil), NSLocalizedString( @"OK", nil), nil, nil);
 	}
 }
 
@@ -1076,156 +1077,23 @@ static void  updateRight(vtkObject*, unsigned long eid, void* clientdata, void *
 
 -(unsigned char*) getRawPixels:(long*) width :(long*) height :(long*) spp :(long*) bpp :(BOOL) screenCapture :(BOOL) force8bits
 {
-	// Added SilvanWidmer 19-08-09
-	if (StereoVisionOn)
-	{
-		unsigned char	*buf = nil;
-		unsigned char  *leftBuf = nil;
-		unsigned char *rightBuf = nil;
-		long			i;
-		
-		//	if( screenCapture)	// Pixels displayed in current window -> only RGB 8 bits data
-		{
-			NSRect size = [self bounds];
-			
-			*width = (long) size.size.width*2.0;
-			long leftWidth = (long) size.size.width;
-			long rightWidth = (long) size.size.width;
-			
-			*width/=4;
-			*width*=4;
-			*height = (long) size.size.height;//[LeftFullScreenWindow frame].size.height;//(long) size.size.height;
-			*spp = 3;
-			*bpp = 8;
-			
-			buf = (unsigned char*) malloc( *width * *height * 4 * *bpp/8);
-			leftBuf = (unsigned char*) malloc( leftWidth * *height * 4 * *bpp/8);
-			rightBuf = (unsigned char*) malloc( rightWidth * *height * 4 * *bpp/8);
-			if( buf)
-			{
-				[self getVTKRenderWindow]->MakeCurrent();
-				CGLContextObj cgl_ctx = (CGLContextObj) [[NSOpenGLContext currentContext] CGLContextObj];
-				glReadBuffer(GL_FRONT);
-				glReadPixels(0, 0, leftWidth, *height, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV, leftBuf);
-				[NSOpenGLContext clearCurrentContext];
-				
-				[rightView getVTKRenderWindow]->MakeCurrent();
-				cgl_ctx = (CGLContextObj) [[NSOpenGLContext currentContext] CGLContextObj];
-				glReadBuffer(GL_FRONT);
-				glReadPixels(0, 0, rightWidth, *height, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV, rightBuf);
-				
-				i = *width * *height;
-				
-				//	unsigned char	*t_argb = buf;
-				unsigned char	*t_rgb = buf;
-				unsigned char *left_argb = leftBuf;
-				unsigned char *right_argb = rightBuf;
-				
-				while(i-->0)
-				{
-					if((i % *width) >= leftWidth)
-					{
-						*((int*) t_rgb) = *((int*) left_argb);
-						t_rgb +=3;
-						left_argb+=4;
-					}
-					else {
-						*((int*) t_rgb) = *((int*) right_argb);
-						t_rgb +=3;
-						right_argb+=4;
-					}
-				}	
-				
-				long rowBytes = *width**spp**bpp/8;
-				
-				{
-					unsigned char	*tempBuf = (unsigned char*) malloc( rowBytes);
-					
-					for( i = 0; i < *height/2; i++)
-					{
-						memcpy( tempBuf, buf + (*height - 1 - i)*rowBytes, rowBytes);
-						memcpy( buf + (*height - 1 - i)*rowBytes, buf + i*rowBytes, rowBytes);
-						memcpy( buf + i*rowBytes, tempBuf, rowBytes);
-					}
-					
-					free( tempBuf);
-				}
-				
-				//			[[NSOpenGLContext currentContext] flushBuffer];
-				[NSOpenGLContext clearCurrentContext];
-			}
-		}
-		//	else NSLog(@"Err getRawPixels...");
-		free(rightBuf);
-		free(leftBuf);
-		return buf;
-	}
-	else{
-		
-		
-		unsigned char	*buf = nil;
-		long			i;
-		
-		//	if( screenCapture)	// Pixels displayed in current window -> only RGB 8 bits data
-		{
-			NSRect size = [self bounds];
-			
-			*width = (long) size.size.width;
-			*width/=4;
-			*width*=4;
-			*height = (long) size.size.height;
-			*spp = 3;
-			*bpp = 8;
-			
-			buf = (unsigned char*) malloc( *width * *height * 4 * *bpp/8);
-			if( buf)
-			{
-				[self getVTKRenderWindow]->MakeCurrent();
-				//			[[NSOpenGLContext currentContext] flushBuffer];
-				
-				CGLContextObj cgl_ctx = (CGLContextObj) [[NSOpenGLContext currentContext] CGLContextObj];
-				
-				glReadBuffer(GL_FRONT);
-				
-#if __BIG_ENDIAN__
-				glReadPixels(0, 0, *width, *height, GL_RGB, GL_UNSIGNED_BYTE, buf);
-#else
-				glReadPixels(0, 0, *width, *height, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV, buf);
-				i = *width * *height;
-				unsigned char	*t_argb = buf;
-				unsigned char	*t_rgb = buf;
-				while( i-->0)
-				{
-					*((int*) t_rgb) = *((int*) t_argb);
-					t_argb+=4;
-					t_rgb+=3;
-				}
-#endif
-				
-				long rowBytes = *width**spp**bpp/8;
-				
-				{
-					unsigned char	*tempBuf = (unsigned char*) malloc( rowBytes);
-					
-					for( i = 0; i < *height/2; i++)
-					{
-						memcpy( tempBuf, buf + (*height - 1 - i)*rowBytes, rowBytes);
-						memcpy( buf + (*height - 1 - i)*rowBytes, buf + i*rowBytes, rowBytes);
-						memcpy( buf + i*rowBytes, tempBuf, rowBytes);
-					}
-					
-					free( tempBuf);
-				}
-				
-				//			[[NSOpenGLContext currentContext] flushBuffer];
-				[NSOpenGLContext clearCurrentContext];
-			}
-		}
-		//	else NSLog(@"Err getRawPixels...");
-		
-		return buf;
-	}
+	// The drawable is measured in pixels, not points. Reading [self bounds] and
+	// handing those numbers to glReadPixels captured the lower left quarter of a
+	// Retina window and declared it the whole image, so the export came out
+	// cropped and moved into the corner. Each VTK window knows the size of its own
+	// drawable, and the shared readbacks return tightly packed, top-down RGB -
+	// which is what the row flip, the ARGB shuffle and the side-by-side interleave
+	// that used to be here produced between them.
+	*spp = 3;
+	*bpp = 8;
 	
+	unsigned char *buf = StereoVisionOn
+		? HorosCopyVRStereoFramebuffer([self getVTKRenderWindow], [rightView getVTKRenderWindow], width, height)
+		: HorosCopyVRFramebuffer([self getVTKRenderWindow], width, height);
+	
+	[NSOpenGLContext clearCurrentContext];
+	
+	return buf;
 }
 
 #pragma mark Service Routines
@@ -1480,15 +1348,11 @@ static void  updateRight(vtkObject*, unsigned long eid, void* clientdata, void *
 	{
 		if( [theEvent clickCount] > 1 && (tool != t3Dpoint))
 		{
-			
-			vtkWorldPointPicker *picker = vtkWorldPointPicker::New();
-			
-			picker->Pick(mouseLocStart.x, mouseLocStart.y, 0.0, aRenderer);
-			
+			NSPoint pickLoc = [HorosVRInteractionGeometry backingPoint: [theEvent locationInWindow] inView: self];
 			double wXYZ[3];
-			picker->GetPickPosition(wXYZ);
-			picker->Delete();
-			
+			if (![self pickSurfaceAtDisplayX: pickLoc.x y: pickLoc.y world: wXYZ])
+				return;
+
 			double dc[3], sc[3];
 			dc[0] = wXYZ[0];
 			dc[1] = wXYZ[1];
@@ -1621,8 +1485,8 @@ static void  updateRight(vtkObject*, unsigned long eid, void* clientdata, void *
 			
 			if (![self isAny3DPointSelected])
 			{
-				// add a point on the surface under the mouse click
-				[self throw3DPointOnSurface: mouseLocStart.x : mouseLocStart.y];
+				NSPoint pickLoc = [HorosVRInteractionGeometry backingPoint: [theEvent locationInWindow] inView: self];
+				[self throw3DPointOnSurface: pickLoc.x : pickLoc.y];
 				[self setNeedsDisplay:YES];
 				
 			}

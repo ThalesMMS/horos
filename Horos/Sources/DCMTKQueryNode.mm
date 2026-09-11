@@ -1,3 +1,5 @@
+#include "HorosDIMSEAssociation.h"
+#import "HorosDIMSEClient.h"
 /*=========================================================================
  This file is part of the Horos Project (www.horosproject.org)
  
@@ -35,6 +37,7 @@
      PURPOSE.
  ============================================================================*/
 
+#include "HorosDICOMGlobalAbort.h"
 #import "DCMTKStudyQueryNode.h"
 #import "DCMTKSeriesQueryNode.h"
 #import "DCMTKImageQueryNode.h"
@@ -52,6 +55,9 @@
 #import "DicomSeries.h"
 #import "MutableArrayCategory.h"
 #import "WADODownload.h"
+#import "Horos-Swift.h"
+#import "DICOMDataDictionary.h"
+#import "DicomImage.h"
 #import "N2Debug.h"
 #import "DicomDatabase.h"
 #import "NSThread+N2.h"
@@ -60,29 +66,32 @@
 #include <libkern/OSAtomic.h>
 
 #undef verify
-#include "dccodec.h"
+#include <dcmtk/dcmdata/dccodec.h>
 
-#include "osconfig.h" /* make sure OS specific configuration is included first */
+#include "HorosDCMTKCompatibility.h"
+#include "HorosTLSConfiguration.h"
+#include <dcmtk/config/osconfig.h> /* make sure OS specific configuration is included first */
 
-#include "dctag.h"
-#include "ofstring.h"
-#include "dimse.h"
-#include "diutil.h"
-#include "dcdatset.h"
-#include "dcmetinf.h"
-#include "dcfilefo.h"
-#include "dcdebug.h"
-#include "dcdict.h"
-#include "dcdeftag.h"
-//#include "cmdlnarg.h"
-#include "ofconapp.h"
-#include "dcuid.h"     /* for dcmtk version name */
-#include "dicom.h"     /* for DICOM_APPLICATION_REQUESTOR */
-#include "dcostrmz.h"  /* for dcmZlibCompressionLevel */
+#include <dcmtk/dcmdata/dctag.h>
+#include <dcmtk/ofstd/ofstring.h>
+#include <dcmtk/dcmnet/dimse.h>
+#include <dcmtk/dcmnet/diutil.h>
+#include <dcmtk/dcmdata/dcdatset.h>
+#include <dcmtk/dcmdata/dcmetinf.h>
+#include <dcmtk/dcmdata/dcfilefo.h>
+#include "HorosDCMTKCompatibility.h"
+#include "HorosTLSConfiguration.h"
+#include <dcmtk/dcmdata/dcdict.h>
+#include <dcmtk/dcmdata/dcdeftag.h>
+//#include <dcmtk/dcmdata/cmdlnarg.h>
+#include <dcmtk/ofstd/ofconapp.h>
+#include <dcmtk/dcmdata/dcuid.h>     /* for dcmtk version name */
+#include <dcmtk/dcmnet/dicom.h>     /* for DICOM_APPLICATION_REQUESTOR */
+#include <dcmtk/dcmdata/dcostrmz.h>  /* for dcmZlibCompressionLevel */
 
 #ifdef WITH_OPENSSL
-#include "tlstrans.h"
-#include "tlslayer.h"
+#include <dcmtk/dcmtls/tlstrans.h>
+#include <dcmtk/dcmtls/tlslayer.h>
 #endif
 
 #define OFFIS_CONSOLE_APPLICATION "DCMTKQueryNode"
@@ -91,14 +100,12 @@
 #define APPLICATIONTITLE        "FINDSCU"
 #define PEERAPPLICATIONTITLE    "ANY-SCP"
 
-extern int AbortAssociationTimeOut;
+
 
 #ifdef WITH_OPENSSL
 
 #if OPENSSL_VERSION_NUMBER >= 0x0090700fL
-static OFString    opt_ciphersuites(TLS1_TXT_RSA_WITH_AES_128_SHA ":" SSL3_TXT_RSA_DES_192_CBC3_SHA);
 #else
-static OFString    opt_ciphersuites(SSL3_TXT_RSA_DES_192_CBC3_SHA);
 #endif
 
 #endif
@@ -166,11 +173,24 @@ progressCallback(
 	[node addChild:responseIdentifiers];
 }
 
+// The progress of a retrieval, as a fraction of the sub-operations the peer has
+// accounted for. A peer that accounts for none of them gave a division by zero
+// where a fraction was expected.
+static void reportProgress( unsigned accounted, unsigned finished)
+{
+    [[NSThread currentThread] setProgress: accounted ? (double) finished / (double) accounted : 0.0];
+}
+
 static void
 moveCallback(void *callbackData, T_DIMSE_C_MoveRQ *request,
     int responseCount, T_DIMSE_C_MoveRSP *response)
 {
-	[[NSThread currentThread] setProgress:1.0/(response->NumberOfCompletedSubOperations+response->NumberOfFailedSubOperations+response->NumberOfWarningSubOperations+response->NumberOfRemainingSubOperations)*(response->NumberOfCompletedSubOperations+response->NumberOfFailedSubOperations+response->NumberOfWarningSubOperations)];
+    unsigned accounted = response->NumberOfCompletedSubOperations + response->NumberOfFailedSubOperations
+                       + response->NumberOfWarningSubOperations + response->NumberOfRemainingSubOperations;
+    unsigned finished = response->NumberOfCompletedSubOperations + response->NumberOfFailedSubOperations
+                      + response->NumberOfWarningSubOperations;
+    reportProgress( accounted, finished);
+
     return;
 }
 
@@ -179,8 +199,13 @@ static void
 getCallback(void *callbackData, T_DIMSE_C_GetRQ *request,
     int responseCount, T_DIMSE_C_GetRSP *response)
 {
-	[[NSThread currentThread] setProgress:1.0/(response->NumberOfCompletedSubOperations+response->NumberOfFailedSubOperations+response->NumberOfWarningSubOperations+response->NumberOfRemainingSubOperations)*(response->NumberOfCompletedSubOperations+response->NumberOfFailedSubOperations+response->NumberOfWarningSubOperations)];
-	return;
+    unsigned accounted = response->NumberOfCompletedSubOperations + response->NumberOfFailedSubOperations
+                       + response->NumberOfWarningSubOperations + response->NumberOfRemainingSubOperations;
+    unsigned finished = response->NumberOfCompletedSubOperations + response->NumberOfFailedSubOperations
+                      + response->NumberOfWarningSubOperations;
+    reportProgress( accounted, finished);
+
+    return;
 }
 
 //static OFCondition
@@ -334,7 +359,7 @@ getCallback(void *callbackData, T_DIMSE_C_GetRQ *request,
 //        errmsg("DIMSE Failure (aborting sub-association):\n");
 //        DimseCondition::dump(cond);
 //        /* some kind of error so abort the association */
-//        cond = ASC_abortAssociation(*subAssoc);
+//        cond = ASC_closeTransportConnection(*subAssoc);
 //    }
 //
 //    if (cond != EC_Normal)
@@ -443,6 +468,7 @@ subOpCallback(void * /*subOpCallbackData*/ ,
 
 - (void)dealloc
 {
+    [_retrieveInventory release];
 	[_children release];
 	[_uid release];
 	[_theDescription release];
@@ -626,8 +652,98 @@ subOpCallback(void * /*subOpCallbackData*/ ,
 	return [self queryWithValues: values dataset: nil];
 }
 
+// Adapt QIDO's DICOM JSON into the existing query-node hierarchy.
+- (BOOL)queryDICOMwebWithDataset:(DcmDataset *)dataset
+{
+    if (NSThread.isMainThread) {
+        _abortAssociation = NO;
+        __block BOOL success = NO;
+        dispatch_semaphore_t done = dispatch_semaphore_create(0);
+        NSThread *worker = [[NSThread alloc] initWithBlock:^{ @autoreleasepool {
+            @try { success = [self queryDICOMwebWithDataset:dataset]; }
+            @catch (NSException *exception) { N2LogException(exception); }
+            @finally { dispatch_semaphore_signal(done); }
+        }}];
+        WaitRendering *wait = [[[WaitRendering alloc] init:NSLocalizedString(@"DICOMweb Query...", nil)] autorelease];
+        [wait setCancel:YES]; [wait showWindow:self]; [wait start]; [worker start];
+        while (dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 50 * NSEC_PER_MSEC))) {
+            [wait run];
+            if ([wait aborted] || _abortAssociation) [worker cancel];
+        }
+        [wait end]; [worker release]; dispatch_release(done);
+        return success;
+    }
+    NSError *error = nil;
+    HorosDICOMwebClient *client = [[[HorosDICOMwebClient alloc]
+        initWithEndpoint:[_extraParameters objectForKey:@"DICOMwebURL"] ?: @""
+        credentialIdentifier:[_extraParameters objectForKey:@"DICOMwebCredentialID"] ?: @""
+        timeout:60 error:&error] autorelease];
+    NSMutableDictionary *parameters = [NSMutableDictionary dictionary];
+    OFString level, study, series;
+    dataset->findAndGetOFString(DCM_QueryRetrieveLevel, level);
+    dataset->findAndGetOFString(DCM_StudyInstanceUID, study);
+    dataset->findAndGetOFString(DCM_SeriesInstanceUID, series);
+    NSString *path = @"studies";
+    if (level == "SERIES") path = study.length() ? [NSString stringWithFormat:@"studies/%s/series", study.c_str()] : @"series";
+    if (level == "IMAGE") path = study.length() && series.length() ? [NSString stringWithFormat:@"studies/%s/series/%s/instances", study.c_str(), series.c_str()] : @"instances";
+    NSMutableArray *include = [NSMutableArray array];
+    for (unsigned long i = 0; i < dataset->card(); ++i) {
+        DcmElement *element = dataset->getElement(i);
+        if (element->getTag() == DCM_QueryRetrieveLevel || element->getTag() == DCM_SpecificCharacterSet) continue;
+        NSString *key = [NSString stringWithFormat:@"%04X%04X", element->getGTag(), element->getETag()];
+        OFString value;
+        if (element->getOFStringArray(value).good() && value.length()) {
+            NSString *text = [NSString stringWithCString:value.c_str() encoding:[NSString encodingForDICOMCharacterSet:[[NSUserDefaults standardUserDefaults] stringForKey:@"STRINGENCODING"]]];
+            if (!text) {
+                error = [NSError errorWithDomain:@"HorosDICOMweb" code:4 userInfo:@{NSLocalizedDescriptionKey:@"A query filter could not be encoded. Check the character set preference."}];
+                break;
+            }
+            [parameters setObject:text forKey:key];
+        } else [include addObject:key];
+    }
+    if (include.count) [parameters setObject:[include componentsJoinedByString:@","] forKey:@"includefield"];
+    NSArray *records = client && !error ? [client queryPath:path parameters:parameters error:&error] : nil;
+    if (records) {
+        for (NSDictionary *record in records) {
+            if (NSThread.currentThread.isCancelled) return NO;
+            DcmDataset response;
+            response.putAndInsertString(DCM_SpecificCharacterSet, "ISO_IR 192");
+            response.putAndInsertString(DCM_QueryRetrieveLevel, level.c_str());
+            for (NSString *key in record) {
+                unsigned int numeric = 0;
+                if (key.length != 8 || ![[NSScanner scannerWithString:key] scanHexInt:&numeric]) continue;
+                NSDictionary *attribute = [record objectForKey:key];
+                if (![attribute isKindOfClass:NSDictionary.class]) continue;
+                NSArray *values = [attribute objectForKey:@"Value"];
+                if (![values isKindOfClass:NSArray.class]) continue;
+                NSMutableArray *strings = [NSMutableArray array];
+                for (id value in values) {
+                    if ([value isKindOfClass:NSDictionary.class]) value = [value objectForKey:@"Alphabetic"] ?: [value objectForKey:@"Ideographic"] ?: [value objectForKey:@"Phonetic"];
+                    if ([value isKindOfClass:NSString.class]) [strings addObject:value];
+                    else if ([value isKindOfClass:NSNumber.class]) [strings addObject:[value stringValue]];
+                }
+                if (strings.count) response.putAndInsertString(DcmTagKey(numeric >> 16, numeric & 0xffff), [[strings componentsJoinedByString:@"\\"] UTF8String]);
+            }
+            OFString required;
+            DcmTagKey identity = level == "STUDY" ? DCM_StudyInstanceUID : level == "SERIES" ? DCM_SeriesInstanceUID : DCM_SOPInstanceUID;
+            if (response.findAndGetOFString(identity, required).bad() || !required.length()) {
+                [self purgeChildren];
+                error = [NSError errorWithDomain:@"HorosDICOMweb" code:4 userInfo:@{NSLocalizedDescriptionKey:@"The node returned a result without its DICOM instance identifier."}];
+                break;
+            }
+            [self addChild:&response];
+        }
+    }
+    if (error && !NSThread.currentThread.isCancelled) {
+        [NSThread.currentThread setStatus:error.localizedDescription];
+        if (showErrorMessage) [DCMTKQueryNode performSelectorOnMainThread:@selector(errorMessage:) withObject:@[NSLocalizedString(@"DICOMweb Query Failed", nil), error.localizedDescription, NSLocalizedString(@"Continue", nil)] waitUntilDone:NO];
+    }
+    return records != nil && error == nil && !NSThread.currentThread.isCancelled;
+}
+
 - (void) queryWithValues:(NSArray *)values dataset:(DcmDataset*) dataset
 {
+    _lastQuerySucceeded = NO;
 	@synchronized( self)
 	{
         @try
@@ -655,6 +771,13 @@ subOpCallback(void * /*subOpCallbackData*/ ,
         //		dataset->putAndInsertString(DCM_QueryRetrieveLevel, string);
         //	}
             
+            // What a query actually asked for is the thing needed to read its
+            // answers: a node that ignores an attribute returns everything, and
+            // from the results alone that is indistinguishable from an attribute
+            // that was never put in the request.
+            NSMutableArray *sentKeys = [NSMutableArray array];
+            NSMutableArray *unsentKeys = [NSMutableArray array];
+            
             if( values)
             {
                 NSEnumerator *enumerator = [values objectEnumerator];
@@ -662,6 +785,7 @@ subOpCallback(void * /*subOpCallbackData*/ ,
                 
                 while (dictionary = [enumerator nextObject])
                 {
+                    [sentKeys addObject: [NSString stringWithFormat: @"%@=%@", [dictionary objectForKey:@"name"], [dictionary objectForKey:@"value"]]];
                     const char *string;
                     NSString *key = [dictionary objectForKey:@"name"];
                     id value  = [dictionary objectForKey:@"value"];
@@ -756,21 +880,32 @@ subOpCallback(void * /*subOpCallbackData*/ ,
                     }
                     else
                     {
-                        DcmTag tag;
-                        OFCondition result = DcmTag::findTagFromName( [key UTF8String], tag);
-                        
-                        if( result.good())
+                        unsigned group = 0xffff, element = 0xffff;
+                        if( HorosResolveDicomKeyword( key, &group, &element))
                         {
                             string = [(NSString*)value cStringUsingEncoding:encoding];
-                            dataset->putAndInsertString( tag.getXTag(), string);
+                            dataset->putAndInsertString( DcmTagKey( group, element), string);
                         }
                         else
+                        {
                             NSLog( @"**** DICOM C-FIND with unknown value: %@ : %@", key, value);
+                            [unsentKeys addObject: [NSString stringWithFormat: @"%@=%@", key, value]];
+                            [sentKeys removeLastObject];
+                        }
                     }
                 }
             }
             
-            if ([self setupNetworkWithSyntax:UID_FINDStudyRootQueryRetrieveInformationModel dataset:dataset])
+            if( sentKeys.count || unsentKeys.count)
+            {
+                NSLog( @"---- C-FIND asks for: %@", sentKeys.count? [sentKeys componentsJoinedByString: @", "] : @"nothing but the return keys");
+                if( unsentKeys.count)
+                    NSLog( @"---- C-FIND could not ask for: %@ - no attribute of that name; the node was not told about it at all", [unsentKeys componentsJoinedByString: @", "]);
+            }
+            
+            if ([[_extraParameters objectForKey:@"retrieveMode"] intValue] == DICOMwebRetrieveMode)
+                _lastQuerySucceeded = [self queryDICOMwebWithDataset:dataset];
+            else if ([self setupNetworkWithSyntax:UID_FINDStudyRootQueryRetrieveInformationModel dataset:dataset])
             {
             
             }
@@ -902,7 +1037,7 @@ subOpCallback(void * /*subOpCallbackData*/ ,
 //			[dicom writeToFile: [path stringByAppendingFormat: @"WADO-%d-%d.dcm", wadoUnique, wadoUniqueThreadID] atomically: YES];
 //			[dicom release];
 //			
-//			if( [[NSFileManager defaultManager] fileExistsAtPath: @"/tmp/kill_all_storescu"])
+//			if( HorosDICOMGlobalAbortRequested())
 //				break;
 //			
 //			if( [[dict valueForKey: @"mainThread"] isCancelled])
@@ -935,6 +1070,120 @@ subOpCallback(void * /*subOpCallbackData*/ ,
 //    }
 //}
 
+- (BOOL) queryImagesHierarchicallyForStudy:(NSString*) studyInstanceUID
+{
+    _imageInventoryConfirmed = NO;
+    BOOL confirmed = YES;
+    // A hierarchical C-FIND has to carry the unique keys of every level above
+    // the one it asks for, so an IMAGE level query holding only the study is a
+    // relational query - optional in the standard, and gated on an extended
+    // negotiation this application never proposes. A strictly hierarchical SCP
+    // answers nothing to it. Walk the series first and ask for the images of
+    // each, which every SCP can answer.
+    //
+    // Returns NO when the series could not be listed, so the caller can fall
+    // back to the relational form for an SCP that answers that instead.
+    if( studyInstanceUID.length == 0)
+        return NO;
+    
+    NSMutableArray *seriesInstanceUIDs = [NSMutableArray array];
+    DCMTKStudyQueryNode *subQuery = nil;
+    
+    @try
+    {
+        // The answers go to a node of their own, for two reasons: -addChild:
+        // sorts a response into a series or an image node by the level it came
+        // back at, and the caller drains _children as images while this runs;
+        // and -queryWithValues:dataset: purges the children it is called on, so
+        // querying self once per series would keep only the last one.
+        DcmDataset identifier;
+        identifier.putAndInsertString( DCM_StudyInstanceUID, [studyInstanceUID UTF8String], OFTrue);
+        
+        subQuery = [DCMTKStudyQueryNode queryNodeWithDataset: &identifier
+                                                 callingAET: _callingAET
+                                                  calledAET: _calledAET
+                                                   hostname: _hostname
+                                                       port: _port
+                                             transferSyntax: _transferSyntax
+                                                compression: _compression
+                                            extraParameters: _extraParameters];
+        DcmDataset seriesDataset;
+        seriesDataset.insertEmptyElement( DCM_SeriesInstanceUID, OFTrue);
+        seriesDataset.putAndInsertString( DCM_StudyInstanceUID, [studyInstanceUID UTF8String], OFTrue);
+        seriesDataset.putAndInsertString( DCM_QueryRetrieveLevel, "SERIES", OFTrue);
+        
+        [subQuery queryWithValues: nil dataset: &seriesDataset];
+        confirmed = subQuery.lastQuerySucceeded;
+        
+        for( DCMTKQueryNode *series in [subQuery children])
+        {
+            if( [series uid].length && [seriesInstanceUIDs containsObject: [series uid]] == NO)
+                [seriesInstanceUIDs addObject: [series uid]];
+        }
+    }
+    @catch (NSException* e)
+    {
+        if (_dontCatchExceptions)
+            @throw e;
+        if (![NSThread.currentThread isCancelled])
+            N2LogExceptionWithStackTrace(e);
+        return NO;
+    }
+    
+    if( seriesInstanceUIDs.count == 0)
+        return NO;
+    
+    for( NSString *seriesInstanceUID in seriesInstanceUIDs)
+    {
+        if( [[NSThread currentThread] isCancelled]) { confirmed = NO; break; }
+        
+        NSArray *found = nil;
+        
+        @try
+        {
+            DcmDataset dataset;
+            
+            dataset.insertEmptyElement( DCM_SOPInstanceUID, OFTrue);
+            dataset.putAndInsertString( DCM_StudyInstanceUID, [studyInstanceUID UTF8String], OFTrue);
+            dataset.putAndInsertString( DCM_SeriesInstanceUID, [seriesInstanceUID UTF8String], OFTrue);
+            dataset.putAndInsertString( DCM_QueryRetrieveLevel, "IMAGE", OFTrue);
+            
+            [subQuery queryWithValues: nil dataset: &dataset];
+            confirmed = confirmed && subQuery.lastQuerySucceeded;
+            
+            found = [[[subQuery children] copy] autorelease];
+        }
+        @catch (NSException* e)
+        {
+            if (_dontCatchExceptions)
+                @throw e;
+            if (![NSThread.currentThread isCancelled])
+                N2LogExceptionWithStackTrace(e);
+            confirmed = NO;
+            continue;
+        }
+        
+        // Hand them over one series at a time, so a caller that consumes the
+        // children while this runs sees them arrive as it did before.
+        if( found.count)
+        {
+            @synchronized( _children)
+            {
+                if( !_children)
+                    _children = [[NSMutableArray alloc] init];
+            }
+            
+            @synchronized( _children)
+            {
+                [_children addObjectsFromArray: found];
+            }
+        }
+    }
+    
+    _imageInventoryConfirmed = confirmed;
+    return YES;
+}
+
 - (void) WADOCFindThread: (id) sender
 {
     NSAutoreleasePool *pool = [NSAutoreleasePool new];
@@ -943,15 +1192,20 @@ subOpCallback(void * /*subOpCallbackData*/ ,
 #endif
     [NSThread currentThread].name = @"WADO C-FIND Thread";
     
-    DcmDataset dataset;
-    
-    dataset.insertEmptyElement(DCM_StudyInstanceUID, OFTrue);
-    dataset.insertEmptyElement(DCM_SeriesInstanceUID, OFTrue);
-    dataset.insertEmptyElement(DCM_SOPInstanceUID, OFTrue);
-    dataset.putAndInsertString(DCM_StudyInstanceUID, [_uid UTF8String], OFTrue);
-    dataset.putAndInsertString(DCM_QueryRetrieveLevel, "IMAGE", OFTrue);
-    
-    [self queryWithValues: nil dataset: &dataset];
+    if( [self queryImagesHierarchicallyForStudy: _uid] == NO && !NSThread.currentThread.isCancelled)
+    {
+        // The series could not be listed; ask relationally, which is what this
+        // did on its own before, for an SCP that supports it.
+        DcmDataset dataset;
+        
+        dataset.insertEmptyElement(DCM_StudyInstanceUID, OFTrue);
+        dataset.insertEmptyElement(DCM_SeriesInstanceUID, OFTrue);
+        dataset.insertEmptyElement(DCM_SOPInstanceUID, OFTrue);
+        dataset.putAndInsertString(DCM_StudyInstanceUID, [_uid UTF8String], OFTrue);
+        dataset.putAndInsertString(DCM_QueryRetrieveLevel, "IMAGE", OFTrue);
+        
+        [self queryWithValues: nil dataset: &dataset];
+    }
 #ifndef NDEBUG
     NSLog( @"--- WADO CFIND Done");
 #endif
@@ -967,6 +1221,34 @@ subOpCallback(void * /*subOpCallbackData*/ ,
     {
         return _children.count;
     }
+}
+
+- (void) reportRetrieveCancellation: (NSString*) operation confirmed: (BOOL) confirmed
+{
+    NSString *summary = [HorosRetrieveCompletion cancellationSummaryWithOperation: operation
+        received: self.countOfSuccessfulSuboperations expected: [operation isEqualToString: @"WADO"] ? MAX(self.countOfSuboperations, self.numberImages.unsignedIntegerValue) : self.countOfSuboperations confirmed: confirmed];
+    [NSThread.currentThread setStatus: summary];
+    NSLog(@"---- %@", summary);
+    if (showErrorMessage)
+        [DCMTKQueryNode performSelectorOnMainThread: @selector(errorMessage:)
+            withObject: @[NSLocalizedString(@"Retrieve Cancelled", nil), summary, NSLocalizedString(@"Continue", nil)]
+            waitUntilDone: NO];
+}
+
+- (void)recordFailedIdentifiers:(DcmDataset*)identifiers
+{
+    OFString failed;
+    if (identifiers && identifiers->findAndGetOFStringArray(DCM_FailedSOPInstanceUIDList, failed).good())
+        for (NSString *uid in [[NSString stringWithUTF8String:failed.c_str()] componentsSeparatedByString:@"\\"])
+            if (uid.length) [_retrieveInventory recordPeerFailedUID:uid];
+}
+
+- (void)recordWADOManifest:(HorosRetrieveManifest*)manifest
+{
+    for (NSString *uid in manifest.receivedObjectUIDs) [_retrieveInventory recordUID:uid status:0];
+    for (NSString *uid in manifest.duplicateObjectUIDs)
+        if ([manifest.receivedObjectUIDs containsObject:uid]) [_retrieveInventory recordUID:uid status:0];
+    for (NSString *uid in manifest.rejectedObjectUIDs) [_retrieveInventory recordHTTPRejectedUID:uid];
 }
 
 - (void) WADORetrieve: (DCMTKStudyQueryNode*) study // requestService: WFIND?
@@ -1106,6 +1388,7 @@ subOpCallback(void * /*subOpCallbackData*/ ,
                 }
                 
                 [downloader WADODownload: urlToDownload];
+        [self recordWADOManifest:downloader.manifest];
                 downloader.WADOBaseTotal += urlToDownload.count; // For the GUI progress bar
                 
                 self.countOfSuboperations += urlToDownload.count;
@@ -1115,6 +1398,12 @@ subOpCallback(void * /*subOpCallbackData*/ ,
             [NSThread sleepForTimeInterval: 0.1];
         }
         
+        if (NSThread.currentThread.isCancelled) {
+            [WADOCFind cancel];
+            // The discovery worker owns the query until it exits. Do not purge
+            // its children or report completion while it is still updating them.
+            while (WADOCFind.isExecuting) [NSThread sleepForTimeInterval: 0.05];
+        }
         [downloader release];
         
 		[self purgeChildren];
@@ -1168,6 +1457,7 @@ subOpCallback(void * /*subOpCallbackData*/ ,
         downloader.showErrorMessage = showErrorMessage;
         
         [downloader WADODownload: urlToDownload];
+        [self recordWADOManifest:downloader.manifest];
         
         self.countOfSuboperations = urlToDownload.count;
         self.countOfSuccessfulSuboperations = downloader.countOfSuccesses;
@@ -1182,16 +1472,20 @@ subOpCallback(void * /*subOpCallbackData*/ ,
     
     if( [self isKindOfClass:[DCMTKStudyQueryNode class]])
     {
-        // We are at STUDY level, and we want to go direclty to IMAGE level
+        // We are at STUDY level, and we want the images.
         
-        DcmDataset dataset;
-        
-        dataset.insertEmptyElement(DCM_SeriesInstanceUID, OFTrue);
-        dataset.insertEmptyElement(DCM_SOPInstanceUID, OFTrue);
-        dataset.putAndInsertString(DCM_StudyInstanceUID, [studyInstanceUID UTF8String], OFTrue);
-        dataset.putAndInsertString(DCM_QueryRetrieveLevel, "IMAGE", OFTrue);
-        
-        [self queryWithValues: nil dataset: &dataset];
+        if( [self queryImagesHierarchicallyForStudy: studyInstanceUID] == NO)
+        {
+            // The series could not be listed; ask relationally, as before.
+            DcmDataset dataset;
+            
+            dataset.insertEmptyElement(DCM_SeriesInstanceUID, OFTrue);
+            dataset.insertEmptyElement(DCM_SOPInstanceUID, OFTrue);
+            dataset.putAndInsertString(DCM_StudyInstanceUID, [studyInstanceUID UTF8String], OFTrue);
+            dataset.putAndInsertString(DCM_QueryRetrieveLevel, "IMAGE", OFTrue);
+            
+            [self queryWithValues: nil dataset: &dataset];
+        }
     }
     
     if( [self isKindOfClass:[DCMTKSeriesQueryNode class]])
@@ -1208,6 +1502,166 @@ subOpCallback(void * /*subOpCallbackData*/ ,
     [pool release];
 }
 
+- (BOOL)lastQuerySucceeded { return _lastQuerySucceeded; }
+- (BOOL)imageInventoryConfirmed { return _imageInventoryConfirmed; }
+
+- (NSString*)inventoryStudyUID
+{
+    if ([self isKindOfClass:[DCMTKStudyQueryNode class]]) return _uid;
+    if ([self isKindOfClass:[DCMTKSeriesQueryNode class]]) return [(DCMTKSeriesQueryNode*)self studyInstanceUID];
+    return nil;
+}
+
+- (NSString*)inventorySeriesUID
+{
+    return [self isKindOfClass:[DCMTKSeriesQueryNode class]] ? _uid : @"";
+}
+
+- (NSString*)inventoryEndpoint
+{
+    if ([[_extraParameters objectForKey:@"retrieveMode"] intValue] == DICOMwebRetrieveMode)
+        return [HorosDicomNodeConfiguration addressForServer:_extraParameters];
+    return [NSString stringWithFormat:@"%@@%@:%d", _calledAET, [_hostname lowercaseString], _port];
+}
+
+- (HorosRetrieveInventory*)retrieveInventory
+{
+    if (!_retrieveInventory && [self inventoryStudyUID].length)
+        _retrieveInventory = [[HorosRetrieveInventory loadStudy:[self inventoryStudyUID] series:[self inventorySeriesUID]
+            endpoint:[self inventoryEndpoint] database:[DicomDatabase activeLocalDatabase].dataBaseDirPath] retain];
+    return _retrieveInventory;
+}
+
+- (void)refreshRetrieveInventory
+{
+    HorosRetrieveInventory *inventory = self.retrieveInventory;
+    if (!inventory || ![inventory beginImportRefresh]) return;
+    NSManagedObjectContext *context = NSThread.isMainThread ? [DicomDatabase activeLocalDatabase].managedObjectContext :
+        [[DicomDatabase activeLocalDatabase] independentContext];
+    NSFetchRequest *request = [NSFetchRequest fetchRequestWithEntityName:@"Study"];
+    request.predicate = [NSPredicate predicateWithFormat:@"studyInstanceUID == %@", [self inventoryStudyUID]];
+    NSError *error = nil;
+    NSArray *studies = [context executeFetchRequest:request error:&error];
+    if (error) { [inventory invalidateImportRefresh]; return; }
+    NSMutableArray *uids = [NSMutableArray array];
+    for (DicomStudy *study in studies)
+        for (DicomSeries *series in study.series)
+            if (![self inventorySeriesUID].length || [[series valueForKey:@"seriesDICOMUID"] isEqualToString:[self inventorySeriesUID]])
+                for (DicomImage *image in series.images)
+                    if (image.sopInstanceUID.length) [uids addObject:image.sopInstanceUID];
+    [inventory updateImportedUIDs:uids];
+}
+
+- (void)beginRetrieveInventory
+{
+    NSString *studyUID = [self inventoryStudyUID];
+    if (!studyUID.length) return;
+    DcmDataset identifier;
+    identifier.putAndInsertString(DCM_StudyInstanceUID, [studyUID UTF8String]);
+    DCMTKStudyQueryNode *collector = [DCMTKStudyQueryNode queryNodeWithDataset:&identifier callingAET:_callingAET
+        calledAET:_calledAET hostname:_hostname port:_port transferSyntax:_transferSyntax compression:_compression extraParameters:_extraParameters];
+    [collector setShowErrorMessage:NO];
+    BOOL confirmed = NO;
+    if ([self inventorySeriesUID].length) {
+        identifier.putAndInsertString(DCM_SeriesInstanceUID, [[self inventorySeriesUID] UTF8String]);
+        identifier.insertEmptyElement(DCM_SOPInstanceUID, OFTrue);
+        identifier.putAndInsertString(DCM_QueryRetrieveLevel, "IMAGE");
+        [collector queryWithValues:nil dataset:&identifier];
+        confirmed = collector.lastQuerySucceeded;
+    } else {
+        [collector queryImagesHierarchicallyForStudy:studyUID];
+        confirmed = collector.imageInventoryConfirmed;
+    }
+    NSMutableArray *instances = [NSMutableArray array];
+    NSMutableSet *unique = [NSMutableSet set];
+    for (DCMTKImageQueryNode *image in collector.children) {
+        if (![image isKindOfClass:[DCMTKImageQueryNode class]] || !image.uid.length || !image.seriesInstanceUID.length) { confirmed = NO; continue; }
+        [instances addObject:@{@"uid":image.uid, @"series":image.seriesInstanceUID}];
+        [unique addObject:image.uid];
+    }
+    if (_numberImages.unsignedIntegerValue && unique.count != _numberImages.unsignedIntegerValue) confirmed = NO;
+    [_retrieveInventory release];
+    _retrieveInventory = [[HorosRetrieveInventory beginStudy:studyUID series:[self inventorySeriesUID]
+        endpoint:[self inventoryEndpoint] database:[DicomDatabase activeLocalDatabase].dataBaseDirPath
+        instances:instances confirmed:confirmed && !NSThread.currentThread.isCancelled] retain];
+    [self refreshRetrieveInventory];
+}
+
+- (BOOL)retrieveDICOMweb
+{
+    NSError *error = nil;
+    HorosDICOMwebClient *client = [[[HorosDICOMwebClient alloc]
+        initWithEndpoint:[_extraParameters objectForKey:@"DICOMwebURL"] ?: @""
+        credentialIdentifier:[_extraParameters objectForKey:@"DICOMwebCredentialID"] ?: @""
+        timeout:60 error:&error] autorelease];
+    NSString *study = [self inventoryStudyUID], *series = [self inventorySeriesUID];
+    NSMutableArray *requests = [NSMutableArray array];
+    if (!study.length) return NO;
+    NSString *base = [NSString stringWithFormat:@"studies/%@", study];
+    if (series.length) base = [base stringByAppendingFormat:@"/series/%@", series];
+    if (!_noSmartMode && _retrieveInventory.inventoryConfirmed && _retrieveInventory.localUniqueCount > 0) {
+        NSDictionary *missing = _retrieveInventory.missingSeries;
+        for (NSString *seriesUID in missing)
+            for (NSString *uid in [missing objectForKey:seriesUID])
+                [requests addObject:@{@"path":[NSString stringWithFormat:@"studies/%@/series/%@/instances/%@", study, seriesUID, uid], @"uid":uid}];
+    } else [requests addObject:@{@"path":base}];
+    NSString *incoming = [DicomDatabase activeLocalDatabase].incomingDirPath;
+    self.countOfSuccessfulSuboperations = 0;
+    self.countOfSuboperations = _retrieveInventory.expectedCount;
+    for (NSDictionary *request in requests) {
+        if (error || NSThread.currentThread.isCancelled) break;
+        NSString *staging = [incoming stringByAppendingPathComponent:[@".DICOMweb-" stringByAppendingString:NSUUID.UUID.UUIDString]];
+        @try {
+            NSArray *files = [client retrievePath:[request objectForKey:@"path"] stagingDirectory:staging error:&error];
+            NSMutableArray *uids = [NSMutableArray array];
+            NSMutableSet *unique = [NSMutableSet set];
+            for (NSString *file in files) {
+                if (NSThread.currentThread.isCancelled) break;
+                DcmFileFormat dicom;
+                OFString actualStudy, actualSeries, uid;
+                BOOL valid = dicom.loadFile([file fileSystemRepresentation]).good();
+                if (valid) {
+                    valid = dicom.getDataset()->findAndGetOFString(DCM_StudyInstanceUID, actualStudy).good() &&
+                        dicom.getDataset()->findAndGetOFString(DCM_SeriesInstanceUID, actualSeries).good() &&
+                        dicom.getDataset()->findAndGetOFString(DCM_SOPInstanceUID, uid).good();
+                }
+                NSString *objectUID = valid ? [NSString stringWithUTF8String:uid.c_str()] : nil;
+                valid = valid && actualStudy == [study UTF8String] && (!series.length || actualSeries == [series UTF8String]) &&
+                    objectUID.length && (![request objectForKey:@"uid"] || [[request objectForKey:@"uid"] isEqualToString:objectUID]) && ![unique containsObject:objectUID];
+                if (!valid) {
+                    error = [NSError errorWithDomain:@"HorosDICOMweb" code:4 userInfo:@{NSLocalizedDescriptionKey:@"WADO-RS returned invalid, duplicate or mismatched DICOM identifiers. This response was not imported."}];
+                    break;
+                }
+                [unique addObject:objectUID]; [uids addObject:objectUID];
+            }
+            if (!error && !NSThread.currentThread.isCancelled) {
+                for (NSUInteger index = 0; index < files.count; ++index) {
+                    if (NSThread.currentThread.isCancelled) break;
+                    NSString *destination = [incoming stringByAppendingPathComponent:[NSUUID.UUID.UUIDString stringByAppendingPathExtension:@"dcm"]];
+                    if (![NSFileManager.defaultManager moveItemAtPath:[files objectAtIndex:index] toPath:destination error:nil]) {
+                        error = [NSError errorWithDomain:@"HorosDICOMweb" code:5 userInfo:@{NSLocalizedDescriptionKey:@"A DICOMweb object could not be queued for import. Check available disk space and database folder permissions."}];
+                        break;
+                    }
+                    [_retrieveInventory recordUID:[uids objectAtIndex:index] status:0];
+                    self.countOfSuccessfulSuboperations++;
+                    [NSThread.currentThread setStatus:[NSString stringWithFormat:NSLocalizedString(@"DICOMweb: %lu objects queued for import", nil), (unsigned long)self.countOfSuccessfulSuboperations]];
+                }
+            }
+        } @finally { [NSFileManager.defaultManager removeItemAtPath:staging error:nil]; }
+    }
+    if (NSThread.currentThread.isCancelled) {
+        [self reportRetrieveCancellation:@"DICOMweb" confirmed:YES];
+        return NO;
+    }
+    if (error) {
+        [NSThread.currentThread setStatus:error.localizedDescription];
+        if (showErrorMessage) [DCMTKQueryNode performSelectorOnMainThread:@selector(errorMessage:)
+            withObject:@[NSLocalizedString(@"DICOMweb Retrieve Failed", nil), error.localizedDescription, NSLocalizedString(@"Continue", nil)] waitUntilDone:NO];
+        return NO;
+    }
+    return YES;
+}
+
 - (void) move:(NSDictionary*) dict retrieveMode: (int) retrieveMode
 {
     NSArray *childrenCopy = [self children];
@@ -1218,19 +1672,27 @@ subOpCallback(void * /*subOpCallbackData*/ ,
         dispatch_semaphore_wait(mpsid, DISPATCH_TIME_FOREVER);
     }
     
+    BOOL reportedDICOMwebFailure = NO;
+    BOOL localRetrieve = retrieveMode == DICOMwebRetrieveMode || retrieveMode == CGETRetrieveMode || retrieveMode == WADORetrieveMode ||
+        ![dict objectForKey:@"moveDestination"] || [[dict objectForKey:@"moveDestination"] isEqualToString:[NSUserDefaults defaultAETitle]];
     @try
     {
-        if( [[dict valueForKey: @"retrieveMode"] intValue] == WADORetrieveMode && retrieveMode == WADORetrieveMode)
+        if (localRetrieve) [self beginRetrieveInventory];
+        else { [_retrieveInventory release]; _retrieveInventory = nil; }
+        if ([[_extraParameters objectForKey:@"retrieveMode"] intValue] == DICOMwebRetrieveMode)
+            reportedDICOMwebFailure = ![self retrieveDICOMweb];
+        else if( [[dict valueForKey: @"retrieveMode"] intValue] == WADORetrieveMode && retrieveMode == WADORetrieveMode)
         {
             [self WADORetrieve: [dict valueForKey: @"study"]];
+            if (NSThread.currentThread.isCancelled) [self reportRetrieveCancellation: @"WADO" confirmed: YES];
         }
         else // DICOM retrieve
         {
             NSMutableArray *localObjectUIDs = [NSMutableArray array];
             
-            BOOL retrievedDone = NO;
+            BOOL retrievedDone = localRetrieve && !_noSmartMode && _retrieveInventory.inventoryConfirmed && _retrieveInventory.isComplete;
             
-            if( !_noSmartMode && [[NSUserDefaults standardUserDefaults] boolForKey: @"TryIMAGELevelDICOMRetrieveIfLocalImages"])
+            if( localRetrieve && !retrievedDone && !_noSmartMode && (_retrieveInventory.inventoryConfirmed || [[NSUserDefaults standardUserDefaults] boolForKey: @"TryIMAGELevelDICOMRetrieveIfLocalImages"]))
             {
                 NSString *studyInstanceUID = nil;
                 
@@ -1388,10 +1850,6 @@ subOpCallback(void * /*subOpCallbackData*/ ,
                                                                      
                                                                      if( [[dict valueForKey: @"retrieveMode"] intValue] == CGETRetrieveMode && retrieveMode == CGETRetrieveMode)
                                                                      {
-                                                                         if( [DCMTKQueryRetrieveSCP storeSCP] == NO)
-                                                                             [[NSException exceptionWithName: @"DICOM Network Failure" reason: NSLocalizedString( @"DICOM Listener is not activated", nil) userInfo:nil] raise];
-                                                                         
-                                                                         else
                                                                          {
                                                                              if ([self setupNetworkWithSyntax: UID_GETStudyRootQueryRetrieveInformationModel dataset: &dataset destination: [dict objectForKey:@"moveDestination"]])
                                                                              {
@@ -1476,10 +1934,6 @@ subOpCallback(void * /*subOpCallbackData*/ ,
                                                                  
                                                                  if( [[dict valueForKey: @"retrieveMode"] intValue] == CGETRetrieveMode && retrieveMode == CGETRetrieveMode)
                                                                  {
-                                                                     if( [DCMTKQueryRetrieveSCP storeSCP] == NO)
-                                                                         [[NSException exceptionWithName: @"DICOM Network Failure" reason: NSLocalizedString( @"DICOM Listener is not activated", nil) userInfo:nil] raise];
-                                                                     
-                                                                     else
                                                                      {
                                                                          if ([self setupNetworkWithSyntax: UID_GETStudyRootQueryRetrieveInformationModel dataset: &dataset destination: [dict objectForKey:@"moveDestination"]])
                                                                          {
@@ -1559,10 +2013,6 @@ subOpCallback(void * /*subOpCallbackData*/ ,
                 
                 if( [[dict valueForKey: @"retrieveMode"] intValue] == CGETRetrieveMode && retrieveMode == CGETRetrieveMode)
                 {
-                    if( [DCMTKQueryRetrieveSCP storeSCP] == NO)
-                        [[NSException exceptionWithName: @"DICOM Network Failure" reason: NSLocalizedString( @"DICOM Listener is not activated", nil) userInfo:nil] raise];
-                    
-                    else
                     {
                         
                         if ([self setupNetworkWithSyntax: UID_GETStudyRootQueryRetrieveInformationModel dataset:dataset destination: [dict objectForKey:@"moveDestination"]])
@@ -1597,6 +2047,15 @@ subOpCallback(void * /*subOpCallbackData*/ ,
         @throw;
     }
     @finally {
+        if (localRetrieve && _retrieveInventory) {
+            [self refreshRetrieveInventory];
+            [_retrieveInventory finish];
+            if (_retrieveInventory.needsAttention && showErrorMessage && !reportedDICOMwebFailure && !NSThread.currentThread.isCancelled)
+                [DCMTKQueryNode performSelectorOnMainThread:@selector(errorMessage:) withObject:@[
+                    NSLocalizedString(@"Retrieve Incomplete", nil),
+                    [NSString stringWithFormat:@"%@\nManifest: %@", _retrieveInventory.summary, _retrieveInventory.path],
+                    NSLocalizedString(@"Continue", nil)] waitUntilDone:NO];
+        }
         if (mpsid)
             dispatch_semaphore_signal(mpsid);
         [self setChildren: childrenCopy];
@@ -1605,6 +2064,9 @@ subOpCallback(void * /*subOpCallbackData*/ ,
 
 - (OFCondition) addPresentationContext:(T_ASC_Parameters *)params abstractSyntax:(const char *)abstractSyntax
 {
+    if (!params || !abstractSyntax || !abstractSyntax[0])
+        return EC_IllegalParameter;
+
    /*
     ** We prefer to use Explicitly encoded transfer syntaxes.
     ** If we are running on a Little Endian machine we prefer
@@ -1772,15 +2234,14 @@ subOpCallback(void * /*subOpCallbackData*/ ,
     int i;
     int pid = 1;
 	
-	ASC_addPresentationContext(
+	cond = ASC_addPresentationContext(
         params, 1, abstractSyntax,
         transferSyntaxes, numTransferSyntaxes);
 		
-	// For C-GET we also need the storage presentation contexts : the is only one association
+	// C-GET receives C-STORE suboperations on this association as Storage SCP.
 	if( strcmp(abstractSyntax, UID_GETPatientRootQueryRetrieveInformationModel) == 0 ||
 		strcmp(abstractSyntax, UID_GETStudyRootQueryRetrieveInformationModel) == 0 ||
 		strcmp(abstractSyntax, UID_GETPatientStudyOnlyQueryRetrieveInformationModel) == 0)
-	if( abstractSyntax)
 	{
 		pid += 2;
 		
@@ -1788,7 +2249,7 @@ subOpCallback(void * /*subOpCallbackData*/ ,
 		{
 			cond = ASC_addPresentationContext(
 				params, pid, dcmLongSCUStorageSOPClassUIDs[i],
-				transferSyntaxes, numTransferSyntaxes);
+				transferSyntaxes, numTransferSyntaxes, ASC_SC_ROLE_SCP);
 			pid += 2;	/* only odd presentation context id's */
 		}
 	}
@@ -1847,10 +2308,10 @@ subOpCallback(void * /*subOpCallbackData*/ ,
     {
         @try
         {
-            OFCondition cond = ASC_requestAssociation(net, params, &assoc);
+            OFCondition cond = HorosDIMSERequestAssociation(net, params, &assoc);
             globalCondition = cond;
             
-            if( cond == EC_Normal)
+            if (assoc)
                 [dict setObject: [NSValue valueWithPointer: assoc] forKey: @"assoc"];
         }
         @catch (NSException* e) {
@@ -1861,11 +2322,11 @@ subOpCallback(void * /*subOpCallbackData*/ ,
         }
     }
     
+    // After cancellation, close through the public transport API. DCMTK's
+    // A-ABORT handshake otherwise waits up to a minute for an unresponsive peer.
     if( _abortAssociation && assoc)
     {
-        AbortAssociationTimeOut = 2;
-        ASC_abortAssociation( assoc);
-        AbortAssociationTimeOut = -1;
+        ASC_closeTransportConnection( assoc);
     }
 	
 	[lock unlock];
@@ -1924,7 +2385,7 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
     
     while( 1) @autoreleasepool // Infinite loop
     {
-        BOOL abortAssociations = [[NSFileManager defaultManager] fileExistsAtPath: @"/tmp/kill_all_storescu"];
+        BOOL abortAssociations = HorosDICOMGlobalAbortRequested();
         
         NSArray *copyArray = nil;
         
@@ -1993,11 +2454,48 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
     }
 }
 
-//common network code for move and query
+// Locations uses this entry through a Foundation-only runtime bridge because
+// its preference pane lives in the DCM framework, below this executable.
++ (BOOL)verifyDICOMServer:(NSDictionary*)server
+{
+    if ([server[@"retrieveMode"] intValue] == DICOMwebRetrieveMode) {
+        if (NSThread.isMainThread) {
+            __block BOOL success = NO;
+            dispatch_semaphore_t done = dispatch_semaphore_create(0);
+            NSThread *worker = [[NSThread alloc] initWithBlock:^{ @autoreleasepool {
+                @try { success = [self verifyDICOMServer:server]; }
+                @finally { dispatch_semaphore_signal(done); }
+            }}];
+            WaitRendering *wait = [[[WaitRendering alloc] init:NSLocalizedString(@"Verifying DICOMweb...", nil)] autorelease];
+            [wait setCancel:YES]; [wait showWindow:nil]; [wait start]; [worker start];
+            while (dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 50 * NSEC_PER_MSEC))) {
+                [wait run]; if ([wait aborted]) [worker cancel];
+            }
+            [wait end]; [worker release]; dispatch_release(done);
+            return success;
+        }
+        NSError *error = nil;
+        HorosDICOMwebClient *client = [[[HorosDICOMwebClient alloc] initWithEndpoint:server[@"DICOMwebURL"] ?: @""
+            credentialIdentifier:server[@"DICOMwebCredentialID"] ?: @"" timeout:10 error:&error] autorelease];
+        return client && [client verifyWithError:&error];
+    }
+    if( ![server[@"Address"] length] || ![server[@"AETitle"] length] ||
+        [server[@"Port"] intValue] <= 0 || [server[@"Port"] intValue] > 65535)
+        return NO;
+    DCMTKQueryNode *node = [[[self alloc] initWithDataset: NULL
+        callingAET: [NSUserDefaults defaultAETitle] calledAET: server[@"AETitle"]
+        hostname: server[@"Address"] port: [server[@"Port"] intValue]
+        transferSyntax: [server[@"TransferSyntax"] intValue] compression: 0
+        extraParameters: server] autorelease];
+    return [node setupNetworkWithSyntax: UID_VerificationSOPClass dataset: NULL destination: nil];
+}
+
+// Shared association and TLS setup for verification, query and retrieve.
 - (BOOL)setupNetworkWithSyntax:(const char *)abstractSyntax dataset:(DcmDataset *)dataset destination:(NSString*) destination
 {
 	NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
 	BOOL succeed = YES;
+    const BOOL verifying = strcmp(abstractSyntax, UID_VerificationSOPClass) == 0;
 	
 	@try 
 	{
@@ -2016,7 +2514,7 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
 		T_ASC_Network *net = NULL;
 		T_ASC_Parameters *params;
 		DIC_NODENAME localHost;
-		DIC_NODENAME peerHost;
+
 		T_ASC_Association *assoc = NULL;
 	   
 	//	NSLog(@"hostname: %@ calledAET %@", _hostname, _calledAET);
@@ -2024,6 +2522,7 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
 		opt_peer = [_hostname UTF8String];
 		opt_port = _port;
 		_abortAssociation = NO;
+        NSInteger connectionTimeout = [[NSUserDefaults standardUserDefaults] integerForKey:@"DICOMConnectionTimeout"];
 		
 	//
 	//	
@@ -2059,40 +2558,7 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
         
 		@try
 		{
-			#ifdef WITH_OPENSSL		
-			if(_cipherSuites)
-			{
-				const char *current = NULL;
-				const char *currentOpenSSL;
-				
-				opt_ciphersuites.clear();
-				
-				for (NSString *suite in _cipherSuites)
-				{
-					current = [suite cStringUsingEncoding:NSUTF8StringEncoding];
-					
-					if (NULL == (currentOpenSSL = DcmTLSTransportLayer::findOpenSSLCipherSuiteName(current)))
-					{
-						NSLog(@"ciphersuite '%s' is unknown.", current);
-						NSLog(@"Known ciphersuites are:");
-						unsigned long numSuites = DcmTLSTransportLayer::getNumberOfCipherSuites();
-						for (unsigned long cs=0; cs < numSuites; cs++)
-						{
-							NSLog(@"%s", DcmTLSTransportLayer::getTLSCipherSuiteName(cs));
-						}
-						
-                        [[NSException exceptionWithName:@"DICOM Network Failure (TLS query)" reason:[NSString stringWithFormat:@"Ciphersuite '%s' is unknown.", current] userInfo:nil] raise];
-					}
-					else
-					{
-						if (opt_ciphersuites.length() > 0) opt_ciphersuites += ":";
-						opt_ciphersuites += currentOpenSSL;
-					}
-					
-				}
-			}
-			
-			#endif
+
 
 			/* make sure data dictionary is loaded */
 			if (!dcmDataDict.isDictionaryLoaded()) {
@@ -2114,7 +2580,7 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
 			if (_secureConnection)
 			{
 				[DDKeychain generatePseudoRandomFileToPath:TLS_SEED_FILE];
-				tLayer = new DcmTLSTransportLayer(DICOM_APPLICATION_REQUESTOR, _readSeedFile);
+				tLayer = new DcmTLSTransportLayer(NET_REQUESTOR, _readSeedFile, OFTrue);
 				if (tLayer == NULL)
 				{
 					NSLog(@"unable to create TLS transport layer");
@@ -2129,7 +2595,7 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
 					
 					for (NSString *cert in trustedCertificates)
 					{
-						if (TCS_ok != tLayer->addTrustedCertificateFile([[trustedCertificatesDir stringByAppendingPathComponent:cert] cStringUsingEncoding:NSUTF8StringEncoding], _keyFileFormat))
+						if (tLayer->addTrustedCertificateFile([[trustedCertificatesDir stringByAppendingPathComponent:cert] cStringUsingEncoding:NSUTF8StringEncoding], static_cast<DcmKeyFileFormat>(_keyFileFormat)).bad())
 						{
 							[[NSException exceptionWithName:@"DICOM Network Failure (TLS query)" reason:[NSString stringWithFormat:@"Unable to load certificate file %@", [trustedCertificatesDir stringByAppendingPathComponent:cert]] userInfo:nil] raise];
 						}
@@ -2143,7 +2609,7 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
 							//				do
 							//				{
 							//					app.checkValue(cmd.getValue(current));
-							//					if (TCS_ok != tLayer->addTrustedCertificateDir(current, opt_keyFileFormat))
+							//					if (tLayer->addTrustedCertificateDir(current, opt_keyFileFormat).bad())
 							//					{
 							//						CERR << "warning unable to load certificates from directory '" << current << "', ignoring" << endl;
 							//					}
@@ -2165,12 +2631,12 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
 					NSString *_privateKeyFile = [DICOMTLS keyPathForServerAddress:_hostname port:_port AETitle:_calledAET withStringID:uniqueStringID]; // generates the PEM file for the private key
 					NSString *_certificateFile = [DICOMTLS certificatePathForServerAddress:_hostname port:_port AETitle:_calledAET withStringID:uniqueStringID]; // generates the PEM file for the certificate
 					
-					if (TCS_ok != tLayer->setPrivateKeyFile([_privateKeyFile cStringUsingEncoding:NSUTF8StringEncoding], SSL_FILETYPE_PEM))
+					if (tLayer->setPrivateKeyFile([_privateKeyFile cStringUsingEncoding:NSUTF8StringEncoding], DCF_Filetype_PEM).bad())
 					{
 						[[NSException exceptionWithName:@"DICOM Network Failure (TLS query)" reason:[NSString stringWithFormat:@"Unable to load private TLS key from %@", _privateKeyFile] userInfo:nil] raise];
 					}
 					
-					if (TCS_ok != tLayer->setCertificateFile([_certificateFile cStringUsingEncoding:NSUTF8StringEncoding], SSL_FILETYPE_PEM))
+					if (tLayer->setCertificateFile([_certificateFile cStringUsingEncoding:NSUTF8StringEncoding], DCF_Filetype_PEM, TSP_Profile_BCP_195_RFC_8996).bad())
 					{
 						[[NSException exceptionWithName:@"DICOM Network Failure (TLS query)" reason:[NSString stringWithFormat:@"Unable to load certificate from %@", _certificateFile] userInfo:nil] raise];
 					}
@@ -2181,7 +2647,7 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
 					}
 				}
 				
-				if (TCS_ok != tLayer->setCipherSuites(opt_ciphersuites.c_str()))
+				if (HorosConfigureTLSCipherSuites(*tLayer, _cipherSuites).bad())
 				{
 					[[NSException exceptionWithName:@"DICOM Network Failure (TLS query)" reason:@"Unable to set selected cipher suites" userInfo:nil] raise];
 				}
@@ -2210,7 +2676,7 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
 			
 			
 		/* initialize asscociation parameters, i.e. create an instance of T_ASC_Parameters*. */
-			cond = ASC_createAssociationParameters(&params, _maxReceivePDULength);
+			cond = ASC_createAssociationParameters(&params, _maxReceivePDULength, (Sint32)(connectionTimeout > 0 ? connectionTimeout : _acse_timeout));
 	//		DimseCondition::dump(cond);
 			if (cond.bad()) {
                 if (_verbose)
@@ -2235,9 +2701,10 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
 			/* Figure out the presentation addresses and copy the */
 			/* corresponding values into the association parameters.*/
 			gethostname(localHost, sizeof(localHost) - 1);
-			sprintf(peerHost, "%s:%d", opt_peer, (int)opt_port);
+			// Address formatting and dual-stack DNS fallback are application policy.
 			//NSLog(@"peer host: %s", peerHost);
-			ASC_setPresentationAddresses(params, localHost, peerHost);	//localHost
+			cond = HorosDIMSESetPeerAddress(params, localHost, opt_peer, (int)opt_port);
+            if (cond.bad()) [[NSException exceptionWithName:@"DICOM Network Failure" reason:[NSString stringWithUTF8String:cond.text()] userInfo:nil] raise];	//localHost
 			
 			/* Set the presentation contexts which will be negotiated */
 			/* when the network connection will be established */
@@ -2287,7 +2754,7 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
                 [NSThread detachNewThreadSelector: @selector(requestAssociationThread:) toTarget: self withObject: dict];
 				[NSThread sleepForTimeInterval: 0.05];
 				
-				while( [wait aborted] == NO && _abortAssociation == NO && [NSThread currentThread].isCancelled == NO && [[NSFileManager defaultManager] fileExistsAtPath: @"/tmp/kill_all_storescu"] == NO)
+				while( [wait aborted] == NO && _abortAssociation == NO && [NSThread currentThread].isCancelled == NO && HorosDICOMGlobalAbortRequested() == NO)
 				{
 					[wait run];
 					[NSThread sleepForTimeInterval: 0.05];
@@ -2299,7 +2766,7 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
                     }
 				}
 				
-				if( [wait aborted] || _abortAssociation || [NSThread currentThread].isCancelled || [[NSFileManager defaultManager] fileExistsAtPath: @"/tmp/kill_all_storescu"])
+				if( [wait aborted] || _abortAssociation || [NSThread currentThread].isCancelled || HorosDICOMGlobalAbortRequested())
 				{
 					_abortAssociation = YES;
 					cond = DUL_NETWORKCLOSED;
@@ -2309,8 +2776,12 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
                 
                 if( [dict objectForKey: @"assoc"])
                     assoc = (T_ASC_Association *) [[dict objectForKey: @"assoc"] pointerValue];
-                else
-                    cond = EC_IllegalParameter;
+                else if( cond == EC_Normal)
+                    cond = EC_IllegalParameter; // no association, and no reason given
+                // Otherwise keep the reason the association thread came back
+                // with. Overwriting it made a closed port, an unknown host name,
+                // a refused association and a blocked local network all report
+                // "0000:0001 Illegal parameter".
 				
 				if( cond != EC_Normal)
 				{
@@ -2321,7 +2792,7 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
 				
 				[lock release];
 			}
-//			else cond = ASC_requestAssociation(net, params, &assoc);
+//			else cond = HorosDIMSERequestAssociation(net, params, &assoc);
 			
 			if (cond.bad())
 			{
@@ -2334,7 +2805,7 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
                         ASC_printRejectParameters(stderr, &rej);
                         
                     }
-					[[NSException exceptionWithName:@"DICOM Network Failure (query)" reason:[NSString stringWithFormat: @"Association Rejected : %04x:%04x %s", cond.module(), cond.code(), cond.text()] userInfo:nil] raise];
+					[[NSException exceptionWithName:@"DICOM Network Failure (query)" reason:[HorosNetworkDiagnosis explainFailureToHost: _hostname port: _port condition: [NSString stringWithFormat: @"Association Rejected : %04x:%04x %s", cond.module(), cond.code(), cond.text()]] userInfo:nil] raise];
 
 				}
 				else
@@ -2343,7 +2814,10 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
                         errmsg("Association Request Failed:");
                         DimseCondition::dump(cond);
                     }
-					[[NSException exceptionWithName:@"DICOM Network Failure (query)" reason:[NSString stringWithFormat: @"Association Request Failed : %04x:%04x %s", cond.module(), cond.code(), cond.text()] userInfo:nil] raise];
+					// The DICOM condition is the same for a closed port, an
+					// unknown name, a firewall and a denied Local Network
+					// permission. Establish which it was.
+					[[NSException exceptionWithName:@"DICOM Network Failure (query)" reason:[HorosNetworkDiagnosis explainFailureToHost: _hostname port: _port condition: [NSString stringWithFormat: @"Association Request Failed : %04x:%04x %s", cond.module(), cond.code(), cond.text()]] userInfo:nil] raise];
 				}
 			}
 			
@@ -2371,8 +2845,19 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
 				[[NSException exceptionWithName:@"DICOM Network Failure (query)" reason:@"No acceptable presentation contexts" userInfo:nil] raise];
 			}
 			
-			//specific for Move vs find
-			if (strcmp(abstractSyntax, UID_FINDStudyRootQueryRetrieveInformationModel) == 0)
+            if( verifying)
+            {
+                DIC_US status = 0xffff;
+                DcmDataset *statusDetail = NULL;
+                cond = DIMSE_echoUser(assoc, assoc->nextMsgID++, DIMSE_NONBLOCKING,
+                                     _dimse_timeout, &status, &statusDetail);
+                delete statusDetail;
+                if( cond == EC_Normal && status != STATUS_Success)
+                    [[NSException exceptionWithName:@"DICOM Verification Failed"
+                        reason:[NSString stringWithFormat:@"C-ECHO returned status 0x%04x", status] userInfo:nil] raise];
+                if( cond != EC_Normal) succeed = NO;
+            }
+            else if (strcmp(abstractSyntax, UID_FINDStudyRootQueryRetrieveInformationModel) == 0)
 			{
 				if (cond == EC_Normal) // compare with EC_Normal since DUL_PEERREQUESTEDRELEASE is also good()
 				{
@@ -2385,7 +2870,7 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
 						[NSThread detachNewThreadSelector: @selector(cFindThread:) toTarget: self withObject: dict];
 						[NSThread sleepForTimeInterval: 0.05];
 						
-						while( [wait aborted] == NO && _abortAssociation == NO && [NSThread currentThread].isCancelled == NO && [[NSFileManager defaultManager] fileExistsAtPath: @"/tmp/kill_all_storescu"] == NO)
+						while( [wait aborted] == NO && _abortAssociation == NO && [NSThread currentThread].isCancelled == NO && HorosDICOMGlobalAbortRequested() == NO)
 						{
 							[wait run];
 							[NSThread sleepForTimeInterval: 0.05];
@@ -2397,7 +2882,7 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
                             }
 						}
 						
-						if( [wait aborted] || _abortAssociation || [NSThread currentThread].isCancelled || [[NSFileManager defaultManager] fileExistsAtPath: @"/tmp/kill_all_storescu"])
+						if( [wait aborted] || _abortAssociation || [NSThread currentThread].isCancelled || HorosDICOMGlobalAbortRequested())
 						{
 							_abortAssociation = YES;
 							cond = DUL_NETWORKCLOSED;
@@ -2438,9 +2923,7 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
 					if (_verbose)
 						printf("Aborting Association\n");
 						
-					AbortAssociationTimeOut = 2;
-					cond = ASC_abortAssociation(assoc);
-					AbortAssociationTimeOut = -1;
+					cond = ASC_closeTransportConnection(assoc);
 					
 					if (cond.bad())
 					{
@@ -2475,9 +2958,7 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
 				
                 NSString *reason = [NSString stringWithFormat: @"Protocol Error: peer requested release (Aborting) %04x:%04x %s", cond.module(), cond.code(), cond.text()];
 				
-				AbortAssociationTimeOut = 2;
-				cond = ASC_abortAssociation(assoc);
-				AbortAssociationTimeOut = -1;
+				cond = ASC_closeTransportConnection(assoc);
 				
 				if (cond.bad())
 				{
@@ -2502,9 +2983,7 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
                 
                 NSString *reason = [NSString stringWithFormat: @"SCU Failed %04x:%04x %s", cond.module(), cond.code(), cond.text()];
                 
-				AbortAssociationTimeOut = 2;
-				cond = ASC_abortAssociation(assoc);
-				AbortAssociationTimeOut = -1;
+				cond = ASC_closeTransportConnection(assoc);
 				
 				if (cond.bad())
 				{
@@ -2519,9 +2998,12 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
 		}
 		@catch (NSException *e)
 		{
-			NSString *response = [NSString stringWithFormat: @"%@  /  %@:%d\r\r%@\r%@", _calledAET, _hostname, _port, [e name], [e description]];
+			// The whole configuration, in a fixed order, so the report from a
+			// machine that works and the report from one that does not differ
+			// only where the configurations do.
+			NSString *response = [NSString stringWithFormat: @"%@  /  %@:%d\r\r%@\r%@\r\r%@", _calledAET, _hostname, _port, [e name], [e description], [HorosDicomNodeConfiguration descriptionForServer: _extraParameters callingAETitle: _callingAET]];
 			
-            if (_abortAssociation == NO)
+            if (!verifying && _abortAssociation == NO && !NSThread.currentThread.isCancelled)
             {
                 if( showErrorMessage == YES)
                     [DCMTKQueryNode performSelectorOnMainThread:@selector(errorMessage:) withObject:[NSArray arrayWithObjects: NSLocalizedString(@"Query Failed (1)", nil), response, NSLocalizedString(@"Continue", nil), nil] waitUntilDone:NO];
@@ -2609,6 +3091,7 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
 	}
 	@catch (NSException* e)
 	{
+        succeed = NO;
         if (_dontCatchExceptions)
             @throw e;
 		if (![NSThread.currentThread isCancelled])
@@ -2672,11 +3155,12 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
     }
 
     /* finally conduct transmission of data */
-    OFCondition cond = DIMSE_findUser(assoc, presId, &req, dataset,
+    int responseCount = 0;
+    OFCondition cond = DIMSE_findUser(assoc, presId, &req, dataset, responseCount,
                           progressCallback, &callbackData,
                           DIMSE_NONBLOCKING, _dimse_timeout,	// DIMSE_BLOCKING - _blockMode ANR 2009
                           &rsp, &statusDetail);
-
+    _lastQuerySucceeded = cond.good() && rsp.DimseStatus == STATUS_Success;
 
     /* dump some more general information */
     if (cond == EC_Normal)
@@ -2813,8 +3297,8 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
 - (OFCondition)moveSCU:(T_ASC_Association *)assoc  network:(T_ASC_Network *)net dataset:( DcmDataset *)dataset destination: (char*) destination
 {
 	T_ASC_PresentationContextID presId;
-    T_DIMSE_C_MoveRQ    req;
-    T_DIMSE_C_MoveRSP   rsp;
+    T_DIMSE_C_MoveRQ    req = {};
+    T_DIMSE_C_MoveRSP   rsp = {};
     DIC_US              msgId = assoc->nextMsgID++;
     DcmDataset          *rspIds = NULL;
     DcmDataset          *statusDetail = NULL;
@@ -2854,33 +3338,44 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
 		else
 		{
 			/* set the destination to be me */
-			ASC_getAPTitles(assoc->params, req.MoveDestination, NULL, NULL);
+			ASC_getAPTitles(assoc->params, req.MoveDestination, sizeof(req.MoveDestination), NULL, 0, NULL, 0);
 		}
 		
-		cond = DIMSE_moveUser(assoc, presId, &req, dataset,
+		cond = HorosDIMSEMoveUser(assoc, presId, &req, dataset,
 			moveCallback, &callbackData, _blockMode, _dimse_timeout, //  _blockMode
 			net, subOpCallback, NULL,
 			&rsp, &statusDetail, &rspIds , OFTrue);
 		
         self.countOfSuboperations = rsp.NumberOfCompletedSubOperations+rsp.NumberOfFailedSubOperations+rsp.NumberOfWarningSubOperations+rsp.NumberOfRemainingSubOperations;
         self.countOfSuccessfulSuboperations = rsp.NumberOfCompletedSubOperations;
+        [_retrieveInventory recordOperation:@"C-MOVE" status:rsp.DimseStatus completed:rsp.NumberOfCompletedSubOperations
+            failed:rsp.NumberOfFailedSubOperations warnings:rsp.NumberOfWarningSubOperations remaining:rsp.NumberOfRemainingSubOperations];
+        [self recordFailedIdentifiers:rspIds];
+        if (NSThread.currentThread.isCancelled) [self reportRetrieveCancellation: @"C-MOVE" confirmed: cond.good() && rsp.DimseStatus == 0xfe00];
         
 		if (cond == EC_Normal)
 		{
-			if( DICOM_WARNING_STATUS(rsp.DimseStatus))
-			{
-				 DIMSE_printCMoveRSP(stdout, &rsp);
-			}
-			else if (DICOM_PENDING_STATUS(rsp.DimseStatus))
-			{
-				 DIMSE_printCMoveRSP(stdout, &rsp);
-			}
-			else if( rsp.DimseStatus != STATUS_Success && rsp.DimseStatus != STATUS_Pending)
+            HorosRetrieveCompletion *completion = [[[HorosRetrieveCompletion alloc] initWithOperation: @"C-MOVE"
+                status: rsp.DimseStatus
+                statusText: [NSString stringWithUTF8String: DU_cmoveStatusString( rsp.DimseStatus)]
+                completed: rsp.NumberOfCompletedSubOperations
+                failed: rsp.NumberOfFailedSubOperations
+                warnings: rsp.NumberOfWarningSubOperations
+                remaining: rsp.NumberOfRemainingSubOperations] autorelease];
+
+            // A C-MOVE that could not send everything ends on a warning, not a
+            // failure, and the association is released as if nothing were missing.
+            // The counts are the only thing that says otherwise, so they are what
+            // is reported - and the retrieval is not turned into an error, because
+            // an image-level retrieve cancels its thread on one and would stop
+            // fetching the instances that are still to come.
+            if( completion.everythingArrived == NO)
 			{
 				DIMSE_printCMoveRSP(stdout, &rsp);
+                NSLog( @"---- %@", completion.summary);
 				
-                if( showErrorMessage)
-                    [DCMTKQueryNode performSelectorOnMainThread:@selector(errorMessage:) withObject:[NSArray arrayWithObjects: NSLocalizedString(@"Move Failed", nil), [NSString stringWithUTF8String: DU_cmoveStatusString(rsp.DimseStatus)], NSLocalizedString(@"Continue", nil), nil] waitUntilDone: NO];
+                if( showErrorMessage && !NSThread.currentThread.isCancelled)
+                    [DCMTKQueryNode performSelectorOnMainThread:@selector(errorMessage:) withObject: @[ NSLocalizedString(@"Move Failed", nil), [NSString stringWithFormat: @"%@\r\r%@", completion.summary, [HorosDicomNodeConfiguration descriptionForServer: _extraParameters callingAETitle: _callingAET]], NSLocalizedString(@"Continue", nil)] waitUntilDone: NO];
 			}
 			
 			if (_verbose)
@@ -2894,8 +3389,8 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
 		}
 		else
 		{
-            if (showErrorMessage)
-                [DCMTKQueryNode performSelectorOnMainThread:@selector(errorMessage:) withObject:[NSArray arrayWithObjects: NSLocalizedString(@"Move Failed", nil), [NSString stringWithUTF8String: cond.text()], NSLocalizedString(@"Continue", nil), nil] waitUntilDone: NO];
+            if (showErrorMessage && !NSThread.currentThread.isCancelled)
+                [DCMTKQueryNode performSelectorOnMainThread:@selector(errorMessage:) withObject:[NSArray arrayWithObjects: NSLocalizedString(@"Move Failed", nil), [NSString stringWithFormat: @"%s\r\r%@", cond.text(), [HorosDicomNodeConfiguration descriptionForServer: _extraParameters callingAETitle: _callingAET]], NSLocalizedString(@"Continue", nil), nil] waitUntilDone: NO];
             if (_verbose) {
                 errmsg("Move Failed:");
                 DimseCondition::dump(cond);
@@ -2927,106 +3422,101 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
 
 - (OFCondition)getSCU:(T_ASC_Association *)assoc  network:(T_ASC_Network *)net dataset:( DcmDataset *)dataset
 {
-	//add self to list of moves. Prevents deallocating  the move if a new query is done
-	[[MoveManager sharedManager] addMove:self];
-
-	T_ASC_PresentationContextID presId;
-    T_DIMSE_C_GetRQ    req;
-    T_DIMSE_C_GetRSP   rsp;
+    self.countOfSuboperations = 0;
+    self.countOfSuccessfulSuboperations = 0;
+    T_ASC_PresentationContextID presId;
+    T_DIMSE_C_GetRQ    req = {};
+    T_DIMSE_C_GetRSP   rsp = {};
     DIC_US              msgId = assoc->nextMsgID++;
     DcmDataset          *rspIds = NULL;
     DcmDataset          *statusDetail = NULL;
     MyCallbackInfo      callbackData;
-		
+
    // sopClass = querySyntax[opt_queryModel].moveSyntax;
 
     /* which presentation context should be used */
     presId = ASC_findAcceptedPresentationContextID(assoc, UID_GETStudyRootQueryRetrieveInformationModel); //UID_GETStudyRootQueryRetrieveInformationModel UID_GETPatientStudyOnlyQueryRetrieveInformationModel
     if (presId == 0) return DIMSE_NOVALIDPRESENTATIONCONTEXTID;
 
-    if (_verbose)
-	{
-        printf("Get SCU RQ: MsgID %d\n", msgId);
-        printf("Request:\n");
-        dataset->print(COUT);
-    }
-	
-    /* prepare the callback data */
-    callbackData.assoc = assoc;
-    callbackData.presId = presId;
-	callbackData.node = self;
-	
-    req.MessageID = msgId;
-    strcpy(req.AffectedSOPClassUID, UID_GETStudyRootQueryRetrieveInformationModel); //UID_GETStudyRootQueryRetrieveInformationModel UID_GETPatientStudyOnlyQueryRetrieveInformationModel
-    req.Priority = DIMSE_PRIORITY_MEDIUM;
-    req.DataSetType = DIMSE_DATASET_PRESENT;
- 
-//	if( destination)
-//	{
-//		strcpy(req.MoveDestination, destination);
-//	}
-//	else
-//	{
-//		/* set the destination to be me */
-//		ASC_getAPTitles(assoc->params, req.MoveDestination, NULL, NULL);
-//	}
-	
-	OFCondition cond;
-	
-	cond = DIMSE_getUser(assoc, presId, &req, dataset, getCallback, &callbackData, _blockMode, _dimse_timeout, net, subOpCallback, NULL, &rsp, &statusDetail, &rspIds);
-	
-    self.countOfSuboperations = rsp.NumberOfCompletedSubOperations+rsp.NumberOfFailedSubOperations+rsp.NumberOfWarningSubOperations+rsp.NumberOfRemainingSubOperations;
-    self.countOfSuccessfulSuboperations = rsp.NumberOfCompletedSubOperations;
-    
-    if (cond == EC_Normal)
-	{
-		if( DICOM_WARNING_STATUS(rsp.DimseStatus))
-		{
-			 DIMSE_printCGetRSP(stdout, &rsp);
-		}
-		else if (DICOM_PENDING_STATUS(rsp.DimseStatus))
-		{
-			 DIMSE_printCGetRSP(stdout, &rsp);
-		}
-		else if( rsp.DimseStatus != STATUS_Success && rsp.DimseStatus != STATUS_Pending)
-		{
-			DIMSE_printCGetRSP(stdout, &rsp);
-			
-            if( showErrorMessage)
-                [DCMTKQueryNode performSelectorOnMainThread:@selector(errorMessage:) withObject:[NSArray arrayWithObjects: NSLocalizedString(@"Get Failed", nil), [NSString stringWithUTF8String: DU_cmoveStatusString(rsp.DimseStatus)], NSLocalizedString(@"Continue", nil), nil] waitUntilDone:NO];
-		}
-		
+    [[MoveManager sharedManager] addMove:self];
+    OFCondition cond = EC_Normal;
+    @try
+    {
         if (_verbose)
-		{
-            DIMSE_printCGetRSP(stdout, &rsp);
-            if (rspIds != NULL)
-			{
-                printf("Response Identifiers:\n");
-                rspIds->print(COUT);
-			}
+        {
+            printf("Get SCU RQ: MsgID %d\n", msgId);
+            printf("Request:\n");
+            dataset->print(COUT);
         }
-    }
-	else
-	{
-        if( showErrorMessage)
-            [DCMTKQueryNode performSelectorOnMainThread:@selector(errorMessage:) withObject:[NSArray arrayWithObjects: NSLocalizedString(@"Get Failed", nil), [NSString stringWithUTF8String: cond.text()], NSLocalizedString(@"Continue", nil), nil] waitUntilDone:NO];
-        if (_verbose) {
-            errmsg("Get Failed:");
-            DimseCondition::dump(cond);
+
+        /* prepare the callback data */
+        callbackData.assoc = assoc;
+        callbackData.presId = presId;
+        callbackData.node = self;
+
+        req.MessageID = msgId;
+        strcpy(req.AffectedSOPClassUID, UID_GETStudyRootQueryRetrieveInformationModel); //UID_GETStudyRootQueryRetrieveInformationModel UID_GETPatientStudyOnlyQueryRetrieveInformationModel
+        req.Priority = DIMSE_PRIORITY_MEDIUM;
+        req.DataSetType = DIMSE_DATASET_PRESENT;
+
+        cond = HorosDIMSEGetUser(assoc, presId, &req, dataset, getCallback, &callbackData, DIMSE_NONBLOCKING, _dimse_timeout, net, subOpCallback, NULL, &rsp, &statusDetail, &rspIds);
+
+        self.countOfSuboperations = rsp.NumberOfCompletedSubOperations+rsp.NumberOfFailedSubOperations+rsp.NumberOfWarningSubOperations+rsp.NumberOfRemainingSubOperations;
+        self.countOfSuccessfulSuboperations = rsp.NumberOfCompletedSubOperations;
+        [_retrieveInventory recordOperation:@"C-GET" status:rsp.DimseStatus completed:rsp.NumberOfCompletedSubOperations
+            failed:rsp.NumberOfFailedSubOperations warnings:rsp.NumberOfWarningSubOperations remaining:rsp.NumberOfRemainingSubOperations];
+        [self recordFailedIdentifiers:rspIds];
+        if (NSThread.currentThread.isCancelled) [self reportRetrieveCancellation: @"C-GET" confirmed: cond.good() && rsp.DimseStatus == 0xfe00];
+
+        if (cond == EC_Normal)
+        {
+            HorosRetrieveCompletion *completion = [[[HorosRetrieveCompletion alloc] initWithOperation: @"C-GET"
+                status: rsp.DimseStatus
+                statusText: [HorosDIMSEPolicy cGetStatusDescription:rsp.DimseStatus]
+                completed: rsp.NumberOfCompletedSubOperations
+                failed: rsp.NumberOfFailedSubOperations
+                warnings: rsp.NumberOfWarningSubOperations
+                remaining: rsp.NumberOfRemainingSubOperations] autorelease];
+
+            if( completion.everythingArrived == NO)
+            {
+                NSLog( @"---- %@", completion.summary);
+                if (!NSThread.currentThread.isCancelled)
+                    cond = makeDcmnetCondition(DIMSEC_RECEIVEFAILED, OF_error, completion.summary.UTF8String);
+                if (showErrorMessage && !NSThread.currentThread.isCancelled)
+                    [DCMTKQueryNode performSelectorOnMainThread:@selector(errorMessage:) withObject:
+                        @[NSLocalizedString(@"Get Failed", nil), [NSString stringWithFormat: @"%@\r\r%@", completion.summary, [HorosDicomNodeConfiguration descriptionForServer: _extraParameters callingAETitle: _callingAET]],
+                          NSLocalizedString(@"Continue", nil)] waitUntilDone:NO];
+            }
+
+            if (_verbose)
+            {
+                DIMSE_printCGetRSP(stdout, &rsp);
+                if (rspIds != NULL)
+                {
+                    printf("Response Identifiers:\n");
+                    rspIds->print(COUT);
+                }
+            }
         }
+        else
+        {
+            if( showErrorMessage && !NSThread.currentThread.isCancelled)
+                [DCMTKQueryNode performSelectorOnMainThread:@selector(errorMessage:) withObject:[NSArray arrayWithObjects: NSLocalizedString(@"Get Failed", nil), [NSString stringWithFormat: @"%s\r\r%@", cond.text(), [HorosDicomNodeConfiguration descriptionForServer: _extraParameters callingAETitle: _callingAET]], NSLocalizedString(@"Continue", nil), nil] waitUntilDone:NO];
+            if (_verbose) {
+                errmsg("Get Failed:");
+                DimseCondition::dump(cond);
+            }
+        }
+
     }
-	
-    if (statusDetail != NULL)
-	{
-        printf("  Status Detail:\n");
-        statusDetail->print(COUT);
+    @finally
+    {
         delete statusDetail;
+        delete rspIds;
+        [[MoveManager sharedManager] removeMove:self];
     }
-	
-    if (rspIds != NULL) delete rspIds;
-	
-	[[MoveManager sharedManager] removeMove:self];
-	
+
     return cond;
 }
 

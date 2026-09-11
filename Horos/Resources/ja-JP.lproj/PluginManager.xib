@@ -80,7 +80,7 @@
                                                                 </connections>
                                                             </tableColumn>
                                                             <tableColumn identifier="" editable="NO" width="120" minWidth="120" maxWidth="120" id="OCE-FJ-HJu">
-                                                                <tableHeaderCell key="headerCell" lineBreakMode="truncatingTail" borderStyle="border" alignment="center" title="Horos Validated">
+                                                                <tableHeaderCell key="headerCell" lineBreakMode="truncatingTail" borderStyle="border" alignment="center" title="Load Status">
                                                                     <font key="font" metaFont="smallSystem"/>
                                                                     <color key="textColor" name="headerTextColor" catalog="System" colorSpace="catalog"/>
                                                                     <color key="backgroundColor" white="0.0" alpha="0.0" colorSpace="calibratedWhite"/>
@@ -91,7 +91,7 @@
                                                                     <color key="backgroundColor" name="controlBackgroundColor" catalog="System" colorSpace="catalog"/>
                                                                 </textFieldCell>
                                                                 <connections>
-                                                                    <binding destination="26" name="value" keyPath="arrangedObjects.HorosCompatiblePlugin" id="3VQ-68-8hs">
+                                                                    <binding destination="26" name="value" keyPath="arrangedObjects.loadState" id="3VQ-68-8hs">
                                                                         <dictionary key="options">
                                                                             <bool key="NSConditionallySetsEditable" value="YES"/>
                                                                         </dictionary>

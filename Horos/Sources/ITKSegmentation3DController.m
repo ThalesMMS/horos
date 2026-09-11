@@ -334,7 +334,7 @@ enum algorithmTypes { intervalSegmentationType, thresholdSegmentationType, neigh
 										: (ToolMode)[[NSUserDefaults standardUserDefaults] integerForKey: @"growingRegionROIType"]
 										: ((long)[roiResolution maxValue] + 1) - [roiResolution intValue]
 										: name
-										: [[NSUserDefaults standardUserDefaults] boolForKey: @"mergeWithExistingROIs"]
+										: ([name isEqualToString: NSLocalizedString( @"Segmentation Preview", nil)] ? NO : [[NSUserDefaults standardUserDefaults] boolForKey: @"mergeWithExistingROIs"])	// previews never merge existing ROIs
 										];
 				
 				[itk release];

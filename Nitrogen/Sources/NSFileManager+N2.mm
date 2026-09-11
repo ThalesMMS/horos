@@ -36,10 +36,15 @@
  ============================================================================*/
 
 
+#import "Horos-Swift.h"
 #import "NSFileManager+N2.h"
 #import "NSString+N2.h"
 #import "NSString+SymlinksAndAliases.h"
 #import <sys/stat.h>
+#import <errno.h>
+#import <stdlib.h>
+#import <string.h>
+#import <unistd.h>
 
 @implementation NSFileManager (N2)
 
@@ -78,22 +83,52 @@
 }
 
 -(NSString*)tmpFilePathInDir:(NSString*)dirPath {
-    NSString *pre = [dirPath stringByAppendingPathComponent:[NSString stringWithFormat:@"%@_%@_%u_%lu_XXXXXX", [[NSBundle mainBundle] objectForInfoDictionaryKey:(NSString*)kCFBundleNameKey], [[NSDate date] descriptionWithCalendarFormat:@"%Y%m%d%H%M%S" timeZone:NULL locale:NULL], getpid(), (long)[NSThread currentThread]]];
-    
-    NSUInteger len = pre.length+1;
-    char temp[len];
-    [pre getBytes:temp maxLength:len usedLength:&len encoding:NSUTF8StringEncoding options:0 range:NSMakeRange(0, pre.length) remainingRange:NULL];
-    temp[len] = 0;
-    
-    mkstemp(temp);
-    
-	return [NSString stringWithUTF8String:temp];
+    if (!dirPath.length)
+        [NSException raise:NSInvalidArgumentException format:@"A temporary file requires a parent directory."];
+    NSString *pattern = [dirPath stringByAppendingPathComponent:@"file-XXXXXX"];
+    char *buffer = strdup(pattern.fileSystemRepresentation);
+    if (!buffer) [NSException raise:NSMallocException format:@"Could not allocate a temporary file path."];
+    int descriptor = mkstemp(buffer);
+    int code = errno;
+    NSString *path = nil;
+    if (descriptor >= 0) {
+        path = [self stringWithFileSystemRepresentation:buffer length:strlen(buffer)];
+        // The API returns a reserved pathname, not an open file descriptor.
+        close(descriptor);
+    }
+    free(buffer);
+    if (!path) [NSException raise:NSGenericException format:@"Could not create a temporary file (%d).", code];
+    return path;
 }
 
 -(NSString*)tmpDirPath {
     NSString* path = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"%@_%@", [[NSBundle mainBundle] objectForInfoDictionaryKey:(NSString*)kCFBundleNameKey], NSUserName()]];
     [self confirmDirectoryAtPath:path];
     return path;
+}
+
+// A temporary directory, made by mkdtemp, inside a directory of the caller's
+// choosing. -tmpFilePathInDir: is the wrong thing to ask for when a directory is
+// wanted: mkstemp creates the file and leaves it there, so
+// -confirmDirectoryAtPath: on the same path then finds a file in its way and
+// raises. That took down a whole medium scan when a disc carried a ZIP.
+-(NSString*)tmpDirectoryPathInDir:(NSString*)dirPath {
+    if (!dirPath.length)
+        [NSException raise:NSInvalidArgumentException format:@"A temporary directory requires a parent directory."];
+    [self confirmDirectoryAtPath:dirPath];
+    NSString *pattern = [dirPath stringByAppendingPathComponent:@"directory-XXXXXX"];
+    char *buffer = strdup(pattern.fileSystemRepresentation);
+    if (!buffer) [NSException raise:NSMallocException format:@"Could not allocate a temporary directory path."];
+    NSString *path = nil;
+    if (mkdtemp(buffer)) path = [self stringWithFileSystemRepresentation:buffer length:strlen(buffer)];
+    int code = errno;
+    free(buffer);
+    if (!path) [NSException raise:NSGenericException format:@"Could not create a temporary directory (%d).", code];
+    return path;
+}
+
+-(NSString*)tmpDirectoryPathInTmp {
+    return [self tmpDirectoryPathInDir:[self tmpDirPath]];
 }
 
 -(NSString*)tmpFilePathInTmp {
@@ -121,12 +156,10 @@
         {
             if ([dirPath isEqualToString:@"/tmp"] == NO)
             {
-                [self removeItemAtPath:dirPath error:&error];
-                
-                if (error)
-                    [NSException raise:NSGenericException format:@"Couldn't unlink file: %@ - %@", dirPath, [error localizedDescription]];
-                
-                create = YES;
+                // A directory request must never destroy an existing file,
+                // including a file encountered in a parent path (#705, #793, #801).
+                [NSException raise:NSGenericException
+                            format:@"Cannot create directory: an existing file occupies %@", dirPath];
             }
             else
             {
@@ -137,11 +170,29 @@
 	
 	if (create) {
 		[self createDirectoryAtPath:dirPath withIntermediateDirectories:YES attributes:NULL error:&error];
-		if (error) [NSException raise:NSGenericException format:@"Couldn't create directory: %@", [error localizedDescription]];
+		// The file system answers "you don't have permission" for an ejected
+		// disk, which sends the reader to permissions they never changed. And
+		// the message named no path at all, so there was nothing to act on.
+		if (error) [NSException raise:NSGenericException format:@"%@", [HorosStorageFailure reasonForError: error path: dirPath]];
 	}
     
     if( subDirectory == NO && [self isWritableFileAtPath: dirPath] == NO)
-        NSLog( @"-------- confirmDirectoryAtPath %@ is writable == NO", dirPath);
+    {
+        // Every part of the database asks for its directory, so a read-only
+        // volume produced this line more than twenty times per launch and
+        // buried whatever else was said. Once per place is the information.
+        static NSMutableSet *reported = nil;
+        static dispatch_once_t once;
+        dispatch_once( &once, ^{ reported = [[NSMutableSet alloc] init]; });
+        @synchronized( reported)
+        {
+            if( [reported containsObject: dirPath] == NO)
+            {
+                [reported addObject: dirPath];
+                NSLog( @"-------- confirmDirectoryAtPath %@ is writable == NO", dirPath);
+            }
+        }
+    }
     
 	return dirPath;
 }

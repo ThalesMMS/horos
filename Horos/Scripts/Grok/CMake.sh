@@ -5,8 +5,9 @@ export PATH="$PATH:/opt/local/bin:/opt/local/sbin:/opt/homebrew/bin/"
 path="$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )/$(basename "${BASH_SOURCE[0]}")"
 cd "$TARGET_NAME"; pwd
 
-env=$(env|sort|grep -v 'LLBUILD_BUILD_ID=\|LLBUILD_LANE_ID=\|LLBUILD_TASK_ID=\|Apple_PubSub_Socket_Render=\|DISPLAY=\|SHLVL=\|SSH_AUTH_SOCK=\|SECURITYSESSIONID=')
-hash="$(git describe --always --tags --dirty) $(md5 -q "$path")-$(md5 -qs "$env")"
+# One narrow hash for every dependency; see Horos/Scripts/dependency-hash.sh.
+. "$(dirname "$path")/../dependency-hash.sh"
+dependency_hash "$path"
 
 set -e; set -o xtrace
 
@@ -41,6 +42,7 @@ cfs=($OTHER_CFLAGS)
 cxxfs=($OTHER_CPLUSPLUSFLAGS)
 ldfs=($OTHER_LDFLAGS)
 
+args+=(-DCMAKE_POLICY_VERSION_MINIMUM=3.5)
 args+=(-DCMAKE_OSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET")
 args+=(-DCMAKE_OSX_ARCHITECTURES="$ARCHS")
 
@@ -48,7 +50,7 @@ args+=(-DCMAKE_INSTALL_PREFIX="$TARGET_TEMP_DIR/Install")
 args+=(-DGROK_INSTALL_INCLUDE_DIR="include/OpenJPEG")
 args+=(-DGROK_INSTALL_LIB_DIR="lib")
 
-args+=(-DBUILD_CODEC=ON)
+args+=(-DBUILD_CODEC=OFF)
 args+=(-DBUILD_PLUGIN_LOADER=OFF)
 args+=(-DBUILD_DOC=OFF)
 args+=(-DBUILD_EXAMPLES=OFF)

@@ -752,6 +752,7 @@ DcmDataDictionary::findEntry(const char *name) const
      */
     DcmHashDictIterator iter;
     for (iter=hashDict.begin(); (e==NULL) && (iter!=hashDict.end()); ++iter) {
+        if ((*iter) == NULL) continue;
         if ((*iter)->contains(name)) {
             e = *iter;
             if (e->getGroup() % 2) 

@@ -173,9 +173,14 @@
 		
         imageSize = [image size];
         NSDivideRect(cellFrame, &imageFrame, &cellFrame, 3 + imageSize.width, NSMinXEdge);
-        if ([self drawsBackground]) {
+        // A nil backgroundColor leaves whatever colour the context already had
+        // and NSRectFill then paints the image slice with it, which in a fresh
+        // context is black. And NSRectFill overwrites alpha instead of blending,
+        // so a colour with alpha - every semantic one has some - came out solid
+        // (#380, A300).
+        if ([self drawsBackground] && [self backgroundColor]) {
             [[self backgroundColor] set];
-            NSRectFill(imageFrame);
+            NSRectFillUsingOperation(imageFrame, NSCompositingOperationSourceOver);
         }
         imageFrame.origin.x += 3;
         imageFrame.size = imageSize;
@@ -192,9 +197,14 @@
 		
         imageSize = [lastImage size];
         NSDivideRect(cellFrame, &imageFrame, &cellFrame, 3 + imageSize.width, NSMaxXEdge);
-        if ([self drawsBackground]) {
+        // A nil backgroundColor leaves whatever colour the context already had
+        // and NSRectFill then paints the image slice with it, which in a fresh
+        // context is black. And NSRectFill overwrites alpha instead of blending,
+        // so a colour with alpha - every semantic one has some - came out solid
+        // (#380, A300).
+        if ([self drawsBackground] && [self backgroundColor]) {
             [[self backgroundColor] set];
-            NSRectFill(imageFrame);
+            NSRectFillUsingOperation(imageFrame, NSCompositingOperationSourceOver);
         }
         imageFrame.origin.x += 3;
         imageFrame.size = imageSize;

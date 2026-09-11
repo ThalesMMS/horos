@@ -47,6 +47,7 @@
 #import "DicomImage.h"
 #import "DicomStudy+Report.h"
 #import "Anonymization.h"
+#import "Horos-Swift.h"
 #import "AnonymizationPanelController.h"
 #import "AnonymizationViewController.h"
 #import "ThreadsManager.h"
@@ -62,12 +63,13 @@
 #import "DCMUIDs.h"
 #import "DicomDatabase+DCMTK.h"
 #import "Horos.h"
+#import "HorosBoundedTask.h"
 
 @implementation BurnerWindowController
 
 @synthesize password, buttonsDisabled, selectedUSB;
 
-- (void) createDMG:(NSString*) imagePath withSource:(NSString*) directoryPath
+- (BOOL) createDMG:(NSString*) imagePath withSource:(NSString*) directoryPath
 {
 	[[NSFileManager defaultManager] removeItemAtPath:imagePath error:NULL];
 	
@@ -85,11 +87,38 @@
 	NSArray *args = [NSArray arrayWithObjects: @"-c", cmdString, nil];
 
 	[makeImageTask setArguments:args];
-	[makeImageTask launch];
-    while( [makeImageTask isRunning])
-        [NSThread sleepForTimeInterval: 0.1];
-    
-    //[aTask waitUntilExit];		// <- This is VERY DANGEROUS : the main runloop is continuing...
+	
+	// Building the image is the slow part of a burn, so the deadline is
+	// generous; what it rules out is waiting forever for a shell that never
+	// returns, which is what the unbounded poll here used to do.
+	NSError *taskError = nil;
+	if( HorosRunTaskUntilExit( makeImageTask, 1800, &taskError) == NO)
+	{
+		NSLog( @"****** disk image creation failed: %@", taskError.localizedDescription);
+		burnFailure = [taskError.localizedDescription copy];
+		return NO;
+	}
+	
+	// The task finishing is not the task succeeding. hdiutil reports a full
+	// destination, a read-only one or a bad path by exiting non-zero, and that
+	// used to be ignored: the window played the success sound and closed itself
+	// with no disc image anywhere.
+	if( makeImageTask.terminationStatus != 0)
+	{
+		NSLog( @"****** disk image creation failed: hdiutil exited %d", makeImageTask.terminationStatus);
+		[burnFailure release];
+		burnFailure = [[NSString stringWithFormat: NSLocalizedString( @"The disc image could not be created at %@ (hdiutil exited %d). The files were not written.", nil), imagePath, makeImageTask.terminationStatus] retain];
+		return NO;
+	}
+	
+	if( [[NSFileManager defaultManager] fileExistsAtPath: imagePath] == NO)
+	{
+		[burnFailure release];
+		burnFailure = [[NSString stringWithFormat: NSLocalizedString( @"The disc image %@ was not created. The files were not written.", nil), imagePath] retain];
+		return NO;
+	}
+	
+	return YES;
 }
 
 
@@ -177,6 +206,7 @@
 	
 	[[[NSWorkspace sharedWorkspace] notificationCenter] removeObserver:self];
     
+	[burnFailure release];
 	[anonymizedFiles release];
 	[filesToBurn release];
 	[dbObjectsID release];
@@ -420,11 +450,28 @@
         
         if( anonymizationTags)
         {
-            NSDictionary* anonOut = [Anonymization anonymizeFiles:files dicomImages: dbObjects toPath:@"/tmp/burnAnonymized" withTags: anonymizationTags];
+            NSError *anonymizationError = nil;
+            NSDictionary* anonOut = [Anonymization anonymizeFiles:files dicomImages:dbObjects toPath:@"/tmp/burnAnonymized" withTags:anonymizationTags error:&anonymizationError];
+            if (!anonOut) {
+                // A requested anonymized burn must never fall back to the source files.
+                isSettingUpBurn = NO;
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    self.buttonsDisabled = NO;
+                    runBurnAnimation = NO;
+                    burning = NO;
+                    if (!([anonymizationError.domain isEqualToString:NSCocoaErrorDomain] && anonymizationError.code == NSUserCancelledError))
+                        [HorosAnonymizationErrorPresenter presentError:anonymizationError];
+                });
+                return;
+            }
             
             [anonymizedFiles release];
             anonymizedFiles = [[anonOut allValues] mutableCopy];
         }
+        
+        failed = NO;
+        [burnFailure release];
+        burnFailure = nil;
         
         [self prepareCDContent: dbObjects :originalDbObjects];
         
@@ -444,7 +491,8 @@
                 switch( [[NSUserDefaults standardUserDefaults] integerForKey: @"burnDestination"])
                 {
                     case DMGFile:
-                        [self createDMG: writeDMGPath withSource:[self folderToBurn]];
+                        if( [self createDMG: writeDMGPath withSource:[self folderToBurn]] == NO)
+                            failed = YES;
                     break;
                     
                     case CDDVD:
@@ -453,7 +501,8 @@
                     break;
                         
                     case USBKey:
-                        [self saveOnVolume];
+                        if( [self saveOnVolume] == NO)
+                            failed = YES;
                     break;
                 }
             }
@@ -463,7 +512,21 @@
         runBurnAnimation = NO;
         burning = NO;
         
-        if( cancelled == NO)
+        if( failed)
+        {
+            // A medium that was not written must not sound and look like one that
+            // was. The window stays open, so the destination can be changed and
+            // the burn tried again.
+            NSString *message = burnFailure ? burnFailure : NSLocalizedString( @"The files were not written.", nil);
+            dispatch_async( dispatch_get_main_queue(), ^{
+                NSAlert *alert = [[[NSAlert alloc] init] autorelease];
+                alert.messageText = NSLocalizedString( @"The medium was not created", nil);
+                alert.informativeText = message;
+                [alert addButtonWithTitle: NSLocalizedString( @"OK", nil)];
+                [alert runModal];
+            });
+        }
+        else if( cancelled == NO)
         {
             // Finished ! Close the window....
             
@@ -535,26 +598,29 @@
     return array;
 }
 
-- (void) saveOnVolume
+- (BOOL) saveOnVolume
 {
     NSLog( @"Erase volume : %@", writeVolumePath);
     
+    // The volume is emptied before the copy, so a copy that then fails leaves the
+    // key both erased and empty. It used to fail in silence - the error was
+    // discarded and the window closed with the success sound - which is the half
+    // of #46 about telling a written medium from one that was not.
     for( NSString *path in [[NSFileManager defaultManager] contentsOfDirectoryAtPath: writeVolumePath error: nil])
         [[NSFileManager defaultManager] removeItemAtPath: [writeVolumePath stringByAppendingPathComponent: path] error: nil];
     
-    
-    [[NSFileManager defaultManager] copyItemAtPath: [self folderToBurn] toPath: writeVolumePath byReplacingExisting: YES error: nil];
+    NSError *copyError = nil;
+    if( [[NSFileManager defaultManager] copyItemAtPath: [self folderToBurn] toPath: writeVolumePath byReplacingExisting: YES error: &copyError] == NO)
+    {
+        NSLog( @"****** copy to the volume failed: %@", copyError.localizedDescription);
+        [burnFailure release];
+        burnFailure = [[NSString stringWithFormat: NSLocalizedString( @"The files could not be copied to %@: %@", nil), writeVolumePath, copyError.localizedDescription ? copyError.localizedDescription : NSLocalizedString( @"the copy did not finish", nil)] retain];
+        return NO;
+    }
     
     NSString *newName = cdName;
     
-    NSTask *t = [NSTask launchedTaskWithLaunchPath: @"/usr/sbin/diskutil" arguments: [NSArray arrayWithObjects: @"rename", writeVolumePath, newName, nil]];
-    
-    while( [t isRunning])
-        [NSThread sleepForTimeInterval: 0.1];
-    
-    //[aTask waitUntilExit];		// <- This is VERY DANGEROUS : the main runloop is continuing...
-    
-    [NSThread sleepForTimeInterval: 1];
+    [self renameVolumeTo: newName];
     
     //Did we succeed? Basic MS-DOS FAT support only CAPITAL letters and maximum of 10 characters...
     if( [[NSFileManager defaultManager] fileExistsAtPath: [[writeVolumePath stringByDeletingLastPathComponent] stringByAppendingPathComponent: newName]] == NO)
@@ -562,33 +628,36 @@
         if( newName.length > 10)
             newName = [newName substringToIndex: 10];
         
-        NSTask *t = [NSTask launchedTaskWithLaunchPath: @"/usr/sbin/diskutil" arguments: [NSArray arrayWithObjects: @"rename", writeVolumePath, [newName uppercaseString], nil]];
-        
-        while( [t isRunning])
-            [NSThread sleepForTimeInterval: 0.1];
-        
-        //[t waitUntilExit];		// <- This is VERY DANGEROUS : the main runloop is continuing...
-        
-        [NSThread sleepForTimeInterval: 1];
+        [self renameVolumeTo: [newName uppercaseString]];
         
         if( [[NSFileManager defaultManager] fileExistsAtPath: [[writeVolumePath stringByDeletingLastPathComponent] stringByAppendingPathComponent: newName]] == NO)
         {
             newName = @"DICOM";
             
-            NSTask *t = [NSTask launchedTaskWithLaunchPath: @"/usr/sbin/diskutil" arguments: [NSArray arrayWithObjects: @"rename", writeVolumePath, newName, nil]];
-            
-            while( [t isRunning])
-                [NSThread sleepForTimeInterval: 0.1];
-            
-            //[aTask waitUntilExit];		// <- This is VERY DANGEROUS : the main runloop is continuing...
-            
-            [NSThread sleepForTimeInterval: 1];
+            [self renameVolumeTo: newName];
         }
     }
     
     [[NSWorkspace sharedWorkspace] unmountAndEjectDeviceAtPath: [[writeVolumePath stringByDeletingLastPathComponent] stringByAppendingPathComponent: newName]];
     
     NSLog( @"Ejecting new DICOM Volume: %@", newName);
+    
+    return YES;
+}
+
+// diskutil used to be waited for by polling -isRunning with no deadline, three
+// times over, on the thread doing the burn.
+- (void) renameVolumeTo: (NSString*) name
+{
+    NSTask *rename = [[[NSTask alloc] init] autorelease];
+    rename.launchPath = @"/usr/sbin/diskutil";
+    rename.arguments = [NSArray arrayWithObjects: @"rename", writeVolumePath, name, nil];
+    
+    NSError *taskError = nil;
+    if( HorosRunTaskUntilExit( rename, 120, &taskError) == NO)
+        NSLog( @"****** renaming the volume did not finish: %@", taskError.localizedDescription);
+    
+    [NSThread sleepForTimeInterval: 1];
 }
 
 - (void)burnCD:(id)object
@@ -878,12 +947,10 @@
 		[duTool setLaunchPath:@"/usr/bin/du"];
 		[duTool setStandardOutput:fromDu];
 		[duTool setArguments:args];
-		[duTool launch];
 		
-        while( [duTool isRunning])
-            [NSThread sleepForTimeInterval: 0.1];
-        
-        //[duTool waitUntilExit];		// <- This is VERY DANGEROUS : the main runloop is continuing...
+		NSError *taskError = nil;
+		if( HorosRunTaskUntilExit( duTool, 300, &taskError) == NO)
+			NSLog( @"****** du failed for %@: %@", path, taskError.localizedDescription);
 		
 		duOutput = [[fromPipe fileHandleForReading] availableData];
 		[duOutput getBytes:aBuffer];

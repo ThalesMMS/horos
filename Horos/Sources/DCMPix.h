@@ -127,6 +127,7 @@ extern "C"
     NSString            *repetitiontime, *echotime, *flipAngle;
     
     NSString			*laterality, *viewPosition, *patientPosition, *acquisitionDate, *SOPClassUID, *frameofReferenceUID, *rescaleType;
+    NSString			*missingPixelsReason;
     BOOL				hasSUV, SUVConverted, displaySUVValue;
     NSString			*units, *decayCorrection;
     float				decayFactor, factorPET2SUV, radionuclideTotalDose, radionuclideTotalDoseCorrected;
@@ -223,6 +224,8 @@ extern "C"
     int					savedHeightInDB, savedWidthInDB;
     
     id					retainedCacheGroup;
+    NSString			*cachedFileKey;		/**< key under which retainedCacheGroup was stored: path plus file revision (#603) */
+    id					loadedFileRevision;	/**< HorosFileRevision of srcFile when fImage was decoded from it (#603) */
     
     // Ophtalmic fundus images
     
@@ -245,6 +248,12 @@ extern "C"
 /** Is it an RGB image (ARGB) or float image?
  Note setter is different to not break existing usage. :-( */
 @property(nonatomic, setter=setRGB:) BOOL isRGB;
+/// MONOCHROME1 presentation polarity, independent of calibrated fImage values.
+@property(nonatomic) BOOL displayInverted;
+// Database/workspace WL stays in the historical sign domain; pixels and live
+// WL use calibrated values. These adapters are their only boundary.
+- (float) storedWindowLevelForCalibratedLevel:(float) level;
+- (float) calibratedWindowLevelForStoredLevel:(float) level;
 
 /** Pointer to image data */
 @property(setter=setfImage:) float* fImage;
@@ -331,6 +340,9 @@ extern "C"
 @property float patientsWeight, halflife, radionuclideTotalDose, radionuclideTotalDoseCorrected;
 @property(retain) NSCalendarDate *acquisitionTime;
 @property(copy) NSString *acquisitionDate, *rescaleType;
+// Why this frame has no picture in it, in one sentence, or nil when it has
+// one. An empty frame used to be indistinguishable from a dark one.
+@property(copy) NSString *missingPixelsReason;
 @property(retain) NSCalendarDate *radiopharmaceuticalStartTime;
 @property BOOL SUVConverted, needToCompute8bitRepresentation;
 
@@ -657,11 +669,45 @@ extern "C"
 /** Calls CheckLoadIn when needed */
 - (void) CheckLoad;
 - (BOOL) isLoaded;
+/** The cache key for the parsed source file: its path and its file revision, so a
+    replaced or reused path never serves the previous file (#603). Falls back to the path. */
+- (NSString*) parsedFileCacheKey;
+/** HorosFileRevision of the source file at the time fImage was decoded, or nil. */
+- (id) loadedFileRevision;
+/** NO when the source file changed on disk (rewritten, replaced or removed) since fImage was decoded. */
+- (BOOL) loadedFileMatchesDisk;
+
+/** How many frames this process has actually decoded, over every DCMPix.
+    Instrumentation only: it counts the body of CheckLoadIn that reads pixels,
+    so a caller can prove that showing a frame and computing its window share
+    one decode (#608). */
++ (unsigned long long) decodedFrameCount;
++ (void) resetDecodedFrameCount;
+
+/** Window Center/Width as the file stores them, or nil when it stores none
+    that is usable. Never computed and never guessed (#608). */
+- (id) dicomPreviewWindow;
+/** The window this frame's own intensities suggest: sampled, with the
+    background the corners agree on and the extreme percentiles excluded.
+    Reads the decoded buffer; writes nothing, so measurements are unchanged.
+    Returns nil when the frame has too few usable samples to guess from. */
+- (id) automaticPreviewWindow;
+/** The range this frame's own values actually occupy, from its minimum and
+    maximum. Used when the sampled calculation has too few usable samples to
+    guess from - a uniform or nearly uniform frame - and before the stored bit
+    range, which describes what the file could contain rather than what it does. */
+- (id) frameRangePreviewWindow;
+/** The range the stored bits can represent, after rescale: the last resort. */
+- (id) storedRangePreviewWindow;
+/** YES for a frame with colour samples, which has no scalar intensity to window. */
+- (BOOL) isColorPreviewFrame;
 
 -(void) CheckLoadFromThread:(NSThread*) loadingThread;
 
 /** Compute the float pointer for the image data */
 - (float*) computefImage;
+/** The same pixels without the presentation convolution: what a measurement reads. */
+- (float*) computefImageForMeasurement;
 
 /** Sets fusion paramaters
  * @param m  stack mode
@@ -687,7 +733,7 @@ extern "C"
 - (void) setFixed8bitsWLWW:(BOOL) f;
 
 /** Creates a DCMPix with the original values and places it in the restore cache*/
-- (void) prepareRestore;
+- (BOOL) prepareRestore;
 
 
 /** Releases the restored DCMPix from the restoreCache */

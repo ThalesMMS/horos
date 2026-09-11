@@ -214,6 +214,8 @@ typedef enum {SyncSeriesBehaviorAbsolutePosWithSameStudy, SyncSeriesBehaviorRela
 
 - (ViewerController *)viewerController;
 - (void)setCurrentTool:(ToolMode)currentTool;
+- (BOOL)publishPatientCrosshair;
+- (IBAction)togglePatientCrosshair:(id)sender;
 
 - (void)bringToFrontROI:(ROI*)roi;
 - (void)setMode:(long)mode toROIGroupWithID:(NSTimeInterval)groupID;

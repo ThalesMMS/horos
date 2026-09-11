@@ -3,7 +3,7 @@
  
  Horos is free software: you can redistribute it and/or modify
  it under the terms of the GNU Lesser General Public License as published by
- the Free Software Foundation, Êversion 3 of the License.
+ the Free Software Foundation, version 3 of the License.
  
  The Horos Project was based originally upon the OsiriX Project which at the time of
  the code fork was licensed as a LGPL project.  However, not all of the the source-code
@@ -15,28 +15,32 @@
  
  Horos is distributed in the hope that it will be useful, but
  WITHOUT ANY WARRANTY EXPRESS OR IMPLIED, INCLUDING ANY WARRANTY OF
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE OR USE. ÊSee the
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE OR USE. See the
  GNU Lesser General Public License for more details.
  
  You should have received a copy of the GNU Lesser General Public License
- along with Horos. ÊIf not, see http://www.gnu.org/licenses/lgpl.html
+ along with Horos. If not, see http://www.gnu.org/licenses/lgpl.html
  
  Prior versions of this file were published by the OsiriX team pursuant to
  the below notice and licensing protocol.
  ============================================================================
- Program: Ê OsiriX
- ÊCopyright (c) OsiriX Team
- ÊAll rights reserved.
- ÊDistributed under GNU - LGPL
- Ê
- ÊSee http://www.osirix-viewer.com/copyright.html for details.
- Ê Ê This software is distributed WITHOUT ANY WARRANTY; without even
- Ê Ê the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- Ê Ê PURPOSE.
+ Program:  OsiriX
+ Copyright (c) OsiriX Team
+ All rights reserved.
+ Distributed under GNU - LGPL
+ 
+ See http://www.osirix-viewer.com/copyright.html for details.
+   This software is distributed WITHOUT ANY WARRANTY; without even
+   the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+   PURPOSE.
  ============================================================================*/
 
 
 #import "PluginManager.h"
+#import "HorosPluginCatalogTransport.h"
+#import "HorosPluginLoadDiagnostics.h"
+#import "HorosPluginSignature.h"
+#import "HorosPluginInstall.h"
 #import "AppController.h"
 #import "BrowserController.h"
 #import "BLAuthentication.h"
@@ -44,6 +48,7 @@
 #import "Notifications.h"
 #import "NSFileManager+N2.h"
 #import "NSString+SymlinksAndAliases.h"
+#import "Horos-Swift.h"
 #import "NSMutableDictionary+N2.h"
 #import "PreferencesWindowController.h"
 #import "N2Debug.h"
@@ -87,65 +92,39 @@ BOOL gPluginsAlertAlreadyDisplayed = NO;
         }
     }
     
-    NSLog( @"***** unknown plugin - startProtectForCrashWithFilter - %@", NSStringFromClass( [filter principalClass]));
+    // principalClass belongs to NSBundle, and this argument is the filter the
+    // loop above compares by -class. Asking the filter for it raised
+    // NSInvalidArgumentException out of applicationWillFinishLaunching:, which
+    // silently skipped DCMTK, the store SCP, the database and browser classes,
+    // the Web Portal, the Bonjour publisher and the XML-RPC interface.
+    NSLog( @"***** unknown plugin - startProtectForCrashWithFilter - %@", NSStringFromClass( [filter class]));
+}
+
++ (NSString*) crashMarkerPath
+{
+    // Beside the plugins themselves, not in /tmp: that one is writable by
+    // everybody on the machine and shared by every Horos and OsiriX on it.
+    NSString *directory = [[PluginManager userActivePluginsDirectoryPath] stringByDeletingLastPathComponent];
+    return [HorosPluginQuarantine markerPathInDirectory: directory
+                                              forBundle: [[NSBundle mainBundle] bundleIdentifier]];
 }
 
 + (void) startProtectForCrashWithPath: (NSString*) path
 {
-    // Match with AppController, ILCrashReporter
-    [path writeToFile: @"/tmp/PluginCrashed" atomically: YES encoding: NSUTF8StringEncoding error: nil];
+    NSString *marker = [PluginManager crashMarkerPath];
+    [[NSFileManager defaultManager] createDirectoryAtPath: [marker stringByDeletingLastPathComponent]
+                              withIntermediateDirectories: YES attributes: nil error: NULL];
+    [path writeToFile: marker atomically: YES encoding: NSUTF8StringEncoding error: nil];
 }
 
 + (void) endProtectForCrash
 {
-    // Match with AppController, ILCrashReporter
-    [[NSFileManager defaultManager] removeItemAtPath: @"/tmp/PluginCrashed" error: nil];
+    [[NSFileManager defaultManager] removeItemAtPath: [PluginManager crashMarkerPath] error: nil];
 }
 
-+ (int) compareVersion: (NSString *) v1 withVersion: (NSString *) v2
++ (int) compareVersion:(NSString*)v1 withVersion:(NSString*)v2
 {
-	@try
-	{
-		NSArray *v1Tokens = [v1 componentsSeparatedByString: @"."];
-		NSArray *v2Tokens = [v2 componentsSeparatedByString: @"."];
-		int maxLen;
-		
-		if ( [v1Tokens count] > [v2Tokens count])
-			maxLen = [v1Tokens count];
-		else
-			maxLen = [v2Tokens count];
-		
-		for (int i = 0; i < maxLen; i++)
-		{
-			int n1, n2;
-			
-			n1 = n2 = 0;
-			
-			if (i < [v1Tokens count])
-				n1 = [[v1Tokens objectAtIndex: i] intValue];
-			
-			if (n1 <= 0)
-				[NSException raise: @"compareVersion raised" format: @"compareVersion raised"];
-			
-			if (i < [v2Tokens count])
-				n2 = [[v2Tokens objectAtIndex: i] intValue];
-			
-			if (n2 <= 0)
-				[NSException raise: @"compareVersion raised" format: @"compareVersion raised"];
-			
-			if (n1 > n2)
-				return 1;
-			else if (n1 < n2)
-				return -1;
-		}
-		
-		return 0;
-	}
-	@catch (NSException *e)
-	{
-		return -1;
-	}
-	return -1;
+    return (int)HorosComparePluginVersions(v1, v2);
 }
 
 + (BOOL) isComPACS
@@ -282,7 +261,11 @@ BOOL gPluginsAlertAlreadyDisplayed = NO;
 					[subMenu insertItem:item atIndex:[subMenu numberOfItems]];
 				}
 				
-				id  subMenuItem;
+				// Only assigned when the item is new. When the menu already carries
+				// this plugin name the setRepresentedObject: below still runs, and
+				// without this it wrote through an uninitialised pointer; nil makes
+				// that path the no-op that leaving the existing item alone implies.
+				id  subMenuItem = nil;
 				
 				if( [pluginType rangeOfString: @"imageFilter"].location != NSNotFound)
 				{
@@ -446,6 +429,13 @@ BOOL gPluginsAlertAlreadyDisplayed = NO;
         
         [PluginManager endProtectForCrash];
 	}
+
+    NSMutableArray *shortcutMenus = [NSMutableArray arrayWithObjects: filtersMenu, roisMenu, othersMenu, dbMenu, nil];
+    if (fusionPluginsMenu)
+        [shortcutMenus addObject: fusionPluginsMenu];
+    if ([NSApp mainMenu])
+        [shortcutMenus addObject: [NSApp mainMenu]];
+    [HorosMenuShortcutCatalog applyStoredAssignmentsToMenus: shortcutMenus];
 }
 
 
@@ -567,13 +557,22 @@ BOOL gPluginsAlertAlreadyDisplayed = NO;
 
 + (BOOL) isPluginBundleSignatureValid:(NSString*) path
 {
-    return YES;
+    NSError *error = nil;
+    BOOL allowed = HorosPluginSignatureAllowsLoading(path, &error);
+    if (!allowed) {
+        NSString *reason = [NSString stringWithFormat:NSLocalizedString(@"The plugin signature is invalid: %@. Reinstall an intact copy from its author.", nil), error.localizedDescription];
+        HorosRecordPluginLoad([path stringByResolvingAlias], NSLocalizedString(@"Blocked", nil), reason);
+        NSLog(@"Plugin signature validation failed (%@ %ld): %@", error.domain, (long)error.code, reason);
+    }
+    return allowed;
 }
 
 
 + (void) loadPluginBundle:(NSString*) path
 {
-    if ([PluginManager isPluginBundleSignatureValid:path] && [DCMPix isRunOsiriXInProtectedModeActivated] == NO)
+    NSString *diagnosticPath = [path stringByResolvingAlias];
+    HorosRecordPluginLoad(diagnosticPath, NSLocalizedString(@"Blocked", nil), NSLocalizedString(@"Loading is disabled by protected mode or the plugin signature policy. Check protected mode and obtain a compatible plugin from its author.", nil));
+    if ([DCMPix isRunOsiriXInProtectedModeActivated] == NO && [PluginManager isPluginBundleSignatureValid:path])
     {
         NSString *name = [path lastPathComponent];
         
@@ -588,26 +587,46 @@ BOOL gPluginsAlertAlreadyDisplayed = NO;
             NSString *pathResolved = [[path stringByAppendingPathComponent:name] stringByResolvingAlias];
             
             [PluginManager startProtectForCrashWithPath: pathResolved];
-            
-            
-            
-            NSBundle *plugin = [NSBundle bundleWithPath: pathResolved];
-            
-            if( plugin == nil)
-                NSLog( @"**** Bundle opening failed for plugin: %@", [path stringByAppendingPathComponent:name]);
+
+            NSString *archReason = [HorosArchitectureAudit pluginDiagnosisAtPath:pathResolved];
+            if (archReason.length) {
+                HorosRecordPluginLoad(diagnosticPath, NSLocalizedString(@"Incompatible", nil), archReason);
+                NSLog(@"%@", archReason);
+            }
             else
             {
-                if (![plugin load])
+            NSBundle *plugin = [NSBundle bundleWithPath: pathResolved];
+            
+            if( plugin == nil) {
+                NSString *t2Reason = [T2FitMapCompatibility diagnosticForBundleAtPath:pathResolved loadErrorDomain:nil loadErrorCode:0];
+                NSString *roiReason = [ROIEnhancementCompatibility diagnosticForBundleAtPath:pathResolved loadErrorDomain:nil loadErrorCode:0];
+                NSString *specific = t2Reason.length ? t2Reason : roiReason;
+                HorosRecordPluginLoad(diagnosticPath, NSLocalizedString(@"Incompatible", nil), specific.length ? specific : NSLocalizedString(@"The plugin bundle could not be opened. Reinstall a complete compatible copy from its author.", nil));
+                NSLog( @"**** Bundle opening failed for plugin: %@", [path stringByAppendingPathComponent:name]);
+            }
+            else
+            {
+                NSString *principalName = [[[plugin.infoDictionary objectForKey:@"NSPrincipalClass"] copy] autorelease];
+                NSError *loadError = nil;
+                if (![plugin loadAndReturnError:&loadError])
                 {
-                    NSLog( @"******* Bundle code loading failed for plugin %@", [path stringByAppendingPathComponent:name]);
+                    NSString *reason = [NSString stringWithFormat:NSLocalizedString(@"%@ Obtain a plugin compatible with this Mac and Horos from its author.", nil), loadError.localizedDescription ?: NSLocalizedString(@"The bundle loader refused the plugin.", nil)];
+                    NSString *t2Reason = [T2FitMapCompatibility diagnosticForBundleAtPath:pathResolved loadErrorDomain:loadError.domain loadErrorCode:loadError.code];
+                    NSString *roiReason = [ROIEnhancementCompatibility diagnosticForBundleAtPath:pathResolved loadErrorDomain:loadError.domain loadErrorCode:loadError.code];
+                    if (t2Reason.length)
+                        reason = t2Reason;
+                    else if (roiReason.length)
+                        reason = roiReason;
+                    NSString *state = [loadError.domain isEqualToString:NSCocoaErrorDomain] && loadError.code == NSExecutableArchitectureMismatchError ? NSLocalizedString(@"Incompatible", nil) : NSLocalizedString(@"Load failed", nil);
+                    HorosRecordPluginLoad(diagnosticPath, state, reason);
+                    NSLog( @"Plugin load failed: %@ (%@ %ld)", reason, loadError.domain, (long)loadError.code);
                 }
                 else
                 {
-                    Class filterClass = [plugin principalClass];
+                    Class filterClass = principalName.length ? [plugin classNamed:principalName] : [plugin principalClass];
                     
                     if( filterClass)
                     {
-                        [pluginsBundleDictionnary setObject: plugin forKey: pathResolved];
                         
                         NSString *version = [[plugin infoDictionary] valueForKey: (NSString*) kCFBundleVersionKey];
                         
@@ -616,10 +635,12 @@ BOOL gPluginsAlertAlreadyDisplayed = NO;
                             version = [[plugin infoDictionary] valueForKey: @"CFBundleShortVersionString"];
                         }
                         
-                        NSLog( @"Loaded: %@, vers: %@ (%@)", [name stringByDeletingPathExtension], version, path);
+                        NSLog( @"Registering: %@, vers: %@ (%@)", [name stringByDeletingPathExtension], version, path);
                         
                         if( filterClass == NSClassFromString( @"ARGS"))
                         {
+                            [pluginsBundleDictionnary setObject: plugin forKey: pathResolved];
+                            HorosRecordPluginLoad(diagnosticPath, NSLocalizedString(@"Loaded", nil), NSLocalizedString(@"The bundle and its principal class loaded in this session.", nil));
                             return;
                         }
                         
@@ -668,21 +689,29 @@ BOOL gPluginsAlertAlreadyDisplayed = NO;
                         {
                             [reportPlugins setObject: plugin forKey:[[plugin infoDictionary] objectForKey:@"CFBundleExecutable"]];
                         }
+                        [pluginsBundleDictionnary setObject: plugin forKey: pathResolved];
+                        HorosRecordPluginLoad(diagnosticPath, NSLocalizedString(@"Loaded", nil), NSLocalizedString(@"The bundle and its principal class loaded and registration completed in this session.", nil));
                     }
                     else
                     {
+                        HorosRecordPluginLoad(diagnosticPath, NSLocalizedString(@"Incompatible", nil), NSLocalizedString(@"The principal class is missing. Obtain a corrected plugin from its author.", nil));
                         NSLog( @"********* principal class not found for: %@ - %@", name, [plugin principalClass]);
                     }
                 }
             }
+            }
             
             
             
-            [PluginManager endProtectForCrash];
         }
         @catch( NSException *e)
         {
+            HorosRecordPluginLoad(diagnosticPath, NSLocalizedString(@"Load failed", nil), [NSString stringWithFormat:NSLocalizedString(@"Plugin initialization failed: %@. Obtain an updated plugin from its author.", nil), e.reason ?: e.name]);
             NSLog( @"******** Plugin loading exception: %@", e);
+        }
+        @finally
+        {
+            [PluginManager endProtectForCrash];
         }
     }
 }
@@ -707,6 +736,7 @@ BOOL gPluginsAlertAlreadyDisplayed = NO;
     
     if ([pluginsNames valueForKey: [[name lastPathComponent] stringByDeletingPathExtension]])
     {
+        HorosRecordPluginLoad([path stringByResolvingAlias], NSLocalizedString(@"Blocked", nil), NSLocalizedString(@"Another plugin with this name was selected for loading. Remove the duplicate through Plugin Manager and restart Horos.", nil));
         NSLog( @"***** Multiple plugins: %@", [name lastPathComponent]);
         
         NSString *message = NSLocalizedString(@"Warning! Multiple instances of the same plugin have been found. Only one instance will be loaded. Check the Plugin Manager (Plugins menu) for multiple identical plugins.", nil);
@@ -732,97 +762,70 @@ BOOL gPluginsAlertAlreadyDisplayed = NO;
     {
         //[PluginManager loadUnknownPluginAtPath:path];
     }
+
+    NSDictionary *outcome = HorosPluginLoadOutcome([path stringByResolvingAlias], YES);
+    if ([outcome[@"loadState"] isEqualToString:NSLocalizedString(@"Loaded", nil)])
+        [HorosPluginUpdateRecovery discardPreviousForDestination:path];
 }
 
 
 + (void) deployHorosCloudPluginAtPath:(NSString*) path deployedPlugins:(NSMutableArray*) deployedPlugins
 {
-    BOOL foundHorosCloud = NO;
-    
     if ([[NSFileManager defaultManager] fileExistsAtPath:path] == NO)
-    {
         [[NSFileManager defaultManager] createDirectoryAtPath:path withIntermediateDirectories:YES attributes:nil error:nil];
+
+    BOOL activeContainsCloud = NO;
+    for (NSString *candidate in deployedPlugins)
+    {
+        NSString *name = [[[NSBundle bundleWithPath:candidate] infoDictionary] objectForKey:@"CFBundleName"];
+        if (!name.length)
+            name = [candidate lastPathComponent];
+        if ([HorosPluginUpdateRecovery isCloudPluginName:name])
+        {
+            activeContainsCloud = YES;
+            break;
+        }
+    }
+    BOOL inactiveContainsCloud = NO;
+    for (NSString *directory in [PluginManager inactiveDirectories])
+    {
+        for (NSString *entry in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:directory error:NULL])
+        {
+            if ([HorosPluginUpdateRecovery isCloudPluginName:entry])
+            {
+                inactiveContainsCloud = YES;
+                break;
+            }
+        }
+    }
+    BOOL alreadyDeployed = [[NSUserDefaults standardUserDefaults] boolForKey:@"HOROSCLOUD_PLUGIN_DEPLOYED"];
+    if (activeContainsCloud || inactiveContainsCloud)
+        [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"HOROSCLOUD_PLUGIN_DEPLOYED"];
+    if (![HorosPluginUpdateRecovery shouldDeployBundledCloudWithAlreadyDeployed:alreadyDeployed
+                                                           activeContainsCloud:activeContainsCloud
+                                                         inactiveContainsCloud:inactiveContainsCloud])
+        return;
+
+    NSString *archive = [[NSBundle mainBundle] pathForResource:@"HorosCloud.horosplugin" ofType:@"zip"];
+    NSError *error = nil;
+    NSString *prepared = [HorosPluginUpdateRecovery prepareBundledCloudFromArchive:archive
+                                                                              into:path
+                                                                   alreadyDeployed:alreadyDeployed
+                                                               activeContainsCloud:activeContainsCloud
+                                                             inactiveContainsCloud:inactiveContainsCloud
+                                                                             error:&error];
+    if (!prepared.length)
+        return;
+
+    NSString *destination = [path stringByAppendingPathComponent:@"HorosCloud.horosplugin"];
+    if (HorosInstallPlugin(prepared, destination, &error))
+    {
+        [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"HOROSCLOUD_PLUGIN_DEPLOYED"];
+        [deployedPlugins addObject:destination];
     }
     else
-    {
-        NSNumber* flag = [[NSUserDefaults standardUserDefaults] objectForKey:@"HOROSCLOUD_PLUGIN_DEPLOYED"];
-        if (flag == nil || [flag integerValue] == 0)
-        {
-            for (NSInteger i = deployedPlugins.count-1; i >= 0; --i)
-            {
-                NSBundle* bundle = [NSBundle bundleWithPath:[deployedPlugins objectAtIndex:i]];
-                NSString* name = [bundle.infoDictionary objectForKey:@"CFBundleName"];
-                if (!name)
-                {
-                    name = [[[deployedPlugins objectAtIndex:i] lastPathComponent] stringByDeletingPathExtension];
-                }
-                
-                if( [name caseInsensitiveCompare:@"HorosCloud"] == NSOrderedSame ) {
-                    foundHorosCloud = YES;
-                    break;
-                }
-            }
-        }
-        else
-        {
-            foundHorosCloud = YES;
-        }
-    }
-    
-    if (!foundHorosCloud)
-    {
-        NSString* srcPath = [[NSBundle mainBundle] pathForResource:@"HorosCloud.horosplugin" ofType:@"zip"];
-        if ([[NSFileManager defaultManager] fileExistsAtPath:srcPath])
-        {
-            NSString* dstPath = [NSString stringWithFormat:@"%@/HorosCloud.horosplugin.zip",path];
-            
-            [[NSFileManager defaultManager] removeItemAtPath:dstPath error:nil];
-
-            if (![[NSFileManager defaultManager] fileExistsAtPath:dstPath])
-            {
-                [[NSFileManager defaultManager] copyItemAtPath:srcPath toPath:dstPath error:nil];
-                
-                if ([[NSFileManager defaultManager] fileExistsAtPath:dstPath])
-                {
-                    //Unzip plugin
-                    @try
-                    {
-                        NSTask *aTask = [[NSTask alloc] init];
-                        NSMutableArray *args = [NSMutableArray array];
-                        
-                        [args addObject:@"-o"];
-                        [args addObject:dstPath];
-                        [args addObject:@"-d"];
-                        [args addObject:[dstPath stringByDeletingLastPathComponent]];
-                        [aTask setLaunchPath:@"/usr/bin/unzip"];
-                        [aTask setArguments:args];
-                        [aTask launch];
-                        while( [aTask isRunning])
-                            [NSThread sleepForTimeInterval: 0.1];
-                        
-                        //[aTask waitUntilExit]; // <- This is VERY DANGEROUS : the main runloop is continuing...
-                        [aTask release];
-                    }
-                    @catch (NSException *e)
-                    {
-                        NSLog( @"***** exception in %s: %@", __PRETTY_FUNCTION__, e);
-                    }
-                    
-                    
-                    //Clean
-                    [[NSFileManager defaultManager] removeItemAtPath:dstPath error:nil];
-                    
-                    
-                    //Add to list of deployedPlugins
-                    NSString* pluginPath = [NSString stringWithFormat:@"%@/HorosCloud.horosplugin",path];
-                    if ([[NSFileManager defaultManager] fileExistsAtPath:pluginPath])
-                    {
-                        [deployedPlugins addObject:pluginPath];
-                    }
-                }
-            }
-        }
-    }
+        NSLog(@"**** Bundled Horos Cloud could not be published: %@", error);
+    [[NSFileManager defaultManager] removeItemAtPath:[prepared stringByDeletingLastPathComponent] error:NULL];
 }
 
 
@@ -874,22 +877,35 @@ BOOL gPluginsAlertAlreadyDisplayed = NO;
 		NSLog( @"|||||||||||||||||| Plugins loading START ||||||||||||||||||");
         #ifndef OSIRIX_LIGHT
 		
-        NSString *pluginCrash = [[[NSFileManager defaultManager] userApplicationSupportFolderForApp] stringByAppendingPathComponent:@"Plugin_Loading"];
+        NSString *pluginCrash = [PluginManager crashMarkerPath];
         if ([[NSFileManager defaultManager] fileExistsAtPath: pluginCrash] && ![[NSUserDefaults standardUserDefaults] boolForKey:@"DoNotDeleteCrashingPlugins"])
         {
             NSString *pluginCrashPath = [NSString stringWithContentsOfFile: pluginCrash encoding: NSUTF8StringEncoding error: nil];
-            
-            int result = NSRunInformationalAlertPanel(NSLocalizedString(@"Horos crashed", nil), NSLocalizedString(@"Previous crash is maybe related to a plugin.\r\rShould I remove this plugin (%@)?", nil), NSLocalizedString(@"Delete Plugin",nil), NSLocalizedString(@"Continue",nil), nil, [pluginCrashPath lastPathComponent]);
-            
-            if( result == NSAlertDefaultReturn) // Delete Plugin
+            if ([HorosPluginUpdateRecovery shouldEnterPluginLessModeWithMarkerExists: YES])
+                [DCMPix setRunOsiriXInProtectedMode: YES];
+            [HorosPluginUpdateRecovery adoptLeftoverStagingInDirectory: [pluginCrashPath stringByDeletingLastPathComponent]];
+            NSString *inactivePath = [HorosPluginQuarantine inactivePathForPluginAt: pluginCrashPath
+                                                                            active: [PluginManager activeDirectories]
+                                                                          inactive: [PluginManager inactiveDirectories]];
+            BOOL canRestore = [[NSFileManager defaultManager] fileExistsAtPath: [HorosPluginUpdateRecovery previousPathForDestination: pluginCrashPath]];
+            NSString *explanation = [HorosPluginUpdateRecovery explanationWithPluginNamed: [pluginCrashPath lastPathComponent]
+                                                                               canRestore: canRestore
+                                                                               canDisable: inactivePath != nil];
+            NSString *defaultButton = canRestore ? NSLocalizedString(@"Restore Previous", nil) : (inactivePath ? NSLocalizedString(@"Disable Plugin", nil) : NSLocalizedString(@"OK", nil));
+            NSString *alternateButton = canRestore ? (inactivePath ? NSLocalizedString(@"Disable Plugin", nil) : NSLocalizedString(@"Continue", nil)) : (inactivePath ? NSLocalizedString(@"Continue", nil) : nil);
+            NSString *otherButton = canRestore && inactivePath ? NSLocalizedString(@"Continue", nil) : nil;
+            int result = NSRunInformationalAlertPanel(NSLocalizedString(@"Horos crashed", nil), @"%@",
+                                                      defaultButton, alternateButton, otherButton, explanation);
+            if (canRestore && result == NSAlertDefaultReturn)
+                [HorosPluginUpdateRecovery restorePreviousForDestination: pluginCrashPath];
+            else if (inactivePath && ((canRestore && result == NSAlertAlternateReturn) || (!canRestore && result == NSAlertDefaultReturn)))
             {
-                NSError *error = nil;
-                [[NSFileManager defaultManager] removeItemAtPath: pluginCrashPath error: &error];
-                
-                if( error)
-                    NSLog( @"**** Cannot Delete File : Crashing Plugin Delete Error: %@", error);
+                [PluginManager movePluginFromPath: pluginCrashPath toPath: inactivePath];
+                if( [[NSFileManager defaultManager] fileExistsAtPath: inactivePath])
+                    NSLog( @"Plugin disabled after a crash: %@ -> %@", pluginCrashPath, inactivePath);
+                else
+                    NSLog( @"**** Could not disable the plugin that was loading: %@", pluginCrashPath);
             }
-            
             [[NSFileManager defaultManager] removeItemAtPath: pluginCrash error: nil];
         }
         
@@ -980,6 +996,8 @@ BOOL gPluginsAlertAlreadyDisplayed = NO;
             
 		#endif
 		
+        [T2FitMapFilter registerIn:plugins];
+        [ROIEnhancementFilter registerIn:plugins];
         NSLog( @"|||||||||||||||||| Plugins loading END ||||||||||||||||||");
 	}
 	@catch (NSException * e)
@@ -1123,15 +1141,14 @@ BOOL gPluginsAlertAlreadyDisplayed = NO;
 
 	[[BLAuthentication sharedInstance] executeCommand:@"/bin/mv" withArgs:args];
     
-    if( [[NSFileManager defaultManager] fileExistsAtPath: destinationPath] == NO)
+    // A copy is not a successful move: it can leave a disabled plugin active.
+    // The authorization helper does not reliably report the child exit status.
+    if( [[NSFileManager defaultManager] fileExistsAtPath: sourcePath] ||
+        [[NSFileManager defaultManager] fileExistsAtPath: destinationPath] == NO)
     {
-        NSMutableArray *args = [NSMutableArray array];
-        [args addObject:@"-f"];
-        [args addObject:@"-R"];
-        [args addObject:sourcePath];
-        [args addObject:destinationPath];
-        
-        [[BLAuthentication sharedInstance] executeCommand:@"/bin/cp" withArgs:args];
+        NSRunCriticalAlertPanel(NSLocalizedString(@"Plugin", nil),
+            NSLocalizedString(@"The plugin could not be moved. Its activation or location change was not completed. Check folder permissions and try again.", nil),
+            NSLocalizedString(@"OK", nil), nil, nil);
     }
 }
 
@@ -1290,6 +1307,27 @@ BOOL gPluginsAlertAlreadyDisplayed = NO;
 
 + (void) installPluginFromPath: (NSString*) path
 {
+    // Validate the candidate before touching an existing installation.
+    NSString *archReason = [HorosArchitectureAudit pluginDiagnosisAtPath:path];
+    if (archReason.length) {
+        NSRunCriticalAlertPanel(NSLocalizedString(@"Plugin", nil),
+            NSLocalizedString(@"The plugin cannot be installed. The existing installation was preserved. %@", nil),
+            NSLocalizedString(@"OK", nil), nil, nil,
+            archReason);
+        return;
+    }
+    NSBundle *candidate = [NSBundle bundleWithPath:path];
+    NSError *candidateError = nil;
+    if (!candidate || ![candidate preflightAndReturnError:&candidateError] ||
+        ![PluginManager isPluginBundleSignatureValid:path])
+    {
+        NSRunCriticalAlertPanel(NSLocalizedString(@"Plugin", nil),
+            NSLocalizedString(@"The plugin cannot be installed. The existing installation was preserved. %@", nil),
+            NSLocalizedString(@"OK", nil), nil, nil,
+            candidateError.localizedDescription ?: NSLocalizedString(@"Check the plugin bundle, architecture and signature.", nil));
+        return;
+    }
+
     // move the plugin package into the plugins (active) directory
     NSString *destinationDirectory = nil;
     NSString *destinationPath = nil;
@@ -1299,15 +1337,24 @@ BOOL gPluginsAlertAlreadyDisplayed = NO;
 	
     NSString *pluginBundleName = [[path lastPathComponent] stringByDeletingPathExtension];
     
+    NSUInteger matchingInstallations = 0;
     for(NSDictionary *plug in [PluginManager pluginsList])
     {
         if([pluginBundleName isEqualToString: [plug objectForKey:@"name"]])
         {
+            matchingInstallations++;
             [availabilities setObject: [plug objectForKey:@"availability"] forKey:path];
             [active setObject: [plug objectForKey:@"active"] forKey:path];
         }
     }
     
+    if (matchingInstallations > 1) {
+        NSRunCriticalAlertPanel(NSLocalizedString(@"Plugin", nil),
+            NSLocalizedString(@"Multiple installations of this plugin exist. Resolve the duplicates in Plugins Manager before updating. No installation was changed.", nil),
+            NSLocalizedString(@"OK", nil), nil, nil);
+        return;
+    }
+
     NSString *availability = [availabilities objectForKey: path];
     BOOL isActive = [[active objectForKey:path] boolValue];
     
@@ -1347,14 +1394,22 @@ BOOL gPluginsAlertAlreadyDisplayed = NO;
     
     destinationPath = [destinationDirectory stringByAppendingPathComponent: [path lastPathComponent]];
     
-    // delete the plugin if it already exists.
-    [PluginManager deletePluginWithName: [path lastPathComponent]];
-    
-    // move the new plugin to the plugin folder				
-    [PluginManager movePluginFromPath: path toPath: destinationPath];
-    
-//    // load the plugin - The User has to restart
-//    [PluginManager loadPluginAtPath: destinationPath];
+    // Keep the actual installed extension when updating a legacy OsiriX bundle.
+    for (NSString *extension in @[@"horosplugin", @"osirixplugin"]) {
+        NSString *existingPath = [destinationDirectory stringByAppendingPathComponent:
+            [pluginBundleName stringByAppendingPathExtension:extension]];
+        if ([[NSFileManager defaultManager] fileExistsAtPath:existingPath]) {
+            destinationPath = existingPath;
+            break;
+        }
+    }
+
+    NSError *installError = nil;
+    if (!HorosInstallPlugin(path, destinationPath, &installError))
+        NSRunCriticalAlertPanel(NSLocalizedString(@"Plugin", nil),
+            NSLocalizedString(@"The plugin update could not be completed. The existing installation was preserved. Check destination permissions and available space. %@", nil),
+            NSLocalizedString(@"OK", nil), nil, nil, installError.localizedDescription ?: @"");
+
 }
 
 
@@ -1514,6 +1569,7 @@ NSInteger sortPluginArray(id plugin1, id plugin2, void *context)
 				{					
 					NSMutableDictionary *pluginDescription = [NSMutableDictionary dictionaryWithCapacity:3];
 					[pluginDescription setObject:[name stringByDeletingPathExtension] forKey:@"name"];
+                    [pluginDescription addEntriesFromDictionary:HorosPluginLoadOutcome([[path stringByAppendingPathComponent:name] stringByResolvingAlias], active)];
 					[pluginDescription setObject:[NSNumber numberWithBool:active] forKey:@"active"];
 					[pluginDescription setObject:[NSNumber numberWithBool:allUsers] forKey:@"allUsers"];
 					[pluginDescription setObject:availability forKey:@"availability"];
@@ -1622,18 +1678,20 @@ NSInteger sortPluginArray(id plugin1, id plugin2, void *context)
     NSMutableArray *pluginsToUpdate = [NSMutableArray array];
     
     
-    NSURL *url = [NSURL URLWithString:HOROS_PLUGIN_LIST_URL];
-    
-    NSMutableArray *onlinePlugins = [NSMutableArray arrayWithContentsOfURL:url];
-    
-    if (url == nil || onlinePlugins == nil || [onlinePlugins count] <= 0)
-    {
-        url = [NSURL URLWithString:HOROS_PLUGIN_LIST_ALT_URL];
-        
-        onlinePlugins = [NSMutableArray arrayWithContentsOfURL:url];
+    NSArray *catalog = nil;
+    NSError *catalogError = nil;
+    NSArray *endpoints = [[NSOrderedSet orderedSetWithArray:@[HOROS_PLUGIN_LIST_URL, HOROS_PLUGIN_LIST_ALT_URL]] array];
+    for (NSString *endpoint in endpoints) {
+        catalog = HorosLoadPluginCatalog([NSURL URLWithString:endpoint], 10, &catalogError);
+        if (catalog) break; // A valid empty catalog is a successful response.
     }
-    
-    if (url && onlinePlugins && [onlinePlugins count] > 0)
+    if (!catalog) {
+        NSLog(@"Plugin update catalog unavailable (%@ %ld): %@", catalogError.domain, (long)catalogError.code, catalogError.localizedDescription);
+        return pluginsToUpdate;
+    }
+    NSMutableArray *onlinePlugins = [[catalog mutableCopy] autorelease];
+
+    if ([onlinePlugins count] > 0)
     {
         NSArray *installedPlugins = [PluginManager pluginsList];
         
@@ -1644,9 +1702,7 @@ NSInteger sortPluginArray(id plugin1, id plugin2, void *context)
             NSDictionary *onlinePlugin = nil;
             for (NSDictionary *plugin in onlinePlugins)
             {
-                NSString *name = [[[plugin valueForKey:@"download_url"] lastPathComponent] stringByReplacingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
-                name = [name stringByDeletingPathExtension]; // removes the .zip extension
-                name = [name stringByDeletingPathExtension]; // removes the .horosplugin
+                NSString *name = HorosPluginDownloadName(plugin);
                 
                 if([pluginName isEqualToString:name])
                 {
@@ -1660,7 +1716,7 @@ NSInteger sortPluginArray(id plugin1, id plugin2, void *context)
                 NSString *currVersion = [installedPlugin objectForKey:@"version"];
                 NSString *onlineVersion = [onlinePlugin objectForKey:@"version"];
                 
-                if(currVersion && onlineVersion && [currVersion length] > 0 && [currVersion length] > 0)
+                if (HorosPluginVersionIsValid(currVersion) && HorosPluginVersionIsValid(onlineVersion))
                 {
                     if( [currVersion isEqualToString:onlineVersion] == NO && [PluginManager compareVersion: currVersion withVersion: onlineVersion] < 0)
                     {
@@ -1684,18 +1740,20 @@ NSInteger sortPluginArray(id plugin1, id plugin2, void *context)
     NSMutableArray *pluginsToUpdate = [NSMutableArray array];
     
     
-    NSURL *url = [NSURL URLWithString:OSIRIX_PLUGIN_LIST_URL];
-    
-    NSMutableArray *onlinePlugins = [NSMutableArray arrayWithContentsOfURL:url];
-    
-    if (url == nil || onlinePlugins == nil || [onlinePlugins count] <= 0)
-    {
-        url = [NSURL URLWithString:OSIRIX_PLUGIN_LIST_ALT_URL];
-        
-        onlinePlugins = [NSMutableArray arrayWithContentsOfURL:url];
+    NSArray *catalog = nil;
+    NSError *catalogError = nil;
+    NSArray *endpoints = [[NSOrderedSet orderedSetWithArray:@[OSIRIX_PLUGIN_LIST_URL, OSIRIX_PLUGIN_LIST_ALT_URL]] array];
+    for (NSString *endpoint in endpoints) {
+        catalog = HorosLoadPluginCatalog([NSURL URLWithString:endpoint], 10, &catalogError);
+        if (catalog) break; // A valid empty catalog is a successful response.
     }
-    
-    if (url && onlinePlugins && [onlinePlugins count] > 0)
+    if (!catalog) {
+        NSLog(@"Plugin update catalog unavailable (%@ %ld): %@", catalogError.domain, (long)catalogError.code, catalogError.localizedDescription);
+        return pluginsToUpdate;
+    }
+    NSMutableArray *onlinePlugins = [[catalog mutableCopy] autorelease];
+
+    if ([onlinePlugins count] > 0)
     {
         NSArray *installedPlugins = [PluginManager pluginsList];
         
@@ -1706,9 +1764,7 @@ NSInteger sortPluginArray(id plugin1, id plugin2, void *context)
             NSDictionary *onlinePlugin = nil;
             for (NSDictionary *plugin in onlinePlugins)
             {
-                NSString *name = [[[plugin valueForKey:@"download_url"] lastPathComponent] stringByReplacingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
-                name = [name stringByDeletingPathExtension]; // removes the .zip extension
-                name = [name stringByDeletingPathExtension]; // removes the .osirixplugin extension
+                NSString *name = HorosPluginDownloadName(plugin);
                 
                 if([pluginName isEqualToString:name])
                 {
@@ -1722,7 +1778,7 @@ NSInteger sortPluginArray(id plugin1, id plugin2, void *context)
                 NSString *currVersion = [installedPlugin objectForKey:@"version"];
                 NSString *onlineVersion = [onlinePlugin objectForKey:@"version"];
                 
-                if(currVersion && onlineVersion && [currVersion length] > 0 && [currVersion length] > 0)
+                if (HorosPluginVersionIsValid(currVersion) && HorosPluginVersionIsValid(onlineVersion))
                 {
                     if( [currVersion isEqualToString:onlineVersion] == NO && [PluginManager compareVersion: currVersion withVersion: onlineVersion] < 0)
                     {

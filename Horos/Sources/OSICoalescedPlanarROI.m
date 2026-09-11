@@ -188,9 +188,16 @@
     }
 
 
-    glLineWidth(3.0);    
-
-    glColor4f(1, 0, 0, .4);
+    glLineWidth(3.0);
+    NSColor *drawColor = [self.fillColor colorUsingColorSpaceName:NSCalibratedRGBColorSpace];
+    if (drawColor == nil)
+        drawColor = [self.strokeColor colorUsingColorSpaceName:NSCalibratedRGBColorSpace];
+    if (drawColor == nil)
+        return;
+    glEnable(GL_BLEND);
+    glBlendEquation(GL_FUNC_ADD);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glColor4f((float)[drawColor redComponent], (float)[drawColor greenComponent], (float)[drawColor blueComponent], (float)[drawColor alphaComponent]);
     glBegin(GL_QUADS);
     runsCount = [maskRunsData length] / sizeof(OSIROIMaskRun);
     maskRunsBytes = [maskRunsData bytes];
@@ -207,6 +214,7 @@
         glVertex3d(widthIndex, heightIndex + 1.0, depthIndex);
     }
     glEnd();
+    glDisable(GL_BLEND);
 }
 
 

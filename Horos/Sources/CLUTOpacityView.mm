@@ -739,6 +739,12 @@
 	if( histogram == nil)
 		[self callComputeHistogram];
 	
+	// The editor lays its side bar, histogram and curves out over the whole
+	// view. Taking the area needing redraw instead placed them wrongly on a
+	// partial redraw, and since macOS 14 NSView no longer clips drawing to its
+	// bounds, painted outside the view on an oversized one.
+	rect = self.bounds;
+	
 	[backgroundColor set];
 	NSRectFill(rect);
 	

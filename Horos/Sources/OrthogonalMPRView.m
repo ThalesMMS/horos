@@ -37,6 +37,7 @@
 
 #import "OrthogonalMPRController.h"
 #import "OrthogonalMPRView.h"
+#import "Horos-Swift.h"
 #import "DCMPix.h"
 
 #import "OrthogonalMPRViewer.h"
@@ -445,7 +446,7 @@
     if( cgl_ctx == nil)
         return;
     
-	if (displayResliceAxes)
+	if (displayResliceAxes && [HorosPatientCrosshairController shared].isVisible)
 	{
 		glBlendFunc( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
 		glEnable(GL_BLEND);
@@ -1170,14 +1171,14 @@
 		{
 			//set value for Series Object Presentation State
 			[[self seriesObj] setValue:[NSNumber numberWithFloat:curWW] forKey:@"windowWidth"];
-			[[self seriesObj] setValue:[NSNumber numberWithFloat:curWL] forKey:@"windowLevel"];
+			[[self seriesObj] setValue:@([self.curDCM storedWindowLevelForCalibratedLevel:curWL]) forKey:@"windowLevel"];
 		}
 		else
 		{
 			if( [self is2DViewer] == YES)
 			{
 				[[self seriesObj] setValue:[NSNumber numberWithFloat:curWW / [[self windowController] factorPET2SUV]] forKey:@"windowWidth"];
-				[[self seriesObj] setValue:[NSNumber numberWithFloat:curWL / [[self windowController] factorPET2SUV]] forKey:@"windowLevel"];
+				[[self seriesObj] setValue:@([self.curDCM storedWindowLevelForCalibratedLevel:curWL / [[self windowController] factorPET2SUV]]) forKey:@"windowLevel"];
 			}
 		}
 	}

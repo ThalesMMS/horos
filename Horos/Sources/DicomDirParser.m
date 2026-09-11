@@ -37,6 +37,7 @@
 
 #import "N2Debug.h"
 #import "DicomDirParser.h"
+#import "HorosBoundedTask.h"
 
 static NSString *singeDcmDump = @"singeDcmDump";
 
@@ -283,7 +284,11 @@ static int validFilePathDepth = 0;
         
         [aTask setArguments:theArguments];
         
-        [aTask launch];
+        // The read loop below already has its own deadline; what it did not
+        // have was a launch that cannot raise.
+        NSError *taskError = nil;
+        if( HorosLaunchTask( aTask, &taskError) == NO)
+            NSLog( @"****** dcmdump failed for %@: %@", srcFile, taskError.localizedDescription);
         
         NSTimeInterval start = [NSDate timeIntervalSinceReferenceDate];
         

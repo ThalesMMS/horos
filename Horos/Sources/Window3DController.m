@@ -46,6 +46,7 @@
 #import "Notifications.h"
 #import "NSUserDefaultsController+OsiriX.h"
 #import "DicomDatabase.h"
+#import "Horos-Swift.h"
 
 @interface Window3DController (Dummy)
 
@@ -54,6 +55,19 @@
 @end
 
 @implementation Window3DController
+
+// Every 3D window - MPR, CPR, VR, SR, Endoscopy, Orthogonal MPR, PET-CT, ROI
+// volume - has its own full screen in fullScreenMenu:, which moves the content
+// view into a borderless window. A native full-screen Space is a different thing
+// under the same name, and the window cannot be in both. Declared here rather
+// than in windowDidLoad because MPR2DController and VRPROController override
+// that without calling super; setWindow: is what NSWindowController calls when
+// the nib's window arrives, for every subclass.
+- (void) setWindow: (NSWindow*) window
+{
+    [super setWindow: window];
+    [HorosFullScreenWindowSupport declineNativeFullScreen: window];
+}
 
 #ifndef OSIRIX_LIGHT
 - (void) mprViewer:(id) sender
@@ -338,16 +352,22 @@ static float oldsetww, oldsetwl;
 {
 	if( [sender tag] == 0)
 	{
-		[self setWLWW: [wlset floatValue] :[wwset floatValue]];
+		float level = [HorosWindowLevelText valueFromString: [wlset stringValue] fallback: 0];
+		float width = [HorosWindowLevelText widthFromString: [wwset stringValue] fallback: 1];
 		
-		[fromset setStringValue: [NSString stringWithFormat:@"%.3f", [wlset floatValue] - [wwset floatValue]/2]];
-		[toset setStringValue: [NSString stringWithFormat:@"%.3f", [wlset floatValue] + [wwset floatValue]/2]];
+		[self setWLWW: level : width];
+		
+		[fromset setStringValue: [HorosWindowLevelText stringForValue: level - width/2]];
+		[toset setStringValue: [HorosWindowLevelText stringForValue: level + width/2]];
 	}
 	else
 	{
-		[self setWLWW: [fromset floatValue] + ([toset floatValue] - [fromset floatValue])/2 :[toset floatValue] - [fromset floatValue]];
-		[wlset setStringValue: [NSString stringWithFormat:@"%.3f", [fromset floatValue] + ([toset floatValue] - [fromset floatValue])/2]];
-		[wwset setStringValue: [NSString stringWithFormat:@"%.3f", [toset floatValue] - [fromset floatValue]]];
+		float from = [HorosWindowLevelText valueFromString: [fromset stringValue] fallback: 0];
+		float to = [HorosWindowLevelText valueFromString: [toset stringValue] fallback: 0];
+		
+		[self setWLWW: from + (to - from)/2 : to - from];
+		[wlset setStringValue: [HorosWindowLevelText stringForValue: from + (to - from)/2]];
+		[wwset setStringValue: [HorosWindowLevelText stringForValue: to - from]];
 	}
 }
 
@@ -363,11 +383,11 @@ static float oldsetww, oldsetwl;
 	oldsetww = iww;
 	oldsetwl = iwl;
 	
-    [wlset setStringValue:[NSString stringWithFormat:@"%.3f", iwl ]];
-    [wwset setStringValue:[NSString stringWithFormat:@"%.3f", iww ]];
+    [wlset setStringValue: [HorosWindowLevelText stringForValue: iwl]];
+    [wwset setStringValue: [HorosWindowLevelText stringForValue: iww]];
 	
-	[fromset setStringValue:[NSString stringWithFormat:@"%.3f", [wlset floatValue] - [wwset floatValue]/2]];
-	[toset setStringValue:[NSString stringWithFormat:@"%.3f", [wlset floatValue] + [wwset floatValue]/2]];
+	[fromset setStringValue: [HorosWindowLevelText stringForValue: iwl - iww/2]];
+	[toset setStringValue: [HorosWindowLevelText stringForValue: iwl + iww/2]];
 	
     [NSApp beginSheet: setWLWWWindow modalForWindow:[self window] modalDelegate:self didEndSelector:nil contextInfo:nil];
 }
@@ -385,7 +405,8 @@ static float oldsetww, oldsetwl;
     
     if( [sender tag])   //User clicks OK Button
     {
-		[self setWLWW: [wlset floatValue] :[wwset floatValue] ];
+		[self setWLWW: [HorosWindowLevelText valueFromString: [wlset stringValue] fallback: oldsetwl]
+		             : [HorosWindowLevelText widthFromString: [wwset stringValue] fallback: oldsetww]];
     }
 	else
 	{
@@ -402,9 +423,8 @@ static float oldsetww, oldsetwl;
 	
     NSLog(@"endNameWLWW");
     
-    iwl = [wl floatValue];
-    iww = [ww floatValue];
-    if (iww == 0) iww = 1;
+    iwl = [HorosWindowLevelText valueFromString: [wl stringValue] fallback: 0];
+    iww = [HorosWindowLevelText widthFromString: [ww stringValue] fallback: 1];
 
     [addWLWWWindow orderOut: sender];
     

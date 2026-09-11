@@ -42,12 +42,14 @@
 /** \brief  Shares DB with Bonjour */
 
 @class N2ConnectionListener;
+@class HorosBonjourAdvertisement;
 
 @interface BonjourPublisher : NSObject <NSNetServiceDelegate>
 {
     N2ConnectionListener* _listener;
 	
     NSNetService* _bonjour;
+    HorosBonjourAdvertisement* _advertisement;
     
 	NSLock* dicomSendLock;
 }
@@ -66,6 +68,8 @@
 //- (void)netServiceDidStop:(NSNetService *)sender;
 
 - (NSNetService*)netService __deprecated;
+/** The native DNS-SD advertisement this publisher uses (#606); nil while sharing is off. */
+- (HorosBonjourAdvertisement*)advertisement;
 
 //- (void)setServiceName:(NSString *) newName;
 //- (NSString *) serviceName;

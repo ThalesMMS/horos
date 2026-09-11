@@ -35,6 +35,8 @@
  Ê Ê PURPOSE.
  ============================================================================*/
 
+#import "Horos-Swift.h"
+#import "PatientCrosshairBridge.h"
 #import "OrthogonalMPRViewer.h"
 #import "OrthogonalMPRPETCTViewer.h"
 #import "OpacityTransferView.h"
@@ -218,6 +220,8 @@ static SyncSeriesScope globalSyncSeriesScope;
     // Series Synchronisation
     [nc addObserver:self selector:@selector(syncSeriesNotification:) name:OsirixOrthoMPRSyncSeriesNotification object:nil];
     [nc addObserver:self selector:@selector(posChangeNotification:) name:OsirixOrthoMPRPosChangeNotification object:nil];
+    [nc addObserver:self selector:@selector(patientCrosshairChanged:)
+               name:HorosPatientCrosshairController.changeNotification object:nil];
     
     [OrthogonalMPRViewer initSyncSeriesProperties:self];
     [OrthogonalMPRViewer evaluteSyncSeriesToolbarItemActivationWhenInit:self];
@@ -577,6 +581,7 @@ static SyncSeriesScope globalSyncSeriesScope;
 
 - (void) windowWillClose:(NSNotification *)notification
 {
+    [[HorosPatientCrosshairController shared] clearForOwner:self];
     [[self window] setAcceptsMouseMovedEvents: NO];
     
     [[NSNotificationCenter defaultCenter] removeObserver: self];
@@ -846,6 +851,10 @@ static SyncSeriesScope globalSyncSeriesScope;
 #endif
     
     BOOL valid = NO;
+    if (item.action == @selector(togglePatientCrosshair:)) {
+        item.state = [HorosPatientCrosshairController shared].isVisible ? NSControlStateValueOn : NSControlStateValueOff;
+        return YES;
+    }
     
     if( [item action] == @selector(changeTool:))
     {
@@ -1201,6 +1210,9 @@ static SyncSeriesScope globalSyncSeriesScope;
                 toolbarItem = item;
         }
     }
+
+    if( toolbarItem)
+        [HorosToolbarPolicy prepareItem: toolbarItem];
     
     return toolbarItem;
 }
@@ -2648,6 +2660,7 @@ static SyncSeriesScope globalSyncSeriesScope;
 
 - (void) setMovieIndex: (short) i
 {
+    [[HorosPatientCrosshairController shared] clearForOwner:self];
     int index = [[controller originalView] curImage];
     
     
@@ -2683,6 +2696,36 @@ static SyncSeriesScope globalSyncSeriesScope;
 {
     [self setMovieIndex: [moviePosSlider intValue]];
     //	[self propagateSettings];
+}
+
+// This adapter consumes the host's session and the established MPR reslicer.
+// A separate MPR time point cannot borrow another time point's volume identity.
+- (BOOL)publishPatientCrosshair
+{
+    if (curMovieIndex != viewer.curMovieIndex || !self.window.isKeyWindow) return NO;
+    float point[3];
+    [OrthogonalMPRViewer getDICOMCoords:self :point];
+    return HorosPublishPatientCrosshair(point, viewer, self);
+}
+
+- (void)patientCrosshairChanged:(NSNotification *)notification
+{
+    HorosPatientCrosshairController *crosshair = [HorosPatientCrosshairController shared];
+    if (curMovieIndex == viewer.curMovieIndex && crosshair.sourceOwner != self &&
+        [notification.userInfo[@"move"] boolValue])
+    {
+        HorosPatientCrosshairPoint *point = HorosPatientCrosshairForViewer(viewer);
+        if (point) [controller moveToAbsolutePosition:point.coordinates];
+    }
+    [controller originalView].needsDisplay = YES;
+    [controller xReslicedView].needsDisplay = YES;
+    [controller yReslicedView].needsDisplay = YES;
+}
+
+- (IBAction)togglePatientCrosshair:(id)sender
+{
+    HorosPatientCrosshairController *crosshair = [HorosPatientCrosshairController shared];
+    [crosshair setCrosshairVisible:!crosshair.isVisible];
 }
 
 - (ViewerController *)viewerController{
@@ -2725,6 +2768,7 @@ static SyncSeriesScope globalSyncSeriesScope;
 {
     if (currentTool >= 0)
     {
+        if (currentTool == tCross) [[HorosPatientCrosshairController shared] setCrosshairVisible:YES];
         [controller setCurrentTool: currentTool];
         [toolsMatrix selectCellWithTag:currentTool];
     }

@@ -146,7 +146,8 @@
 					[flyThruController.FTAdapter setCurrentViewToCamera:camera];
 					NSImage *im = [flyThruController.FTAdapter getCurrentCameraImage: NO];
 					[camera setPreviewImage:im];
-					[self addObject:camera];
+                    // Keep the decoded keyframe; addObject: captures the current view.
+                    [super addObject:camera];
 				}
 				[stepsDictionary release];
 				[self resetCameraIndexes];

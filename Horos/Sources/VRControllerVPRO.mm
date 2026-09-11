@@ -46,6 +46,7 @@
 #import "Accelerate.h"
 #import "iPhoto.h"
 #import "VRViewVPRO.h"
+#import "Horos-Swift.h"
 
 static NSString* 	MIPToolbarIdentifier				= @"VRPRO Toolbar Identifier";
 static NSString*	QTExportToolbarItemIdentifier		= @"QTExport.icns";
@@ -920,8 +921,8 @@ static float	savedambient, saveddiffuse, savedspecular, savedspecularpower;
 	
     [view getWLWW:&iwl :&iww];
     
-    [wl setStringValue:[NSString stringWithFormat:@"%.0f", iwl ]];
-    [ww setStringValue:[NSString stringWithFormat:@"%.0f", iww ]];
+    [wl setStringValue: [HorosWindowLevelText stringForValue: iwl]];
+    [ww setStringValue: [HorosWindowLevelText stringForValue: iww]];
     
 	[newName setStringValue: NSLocalizedString(@"Unnamed", nil)];
 	
@@ -1420,6 +1421,7 @@ static float	savedambient, saveddiffuse, savedspecular, savedspecularpower;
 			[toolbarItem release];
 			toolbarItem = nil;
 		}
+     [HorosToolbarPolicy prepareItem: toolbarItem];
      return [toolbarItem autorelease];
 }
 

@@ -46,6 +46,7 @@
 #import "NSUserDefaults+OsiriX.h"
 #import "N2Debug.h"
 #import "AppController.h"
+#import "Horos-Swift.h"
 
 // Template for DCMTK presentation state command-line applications (sample .cfg files in DCMTK source under dcmpstat/etc)
 //
@@ -585,6 +586,8 @@ NSString *mediumTag[] = {@"Blue Film", @"Clear Film", @"Paper"};
             // Create script for this print job.
             //
             NSMutableString* printScript = [[[NSMutableString alloc] init] autorelease];
+            // Stop before sending an incomplete job and preserve command failures.
+            [printScript appendString:@"set -e\n"];
             [printScript appendFormat: @"export DCMDICTPATH=\"%@/dicom.dic\"\n", [[NSBundle mainBundle] resourcePath]];
             [printScript appendFormat: @"cd \"%@\"\n", printJobDir];
             [printScript appendFormat: @"mkdir \"%@/log\"\n", printJobDir]; // backup dir for log
@@ -621,11 +624,28 @@ NSString *mediumTag[] = {@"Blue Film", @"Clear Film", @"Paper"};
             dicomConverter.prepareForDCMTK = YES;
             NSArray *images = [dicomConverter dicomFileListForViewer: m_CurrentViewer destinationPath: printJobDir options: options asColorPrint: colorPrint withAnnotations: NO];
             
+            if (images.count > 0) {
+                [self closeSheet:self];
+                HorosDICOMPrintPreview *preview = [[[HorosDICOMPrintPreview alloc] initWithImages:dicomConverter.previewImages annotatedImages:dicomConverter.annotatedPreviewImages columns:columns rows:rows filmSize:filmSize landscape:([[dict valueForKey:@"filmOrientationTag"] intValue] != 0)] autorelease];
+                NSArray *edited = [preview runModal];
+                if (!edited) {
+                    [fileManager removeItemAtPath:printJobDir error:NULL];
+                    return;
+                }
+                [NSApp beginSheet:m_ProgressSheet modalForWindow:[self window] modalDelegate:self didEndSelector:nil contextInfo:nil];
+                @try {
+                    images = [dicomConverter writePreviewImages:edited sourceFiles:images destinationPath:printJobDir];
+                } @catch (NSException *exception) {
+                    images = nil;
+                }
+            }
+
             // check, if images were collected
             if ([images count] == 0)
             {
-                [self _setProgressMessage: NSLocalizedString( @"There are no images selected.", nil)];
-                [self performSelectorOnMainThread:@selector(errorMessage:) withObject:[NSArray arrayWithObjects: NSLocalizedString(@"Print failed", nil), NSLocalizedString( @"There are no images selected.", nil), NSLocalizedString(@"OK", nil), nil] waitUntilDone:NO];
+                [fileManager removeItemAtPath:printJobDir error:NULL];
+                [self _setProgressMessage: NSLocalizedString( @"No printable images were prepared. Check the selection and available disk space.", nil)];
+                [self performSelectorOnMainThread:@selector(errorMessage:) withObject:[NSArray arrayWithObjects: NSLocalizedString(@"Print failed", nil), NSLocalizedString( @"No printable images were prepared. Check the selection and available disk space.", nil), NSLocalizedString(@"OK", nil), nil] waitUntilDone:NO];
             }
             else
             {
@@ -677,7 +697,7 @@ NSString *mediumTag[] = {@"Blue Film", @"Clear Film", @"Paper"};
                 
                 // Format command to send the presentation states to the printer.
                 //
-                [printScript appendFormat: @"\"%@/dcmprscu\" -c \"%@\" -lc \"%@\" --printer PRINTSCP --copies %d --priority %@ --destination %@ --medium-type %@ %@/database/SP_*\n",
+                [printScript appendFormat: @"\"%@/dcmprscu\" -c \"%@\" -lc \"%@\" --printer PRINTSCP --copies %d --priority %@ --destination %@ --medium-type \"%@\" \"%@/database/\"SP_*\n",
                  [[NSBundle mainBundle] resourcePath],
                  printConfigPath,
                  loggerConfigPath,

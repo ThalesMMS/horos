@@ -267,16 +267,46 @@ char* DCMreplaceInvalidCharacter( char* str ) {
     return result;
 }
 
+/** What to read a file's text as when it does not say.
+ 
+    The standard's default is the ASCII repertoire, which this reads as Latin-1;
+    equipment that predates Specific Character Set writes the bytes of whatever
+    code page the operating system had, and in Russia that is Windows-1251. There
+    is nothing in such a file to tell one from the other, so the choice is the
+    reader's, and it is made once, in the preferences, rather than guessed per
+    file: `DefaultCharacterSetWhenAbsent` holds a DICOM term or a code page name
+    and is empty by default, which leaves the behaviour as it was.
+ 
+    It applies only when the attribute is absent. A file that says what it is
+    keeps being read as it says. */
++ (NSString*) characterSetWhenAbsent
+{
+    NSString *chosen = [[NSUserDefaults standardUserDefaults] stringForKey: @"DefaultCharacterSetWhenAbsent"];
+    
+    return chosen.length ? chosen : nil;
+}
+
+
 + (NSStringEncoding)encodingForDICOMCharacterSet:(NSString *)characterSet
 {
 	NSStringEncoding encoding = NSISOLatin1StringEncoding;
 	
-	if( characterSet == nil) return encoding;
-	if( [characterSet isEqualToString:@""]) return encoding;
+	if( characterSet.length == 0)
+	{
+		NSString *chosen = [DCMCharacterSet characterSetWhenAbsent];
+		
+		if( chosen == nil)
+			return encoding;
+		
+		characterSet = chosen;
+	}
 	
 	characterSet = [characterSet stringByReplacingOccurrencesOfString:@"-" withString:@" "];
 	characterSet = [characterSet stringByReplacingOccurrencesOfString:@"_" withString:@" "];
     characterSet = [characterSet stringByReplacingOccurrencesOfString:@"ISO 2022" withString:@"ISO"];
+    // Every term below is written in capitals; a file that writes its own in
+    // lower case is naming the same thing.
+    characterSet = [characterSet uppercaseString];
 	
 	if	   ( [characterSet isEqualToString:@"ISO IR 100"]) encoding = NSISOLatin1StringEncoding;
 	else if( [characterSet isEqualToString:@"ISO IR 127"]) encoding = CFStringConvertEncodingToNSStringEncoding( kCFStringEncodingISOLatinArabic);
@@ -298,6 +328,27 @@ char* DCMreplaceInvalidCharacter( char* str ) {
     else if( [characterSet isEqualToString:@"ISO IR 149"]) encoding = CFStringConvertEncodingToNSStringEncoding( kCFStringEncodingEUC_KR);
     else if( [characterSet isEqualToString:@"ISO IR 6"])	encoding = NSISOLatin1StringEncoding;
 	else if( [characterSet isEqualToString:@"UTF 8"])	encoding = NSUTF8StringEncoding;
+    // Not DICOM terms. Equipment writes them anyway, and a file that names its
+    // code page is telling the truth about its bytes even when it names it in the
+    // wrong vocabulary.
+    else if( [characterSet isEqualToString:@"WINDOWS 1250"] || [characterSet isEqualToString:@"CP1250"])
+        encoding = CFStringConvertEncodingToNSStringEncoding( kCFStringEncodingWindowsLatin2);
+    else if( [characterSet isEqualToString:@"WINDOWS 1251"] || [characterSet isEqualToString:@"CP1251"])
+        encoding = CFStringConvertEncodingToNSStringEncoding( kCFStringEncodingWindowsCyrillic);
+    else if( [characterSet isEqualToString:@"WINDOWS 1252"] || [characterSet isEqualToString:@"CP1252"])
+        encoding = CFStringConvertEncodingToNSStringEncoding( kCFStringEncodingWindowsLatin1);
+    else if( [characterSet isEqualToString:@"WINDOWS 1253"] || [characterSet isEqualToString:@"CP1253"])
+        encoding = CFStringConvertEncodingToNSStringEncoding( kCFStringEncodingWindowsGreek);
+    else if( [characterSet isEqualToString:@"WINDOWS 1254"] || [characterSet isEqualToString:@"CP1254"])
+        encoding = CFStringConvertEncodingToNSStringEncoding( kCFStringEncodingWindowsLatin5);
+    else if( [characterSet isEqualToString:@"WINDOWS 1255"] || [characterSet isEqualToString:@"CP1255"])
+        encoding = CFStringConvertEncodingToNSStringEncoding( kCFStringEncodingWindowsHebrew);
+    else if( [characterSet isEqualToString:@"WINDOWS 1256"] || [characterSet isEqualToString:@"CP1256"])
+        encoding = CFStringConvertEncodingToNSStringEncoding( kCFStringEncodingWindowsArabic);
+    else if( [characterSet isEqualToString:@"WINDOWS 1257"] || [characterSet isEqualToString:@"CP1257"])
+        encoding = CFStringConvertEncodingToNSStringEncoding( kCFStringEncodingWindowsBalticRim);
+    else if( [characterSet isEqualToString:@"WINDOWS 1258"] || [characterSet isEqualToString:@"CP1258"])
+        encoding = CFStringConvertEncodingToNSStringEncoding( kCFStringEncodingWindowsVietnamese);
 	else
 	{
 		NSLog(@"** DICOMTONSString encoding not found: %@", characterSet);

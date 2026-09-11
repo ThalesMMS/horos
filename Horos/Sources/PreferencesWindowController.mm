@@ -380,6 +380,7 @@ static const NSMutableArray* pluginPanes = [[NSMutableArray alloc] init];
 	[self addPaneWithResourceNamed:@"OSICDPreferencePanePref" inBundle:bundle withTitle:NSLocalizedString(@"CD/DVD", @"Panel in preferences window") image:[NSImage imageNamed:@"CD"] toGroupWithName:name];
 	[self addPaneWithResourceNamed:@"OSIHangingPreferencePanePref" inBundle:bundle withTitle:NSLocalizedString(@"Protocols", @"Panel in preferences window") image:[NSImage imageNamed:@"ZoomToFit"] toGroupWithName:name];
     [self addPaneWithResourceNamed:@"OSIHotKeysPref" inBundle:bundle withTitle:NSLocalizedString(@"Hot Keys", @"Panel in preferences window") image:[NSImage imageNamed:@"key"] toGroupWithName:name];
+    [self addPaneWithResourceNamed:@"HorosMenuShortcutPref" inBundle:bundle withTitle:@"Menu Shortcuts" image:[NSImage imageNamed:@"key"] toGroupWithName:name];
 	
     name = NSLocalizedString(@"Display", @"Section in preferences window");
 	[self addPaneWithResourceNamed:@"OSIViewerPreferencePanePref" inBundle:bundle withTitle:NSLocalizedString(@"Viewers", @"Panel in preferences window") image:[NSImage imageNamed:@"AxialSmall"] toGroupWithName:name];
@@ -461,24 +462,29 @@ static const NSMutableArray* pluginPanes = [[NSMutableArray alloc] init];
 	
 	if (!currentContext || [currentContext.pane shouldUnselect])
     {
+        // Construct and load before touching the displayed view or starting KVO.
+        // Both the pane initializer and loadMainView may fail (e.g. a missing nib).
+        if (context) {
+            NSPreferencePane *nextPane = nil;
+            @try {
+                nextPane = context.pane;
+                if (!nextPane.mainView) [nextPane loadMainView];
+            }
+            @catch (NSException *exception) {
+                NSLog(@"Preferences pane failed to load: %@ (%@)", context.resourceName, exception.name);
+                nextPane = nil;
+            }
+            if (!nextPane.mainView) {
+                NSAlert *alert = [[[NSAlert alloc] init] autorelease];
+                alert.messageText = NSLocalizedString(@"Preferences Could Not Be Opened", nil);
+                alert.informativeText = [NSString stringWithFormat:NSLocalizedString(@"The %@ preferences could not be loaded. The previous panel has been kept. Check that the application or preference plugin is installed completely, then try again.", nil), context.title ?: @""];
+                [alert addButtonWithTitle:NSLocalizedString(@"OK", nil)];
+                [alert beginSheetModalForWindow:self.window completionHandler:nil];
+                return;
+            }
+        }
         [self willChangeValueForKey:@"currentContext"];
-        
-        [self.window setContentView:[[[NSView alloc] initWithFrame:NSZeroRect] autorelease]];
-        
-        // TODO: NSUnselectNow or NSUnselectLater?
-		if (context && !context.pane.mainView)
-        {
-			@try
-            {
-				[context.pane loadMainView];
-			}
-            @catch (NSException* e)
-            {
-				NSLog(@"Warning: %@", e.description);
-				return;
-			}
-		}
-		
+
         // remove old view
 		[currentContext.pane willUnselect];
         [currentContext.pane.mainView.window makeFirstResponder:nil];

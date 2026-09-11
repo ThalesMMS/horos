@@ -53,7 +53,7 @@
 #include <stdlib.h>
 #include <iostream>
 
-#include "ofthread.h"
+#include <dcmtk/ofstd/ofthread.h>
 
 //#define WITH_OPJ_BUFFER_STREAM
 #define WITH_OPJ_FILE_STREAM
@@ -69,7 +69,8 @@ struct opj_memory_stream
 static OPJ_SIZE_T opj_read_from_memory(void* p_buffer, OPJ_SIZE_T p_nb_bytes, void* p_user_data)
 {
     opj_memory_stream* ms = (opj_memory_stream*)p_user_data;
-    if (!ms || ms->offset >= ms->size) return (OPJ_SIZE_T)0;
+    // OpenJPEG uses -1 for EOF; zero makes its read loop retry without progress.
+    if (!ms || ms->offset >= ms->size) return (OPJ_SIZE_T)-1;
 
     OPJ_SIZE_T remaining = ms->size - ms->offset;
     OPJ_SIZE_T read_bytes = (p_nb_bytes < remaining) ? p_nb_bytes : remaining;
@@ -139,10 +140,18 @@ typedef struct decode_info
     opj_codec_t *codec;
     opj_stream_t *stream;
     opj_image_t *image;
-    opj_codestream_info_v2_t* cstr_info;
-    opj_codestream_index_t* cstr_index;
-    OPJ_BOOL deleteImage;
-    
+
+    decode_info() : codec(NULL), stream(NULL), image(NULL) {}
+    ~decode_info()
+    {
+        if (codec) opj_destroy_codec(codec);
+        if (stream) opj_stream_destroy(stream);
+        if (image) opj_image_destroy(image);
+    }
+
+private:
+    decode_info(const decode_info&);
+    decode_info& operator=(const decode_info&);
 } decode_info_t;
 
 #define JP2_RFC3745_MAGIC "\x00\x00\x00\x0c\x6a\x50\x20\x20\x0d\x0a\x87\x0a"
@@ -179,24 +188,6 @@ const char *clr_space(OPJ_COLOR_SPACE i)
     if(i == OPJ_CLRSPC_SYCC) return "OPJ_CLRSPC_SYCC";
     if(i == OPJ_CLRSPC_UNKNOWN) return "OPJ_CLRSPC_UNKNOWN";
     return "CLRSPC_UNDEFINED";
-}
-
-void release(decode_info_t *decodeInfo)
-{
-    if(decodeInfo->codec) {
-        opj_destroy_codec(decodeInfo->codec);
-        decodeInfo->codec = NULL;
-    }
-    
-    if(decodeInfo->stream) {
-        opj_stream_destroy(decodeInfo->stream);
-        decodeInfo->stream = NULL;
-    }
-    
-    if(decodeInfo->deleteImage && decodeInfo->image) {
-        opj_image_destroy(decodeInfo->image);
-        decodeInfo->image = NULL;
-    }
 }
 
 OPJSupport::OPJSupport() {}
@@ -256,11 +247,11 @@ void* OPJSupport::decompressJPEG2KWithBuffer(void* inputBuffer,
     opj_dparameters_t parameters;
     int i;
     int width, height;
-    OPJ_BOOL hasAlpha, fails = OPJ_FALSE;
+    OPJ_BOOL hasAlpha;
     OPJ_CODEC_FORMAT codec_format;
     unsigned char rc, gc, bc, ac;
     
-    if (jp2DataSize<12)
+    if (!jp2Data || jp2DataSize < 12)
     {
         
         return 0;
@@ -269,7 +260,6 @@ void* OPJSupport::decompressJPEG2KWithBuffer(void* inputBuffer,
     /*-----------------------------------------------*/
     
     decode_info_t decodeInfo;
-    memset(&decodeInfo, 0, sizeof(decode_info_t));
     
     opj_set_default_decoder_parameters(&parameters);
     parameters.decod_format = buffer_format(jp2Data);
@@ -305,8 +295,6 @@ void* OPJSupport::decompressJPEG2KWithBuffer(void* inputBuffer,
             
         default:
             
-            release(&decodeInfo);
-            
             fprintf(stderr,"%s:%d: decode format missing\n",__FILE__,__LINE__);
             
             return NULL;
@@ -314,116 +302,53 @@ void* OPJSupport::decompressJPEG2KWithBuffer(void* inputBuffer,
     
     /*-----------------------------------------------*/
     
-    while(1)
+    decodeInfo.codec = opj_create_decompress(codec_format);
+    if (!decodeInfo.codec)
     {
-        int user_changed_tile=0, user_changed_reduction=0;
-        int max_tiles=0, max_reduction=0;
-        fails = OPJ_TRUE;
-        
-        decodeInfo.codec = opj_create_decompress(codec_format);
-        if (decodeInfo.codec == NULL)
-        {
-            fprintf(stderr,"%s:%d:\n\tNO codec\n",__FILE__,__LINE__);
-            break;
-        }
-        
-#ifdef OPJ_VERBOSE
-        opj_set_info_handler(decodeInfo.codec, info_callback, this);
-        opj_set_warning_handler(decodeInfo.codec, warning_callback, this);
-#endif
-        opj_set_error_handler(decodeInfo.codec, error_callback, this);
-        
-        // Setup the decoder decoding parameters
-        if ( !opj_setup_decoder(decodeInfo.codec, &parameters))
-        {
-            fprintf(stderr,"%s:%d:\n\topj_setup_decoder failed\n",__FILE__,__LINE__);
-            break;
-        }
-        
-        if (user_changed_tile && user_changed_reduction)
-        {
-            int reduction=0;
-            opj_set_decoded_resolution_factor(decodeInfo.codec, reduction);
-        }
-        
-        /* Read the main header of the codestream and if necessary the JP2 boxes
-         * see openjpeg.c
-         * For OPJ_CODEC_JP2 it will call 'opj_jp2_read_header()' in jp2.c:2276
-         * then call 'opj_j2k_read_header()'
-         */
-        if( !opj_read_header(decodeInfo.stream, decodeInfo.codec, &(decodeInfo.image)))
-        {
-            fprintf(stderr,"%s:%d:\n\topj_read_header failed\n",__FILE__,__LINE__);
-            break;
-        }
-        
-        if ( !(user_changed_tile && user_changed_reduction)
-            || (max_tiles <= 0) || (max_reduction <= 0) )
-        {
-            decodeInfo.cstr_info = opj_get_cstr_info(decodeInfo.codec);
-            
-            max_reduction = decodeInfo.cstr_info->m_default_tile_info.tccp_info->numresolutions;
-            max_tiles = decodeInfo.cstr_info->tw * decodeInfo.cstr_info->th;
-            
-            decodeInfo.cstr_index = opj_get_cstr_index(decodeInfo.codec);
-        }
-        
-        if (!parameters.nb_tile_to_decode)
-        {
-            int user_changed_area=0;
-            
-            if(user_changed_area)
-            {
-                
-            }
-            
-            /* Optional if you want decode the entire image */
-            if (!opj_set_decode_area(decodeInfo.codec, decodeInfo.image,
-                                     (OPJ_INT32)parameters.DA_x0,
-                                     (OPJ_INT32)parameters.DA_y0,
-                                     (OPJ_INT32)parameters.DA_x1,
-                                     (OPJ_INT32)parameters.DA_y1)) {
-                fprintf(stderr,"%s:%d:\n\topj_set_decode_area failed\n",__FILE__,__LINE__);
-                break;
-            }
-            
-            /* Get the decoded image */
-            if (!opj_decode(decodeInfo.codec, decodeInfo.stream, decodeInfo.image)) {
-                fprintf(stderr,"%s:%d:\n\topj_decode failed\n",__FILE__,__LINE__);
-                
-                
-                return NULL;
-            }
-            
-            if (!opj_end_decompress(decodeInfo.codec, decodeInfo.stream)) {
-                fprintf(stderr,"%s:%d:\n\topj_end_decompress failed\n",__FILE__,__LINE__);
-                break;
-            }
-            
-        }
-        else
-        {
-            if (!opj_get_decoded_tile(decodeInfo.codec, decodeInfo.stream, decodeInfo.image, parameters.tile_index))
-            {
-                fprintf(stderr,"%s:%d:\n\topj_get_decoded_tile failed\n",__FILE__,__LINE__);
-                break;
-            }
-        }
-        
-        fails = OPJ_FALSE;
-        break;
-    } // while
-    
-    decodeInfo.deleteImage = fails;
-    
-    if (fails)
-    {
-        
+        fprintf(stderr,"%s:%d:\n\tNO codec\n",__FILE__,__LINE__);
         return NULL;
     }
-    
-    decodeInfo.deleteImage = OPJ_TRUE;
-    
+
+#ifdef OPJ_VERBOSE
+    opj_set_info_handler(decodeInfo.codec, info_callback, this);
+    opj_set_warning_handler(decodeInfo.codec, warning_callback, this);
+#endif
+    opj_set_error_handler(decodeInfo.codec, error_callback, this);
+
+    if (!opj_setup_decoder(decodeInfo.codec, &parameters))
+    {
+        fprintf(stderr,"%s:%d:\n\topj_setup_decoder failed\n",__FILE__,__LINE__);
+        return NULL;
+    }
+
+    if (!opj_read_header(decodeInfo.stream, decodeInfo.codec, &decodeInfo.image))
+    {
+        fprintf(stderr,"%s:%d:\n\topj_read_header failed\n",__FILE__,__LINE__);
+        return NULL;
+    }
+
+    if (!opj_set_decode_area(decodeInfo.codec, decodeInfo.image,
+                             (OPJ_INT32)parameters.DA_x0,
+                             (OPJ_INT32)parameters.DA_y0,
+                             (OPJ_INT32)parameters.DA_x1,
+                             (OPJ_INT32)parameters.DA_y1))
+    {
+        fprintf(stderr,"%s:%d:\n\topj_set_decode_area failed\n",__FILE__,__LINE__);
+        return NULL;
+    }
+
+    if (!opj_decode(decodeInfo.codec, decodeInfo.stream, decodeInfo.image))
+    {
+        fprintf(stderr,"%s:%d:\n\topj_decode failed\n",__FILE__,__LINE__);
+        return NULL;
+    }
+
+    if (!opj_end_decompress(decodeInfo.codec, decodeInfo.stream))
+    {
+        fprintf(stderr,"%s:%d:\n\topj_end_decompress failed\n",__FILE__,__LINE__);
+        return NULL;
+    }
+
     if(decodeInfo.image->color_space == OPJ_CLRSPC_SYCC)
     {
         //disable for now
@@ -464,7 +389,8 @@ void* OPJSupport::decompressJPEG2KWithBuffer(void* inputBuffer,
     
     if (!inputBuffer )
     {
-        inputBuffer =  malloc(decompressSize);
+        inputBuffer = malloc(decompressSize);
+        if (!inputBuffer) return NULL;
     }
     
     if (colorModel)
@@ -494,7 +420,12 @@ void* OPJSupport::decompressJPEG2KWithBuffer(void* inputBuffer,
         
         alpha = NULL;
         
-        has_rgb = (decodeInfo.image->numcomps == 3);
+        // The guard above admits numcomps >= 3, and the comment there says
+        // RGB[A]: four components are RGB with alpha, not greyscale. Testing
+        // for exactly 3 sent an RGBA image down the greyscale branch, which
+        // read all three channels from comps[0] and left alpha NULL while
+        // hasAlpha was true - a null dereference in the loop below.
+        has_rgb = (decodeInfo.image->numcomps >= 3);
         has_alpha4 = (decodeInfo.image->numcomps == 4);
         has_alpha2 = (decodeInfo.image->numcomps == 2);
         hasAlpha = (has_alpha4 || has_alpha2);
@@ -629,10 +560,6 @@ void* OPJSupport::decompressJPEG2KWithBuffer(void* inputBuffer,
              */
         }
     }
-    
-    release(&decodeInfo);
-    opj_destroy_cstr_index(&(decodeInfo.cstr_index));
-    
     
     return inputBuffer;
 }

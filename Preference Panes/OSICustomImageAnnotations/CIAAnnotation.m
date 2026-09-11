@@ -104,6 +104,11 @@
 
 	#define ROUNDED_CORNER_SIZE 3.0
 	
+	// Lay the annotation out from the view's own bounds. The rectangle passed
+	// in is the area needing redraw, which can be larger than the view, and
+	// since macOS 14 NSView no longer clips drawing to its bounds: using it
+	// painted the whole preference pane in the annotation's colour.
+	rect = self.bounds;
 	rect = NSMakeRect(rect.origin.x+2.0, rect.origin.y+4.0, rect.size.width-7.0, rect.size.height-7.0);
 	
 	NSBezierPath *borderFrame = [NSBezierPath bezierPathWithRoundedRect:rect cornerRadius:ROUNDED_CORNER_SIZE];

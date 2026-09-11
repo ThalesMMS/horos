@@ -52,6 +52,8 @@
 - (void)setIsEmpty:(BOOL)empty;
 - (BOOL)isEmpty;
 - (void)setSelected;
+- (void)hideSelectionFrame;
+- (void)setSelectedState:(BOOL)selected;
 - (void)setIndex:(int)index;
 - (int)index;
 

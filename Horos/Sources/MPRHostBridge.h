@@ -1,0 +1,24 @@
+#import "MPRController.h"
+#import "MPRDCMView.h"
+
+/// Metal reconstructs scalar 3D MPR planes by default. The host retains its
+/// camera, geometry, ROIs, tools and export. Unsupported modes and failures
+/// use the CPU renderer. The per-window option permits CPU comparisons.
+@interface MPRController (HorosMPRHost)
+- (BOOL)horosMPRMetalEnabled;
+- (void)toggleMPRMetal:(id)sender;
+/// The reason the last reconstruction kept the original pixels, or nil.
+- (NSString *)horosMPRFallbackReason;
+/// Wall milliseconds of the last synchronous Metal reslice, or -1 if none ran.
+- (double)horosMPRLastMilliseconds;
+/// Bytes of the volume currently on the GPU, or 0.
+- (NSInteger)horosMPRVolumeBytes;
+/// Drops the GPU volume; the next reconstruction re-uploads if enabled.
+- (void)horosMPRReleaseVolume;
+@end
+
+@interface MPRDCMView (HorosMPRHost)
+/// Returns a malloc-owned float image after preparing the camera geometry.
+/// A NULL result requests the normal CPU render. Main thread only.
+- (float *)horosMPRCopyImageWidth:(long *)width height:(long *)height;
+@end

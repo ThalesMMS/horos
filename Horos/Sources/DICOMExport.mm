@@ -36,6 +36,7 @@
  ============================================================================*/
 
 #import "DICOMExport.h"
+#include "HorosDICOMRepresentation.h"
 #import "DCM.h"
 #import "BrowserController.h"
 #import "DicomFile.h"
@@ -226,58 +227,72 @@ static float deg2rad = M_PI / 180.0f;
 	return [self setPixelData:idata samplesPerPixel:ispp bitsPerSample:ibps width:iwidth height:iheight];
 }
 
-- (long) setPixelNSImage:	(NSImage*) iimage
+- (long) setPixelNSImage: (NSImage*) iimage
 {
-	if( image != iimage)
-	{
-		[image release];
-		image = nil;
-		
-		[imageRepresentation release];
-		imageRepresentation = nil;
-		
-		if( freeImageData) free( imageData);
-		freeImageData = NO;
-		imageData = nil;
-		
-		image = [iimage retain];
-	}
+    // Retain first: callers may pass the same NSImage repeatedly.
+    [iimage retain];
+    [image release];
+    image = iimage;
+    [imageRepresentation release];
+    imageRepresentation = nil;
+    if( freeImageData) free( imageData);
+    imageData = nil;
+    freeImageData = NO;
+    if( localData) free( localData);
+    localData = nil;
+    data = nil;
 
-	if( image)
-	{
-		NSData				*tiffRep = [image TIFFRepresentation];
-		NSSize				imageSize;
-		long				w, h, i;
-		
-		if( tiffRep)
-		{
-			imageRepresentation = [[NSBitmapImageRep alloc] initWithData:tiffRep];
-			imageSize = [imageRepresentation size];
-			
-			w = imageSize.width;
-			h = imageSize.height;
-			
-			if( [imageRepresentation bytesPerRow] != w)
-			{
-				imageData = (unsigned char*) malloc( h * w * [imageRepresentation samplesPerPixel]);
-				freeImageData = YES;
-				
-				for( i = 0; i < height; i++)
-				{
-					memcpy( imageData + i * width * [imageRepresentation samplesPerPixel], [imageRepresentation bitmapData] + i * [imageRepresentation bytesPerRow], width * [imageRepresentation samplesPerPixel]);
-				}
-			}
-			else imageData = [imageRepresentation bitmapData];
-			
-			return [self setPixelData:		imageData
-						samplesPerPixel:	[imageRepresentation samplesPerPixel]
-						bitsPerSample:		[imageRepresentation bitsPerPixel] / [imageRepresentation samplesPerPixel]
-						width:				w
-						height:				h];
-		}
-		else return -1;
-	}
-	else return -1;
+    NSData *tiffRep = [image TIFFRepresentation];
+    if( !tiffRep) return -1;
+    imageRepresentation = [[NSBitmapImageRep alloc] initWithData:tiffRep];
+    if( !imageRepresentation) return -1;
+    NSColorSpaceModel colorModel = [[imageRepresentation colorSpace] colorSpaceModel];
+    if( colorModel != NSColorSpaceModelGray)
+    {
+        // Normalize color pixels before discarding their AppKit profile. This also
+        // distinguishes four CMYK colorants from RGBA before removing alpha.
+        NSBitmapImageRep *rgb = [imageRepresentation bitmapImageRepByConvertingToColorSpace:
+            [NSColorSpace sRGBColorSpace] renderingIntent:NSColorRenderingIntentDefault];
+        [rgb retain];
+        [imageRepresentation release];
+        imageRepresentation = rgb;
+        if( !imageRepresentation || [[imageRepresentation colorSpace] colorSpaceModel] != NSColorSpaceModelRGB)
+            return -1;
+    }
+    if( [imageRepresentation isPlanar]) return -1;
+
+    const long w = [imageRepresentation pixelsWide];
+    const long h = [imageRepresentation pixelsHigh];
+    const long samples = [imageRepresentation samplesPerPixel];
+    const long bits = [imageRepresentation bitsPerSample];
+    if( w <= 0 || h <= 0 || (samples != 1 && samples != 3 && samples != 4) || (bits != 8 && bits != 16)) return -1;
+
+    const size_t bytesPerPixel = (size_t)samples * (bits / 8);
+    if( (size_t)w > SIZE_MAX / bytesPerPixel) return -1;
+    const size_t rowBytes = (size_t)w * bytesPerPixel;
+    if( (size_t)h > SIZE_MAX / rowBytes ||
+        [imageRepresentation bytesPerRow] < rowBytes ||
+        ![imageRepresentation bitmapData]) return -1;
+
+    imageData = (unsigned char*) malloc( rowBytes * (size_t)h);
+    if( !imageData) return -1;
+    freeImageData = YES;
+    // AppKit may store RGB with a fourth padding byte even when samplesPerPixel is 3.
+    // getPixel also respects the representation's sample layout and byte order.
+    for( long y = 0; y < h; y++)
+        for( long x = 0; x < w; x++)
+        {
+            NSUInteger pixel[5] = {0};
+            [imageRepresentation getPixel:pixel atX:x y:y];
+            for( long c = 0; c < samples; c++)
+            {
+                const size_t sample = ((size_t)y * w + x) * samples + c;
+                if( bits == 8) imageData[sample] = pixel[c];
+                else ((uint16_t*)imageData)[sample] = pixel[c];
+            }
+        }
+
+    return [self setPixelData:imageData samplesPerPixel:samples bitsPerSample:bits width:w height:h];
 }
 
 - (void) setDefaultWWWL: (long) iww :(long) iwl
@@ -305,11 +320,13 @@ static float deg2rad = M_PI / 180.0f;
 - (void) setPosition: (float*) p
 {
 	for( int i = 0; i < 3; i++) position[ i] = p[ i];
+	positionSet = YES;
 }
 
 - (void) setSlicePosition: (float) p
 {
 	slicePosition = p;
+	slicePositionSet = YES;
 }
 
 - (void) setModalityAsSource: (BOOL) v
@@ -853,13 +870,13 @@ static float deg2rad = M_PI / 180.0f;
 						dataset->putAndInsertString( DCM_ImageOrientationPatient, [[NSString stringWithFormat: @"%f\\%f\\%f\\%f\\%f\\%f", orientation[ 0], orientation[ 1], orientation[ 2], orientation[ 3], orientation[ 4], orientation[ 5]] UTF8String]);
 					
 					delete dataset->remove( DCM_ImagePositionPatient);
-					if( position[ 0] != 0 || position[ 1] != 0 || position[ 2] != 0)
+					if( positionSet)
 					{
 						dataset->putAndInsertString( DCM_ImagePositionPatient, [[NSString stringWithFormat: @"%f\\%f\\%f", position[ 0], position[ 1], position[ 2]] UTF8String]);
 					}
 					
 					delete dataset->remove( DCM_SliceLocation);
-					if( slicePosition != 0)
+					if( slicePositionSet)
 						dataset->putAndInsertString( DCM_SliceLocation, [[NSString stringWithFormat: @"%f", slicePosition] UTF8String]);
 					
 					delete dataset->remove( DCM_PlanarConfiguration);
@@ -945,7 +962,7 @@ static float deg2rad = M_PI / 180.0f;
 					dataset->putAndInsertString( DCM_SOPInstanceUID, buf);
 					metaInfo->putAndInsertString( DCM_MediaStorageSOPInstanceUID, buf);
 					
-                    dcmtkFileFormat->chooseRepresentation( EXS_LittleEndianExplicit, NULL);
+                    HorosChooseDICOMRepresentation(*dcmtkFileFormat, EXS_LittleEndianExplicit);
 					if( dcmtkFileFormat->canWriteXfer( EXS_LittleEndianExplicit))
 					{
 						// Add to the current DB

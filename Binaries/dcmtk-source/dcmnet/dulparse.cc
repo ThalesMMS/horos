@@ -249,6 +249,7 @@ parseAssociate(unsigned char *buf, unsigned int pduLength,
             break;
         default:
             cond = parseDummy(buf, &itemLength, pduLength);
+            if (cond.bad()) return cond;
             buf += itemLength;
             pduLength -= itemLength;
             break;
@@ -450,6 +451,7 @@ parsePresentationContext(unsigned char type,
                 break;
             default:
                 cond = parseDummy(buf, &length, presentationLength);
+                if (cond.bad()) return cond;
                 buf += length;
                 presentationLength -= length;
                 break;
@@ -544,6 +546,7 @@ parseUserInfo(DUL_USERINFO * userInfo,
 
         case DUL_TYPEASYNCOPERATIONS:
             cond = parseDummy(buf, &length, userLength);
+            if (cond.bad()) return cond;
             buf += length;
             userLength -= (unsigned short) length;
             break;
@@ -551,7 +554,7 @@ parseUserInfo(DUL_USERINFO * userInfo,
             role = (PRV_SCUSCPROLE*)malloc(sizeof(PRV_SCUSCPROLE));
             if (role == NULL) return EC_MemoryExhausted;
             cond = parseSCUSCPRole(role, buf, &length, userLength);
-            if (cond.bad()) return cond;
+            if (cond.bad()) { free(role); return cond; }
             cond = LST_Enqueue(&userInfo->SCUSCPRoleList, (LST_NODE*)role);
             if (cond.bad()) return cond;
             buf += length;
@@ -583,6 +586,7 @@ parseUserInfo(DUL_USERINFO * userInfo,
 
         default:
             cond = parseDummy(buf, &length, userLength);
+            if (cond.bad()) return cond;
             buf += length;
             userLength -= (unsigned short) length;
             break;
@@ -621,6 +625,8 @@ parseMaxPDU(DUL_MAXLENGTH * max, unsigned char *buf,
     max->type = *buf++;
     max->rsv1 = *buf++;
     EXTRACT_SHORT_BIG(buf, max->length);
+    if (max->length != 4)
+        return makeLengthError("Max PDU", availData, 4, max->length);
     buf += 2;
     EXTRACT_LONG_BIG(buf, max->maxLength);
     *itemLength = 2 + 2 + max->length;
@@ -717,6 +723,11 @@ parseSCUSCPRole(PRV_SCUSCPROLE * role, unsigned char *buf,
 	if (role->length - 4 < UIDLength)
 		return makeLengthError("SCU-SCP role list UID", role->length, 0, UIDLength);
 	
+    // The announced item length bounds the input, not this fixed-size output.
+    // Reject invalid UIDs before copying (association negotiation overflow,
+    // addressed upstream by DCMTK 1b6bb76 and subsequent bounded-copy fixes).
+    if (UIDLength >= sizeof(role->SOPClassUID))
+        return makeLengthError("SCU-SCP role list UID", sizeof(role->SOPClassUID) - 1, 0, UIDLength);
     (void) memcpy(role->SOPClassUID, buf, UIDLength);
     role->SOPClassUID[UIDLength] = '\0';
     buf += UIDLength;

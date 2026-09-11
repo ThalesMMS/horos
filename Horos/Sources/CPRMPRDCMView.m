@@ -35,6 +35,7 @@ The Horos Project was based originally upon the OsiriX Project which at the time
      PURPOSE.
  ============================================================================*/
 
+#import "Horos-Swift.h"
 #import "options.h"
 
 #import "CPRController.h"
@@ -99,6 +100,7 @@ static CGFloat CPRMPRDCMViewCurveMouseTrackingDistance = 20.0;
 - (void)sendDidEditAssistedCurvedPath;
 - (void)sendWillEditDisplayInfo;
 - (void)sendDidEditDisplayInfo;
+- (HorosCurvedMPRPathSession *)horosCurvedPathSession;
 @end
 
 @implementation CPRMPRDCMView
@@ -204,7 +206,21 @@ static CGFloat CPRMPRDCMViewCurveMouseTrackingDistance = 20.0;
 {
 	if( rect.size.width > 10)
 	{
-		[super drawRect: rect];
+		NSString *name = [NSString stringWithFormat: @"mpr-%d", viewID];
+		HorosCPRRenderDecision *decision = [HorosCPRRenderLifecycle beginDrawNamed: name];
+		if( decision.accepted == NO)
+		{
+			NSLog(@"CPR draw skipped: %@", decision.diagnosis);
+			return;
+		}
+		@try
+		{
+			[super drawRect: rect];
+		}
+		@finally
+		{
+			[HorosCPRRenderLifecycle endDrawNamed: name];
+		}
 	}
 }
 
@@ -994,12 +1010,23 @@ static CGFloat CPRMPRDCMViewCurveMouseTrackingDistance = 20.0;
 		[super setCurrentTool: i];
 }
 
+- (HorosCurvedMPRPathSession *)horosCurvedPathSession
+{
+	HorosCurvedMPRPathSession *session = [[[HorosCurvedMPRPathSession alloc] init] autorelease];
+	for (NSValue *value in curvedPath.nodes) {
+		N3Vector node = [value N3VectorValue];
+		[session addPatientNodeX:node.x y:node.y z:node.z];
+	}
+	return session;
+}
+
 - (void) stopCurvedPathCreationMode
 {
+	HorosCurvedMPRPathDecision *decision = [[self horosCurvedPathSession] complete];
 	windowController.curvedPathCreationMode = NO;
 	draggedToken = CPRCurvedPathControlTokenNone;
 	
-	if( curvedPath.nodes.count <= 2)
+	if( decision.accepted == NO)
 	{
 		// Delete this curve
 		[self sendWillEditCurvedPath];
@@ -1007,6 +1034,10 @@ static CGFloat CPRMPRDCMViewCurveMouseTrackingDistance = 20.0;
 		[self sendDidUpdateCurvedPath];
 		[self sendDidEditCurvedPath];
 		[self setNeedsDisplay:YES];	
+	}
+	else
+	{
+		[HorosCPRRenderLifecycle markCurveReady];
 	}
 }
 
@@ -1569,7 +1600,8 @@ static CGFloat CPRMPRDCMViewCurveMouseTrackingDistance = 20.0;
 	if( [[self window] firstResponder] != self)
 	{
 		[[self window] makeFirstResponder: self];
-		return;
+		if( !(windowController.curvedPathCreationMode && [self getTool: theEvent] == tCurvedROI))
+			return;
 	}
 	
 	dontCheckRoiChange = YES;
@@ -1787,6 +1819,14 @@ static CGFloat CPRMPRDCMViewCurveMouseTrackingDistance = 20.0;
                                 N3Vector lastPoint = [[curvedPath.nodes lastObject] N3VectorValue];
                                 viewToDicomTransform = N3AffineTransformConcat(N3AffineTransformMakeTranslation(0, 0,
                                                              N3VectorApplyTransform(lastPoint, N3AffineTransformInvert(viewToDicomTransform)).z), viewToDicomTransform);
+                            }
+                            N3Vector patientNode = N3VectorApplyTransform(N3VectorMakeFromNSPoint(mouseLocation), viewToDicomTransform);
+                            HorosCurvedMPRPathDecision *decision = [[self horosCurvedPathSession] addPatientNodeX:patientNode.x y:patientNode.y z:patientNode.z];
+                            if (decision.accepted == NO)
+                            {
+                                NSLog(@"Curved MPR node refused: %@", decision.diagnosis);
+                                [self sendDidEditCurvedPath];
+                                return;
                             }
                             [curvedPath addNode:mouseLocation transform:viewToDicomTransform];
                             [self sendDidUpdateCurvedPath];
@@ -2437,8 +2477,10 @@ static CGFloat CPRMPRDCMViewCurveMouseTrackingDistance = 20.0;
     if( cgl_ctx == nil)
         return;
     
-	if( isnan( self.curDCM.pixelSpacingX) || isnan( self.curDCM.pixelSpacingY) || self.curDCM.pixelSpacingX <= 0 || self.curDCM.pixelSpacingY <= 0 || self.curDCM.pixelSpacingX > 1000 || self.curDCM.pixelSpacingY > 1000)
+	NSString *geometry = [HorosCPRRenderLifecycle diagnoseSpacingX:self.curDCM.pixelSpacingX spacingY:self.curDCM.pixelSpacingY];
+	if( [geometry isEqualToString:@"ready"] == NO)
 	{
+		NSLog(@"CPR invalid geometry: %@", geometry);
 		return;
 	}
 	

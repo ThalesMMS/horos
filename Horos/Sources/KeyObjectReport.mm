@@ -17,12 +17,13 @@
 
 #undef verify
 
-#include "osconfig.h"    /* make sure OS specific configuration is included first */
-#include "ofstream.h"
-#include "dsrdoc.h"
-#include "dcuid.h"
-#include "dcfilefo.h"
-#include "dsrtypes.h"
+#include "HorosDCMTKCompatibility.h"
+#include <dcmtk/config/osconfig.h>    /* make sure OS specific configuration is included first */
+#include <dcmtk/ofstd/ofstream.h>
+#include "HorosStructuredReportBridge.h"
+#include <dcmtk/dcmdata/dcuid.h>
+#include <dcmtk/dcmdata/dcfilefo.h>
+#include <dcmtk/dcmsr/dsrtypes.h>
 
 @implementation KeyObjectReport
 
@@ -40,7 +41,7 @@
 
 - (void)createKO{
 	//NSLog(@"create KO");
-	_doc = new DSRDocument(DSRTypes::DT_KeyObjectDoc);
+	_doc = new HorosSRDocument(DSRTypes::DT_KeyObjectSelectionDocument);
 	_doc->setSpecificCharacterSet("ISO_IR 192"); //UTF 8 string encoding
 	_doc->createNewSeriesInStudy([[_study valueForKey:@"studyInstanceUID"] UTF8String]);
 
@@ -79,7 +80,7 @@
 	_doc->setManufacturer("OsiriX");
 	
 	// get KeyImages
-	_keyImages = [[(DicomStudy *)_study keyImages] retain];
+	_keyImages = [[[(DicomStudy *)_study keyImages] allObjects] retain];
 		
 	const char *codeMeaning;
 	const char *codeValue;
@@ -166,7 +167,7 @@
 				_doc->getTree().addContentItem(DSRTypes::RT_contains, DSRTypes::VT_Image);
 			}
 			
-			_doc->getTree().getCurrentContentItem().setImageReference(DSRImageReferenceValue(sopClassUID, instanceUID));
+			_doc->getTree().getCurrentContentItem().setImageReference(HorosSRImageReference(sopClassUID, instanceUID));
 			_doc->getCurrentRequestedProcedureEvidence().addItem(studyUID, seriesUID, sopClassUID, instanceUID);
 		}
 		//go back up in tree
@@ -175,7 +176,7 @@
 	}
 
 	//NSLog(@"end createKO");	
-	//_doc->print(cout, nil);
+	//_doc->print(std::cout, 0);
 }
 
  
@@ -227,7 +228,7 @@
 		status = fileformat.saveFile([path UTF8String], EXS_LittleEndianExplicit);
 	}
 	else {
-		 _doc->print(cout, nil);
+		 _doc->print(std::cout, 0);
 		NSLog(@"could not covert to dataset");
 	}
 	
@@ -243,7 +244,7 @@
 
 - (BOOL)writeHTMLAtPath:(NSString *)path{
 		size_t renderFlags = DSRTypes::HF_renderDcmtkFootnote;		
-	ofstream stream([path UTF8String]);
+	std::ofstream stream([path UTF8String]);
 	if ( _doc->renderHTML(stream, renderFlags, NULL).good())	
 		return YES;	
 	return NO;

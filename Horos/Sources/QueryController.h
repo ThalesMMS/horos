@@ -116,6 +116,7 @@ enum
 	QueryArrayController					*queryManager;
 	
 	BOOL									autoQuery, queryButtonPressed, performingCFind, avoidQueryControllerDeallocReentry;
+	NSSize									designedMinimumSize;
 	
 	NSInteger								autoRefreshQueryResults;
 	NSRecursiveLock							*autoQueryLock;
@@ -180,6 +181,11 @@ enum
 - (QueryFilter*) getModalityQueryFilter:(NSArray*) modalityArray;
 - (void) refreshSources;
 - (IBAction) retrieveAndViewClick: (id) sender;
+/** Retrieve-and-view items waiting for their first image (#604). */
+- (NSArray*) pendingRetrieveAndViewItems;
+- (void) addPendingRetrieveAndViewItem:(id) item;
+- (void) removePendingRetrieveAndViewItem:(id) item;
+- (void) openPendingRetrieveAndViewItemsForStudyUIDs:(NSArray*) studyUIDs;
 - (IBAction) retrieveAndView: (id) sender;
 - (IBAction) view:(id) sender;
 - (IBAction) setBirthDate:(id) sender;
@@ -202,6 +208,7 @@ enum
 - (NSArray*) localStudy:(id) item context: (NSManagedObjectContext*) context;
 - (IBAction) endAddPreset:(id) sender;
 - (void) buildPresetsMenu;
+- (IBAction) fullScreenMenu:(id) sender;
 - (IBAction) autoQueryTimer:(id) sender;
 - (IBAction) switchAutoRetrieving: (id) sender;
 - (IBAction) selectModality: (id) sender;

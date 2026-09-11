@@ -53,6 +53,7 @@
     NSString* _name;
     DicomAlbum* _album;
     NSString* _predicateFormat;
+    NSButton* _contentCriterionCheckbox;
     NSTextField* _nameField;
     O2DicomPredicateEditor* _editor;
     NSInteger _mode;
@@ -82,5 +83,10 @@
 - (IBAction)okAction:(id)sender;
 - (IBAction)helpAction:(id)sender;
 - (IBAction)testAction:(id)sender;
+/// Toggles the "studies with ROIs or segmentations" clause on the predicate
+/// being edited, without touching the rest of it (#380 B).
+- (IBAction)toggleContentCriterion:(id)sender;
+/// Whether the predicate being edited carries that clause.
+@property(readonly) BOOL wantsROIOrSegmentation;
 
 @end

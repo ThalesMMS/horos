@@ -63,6 +63,21 @@ GNU Affero General Public License as follows
 
 ============================================================================
 
+Selected work may later be adapted from ystarrev/horos
+(https://github.com/ystarrev/horos), authored by Yves Starreveld.
+The LICENSE and COPYING.LESSER of revision
+23722fb552d96fa2d60c7f58a6d4ac2c27950f86 are stored under
+docs/third-party/ystarrev-horos-23722fb552d96fa2d60c7f58a6d4ac2c27950f86/.
+Reused excerpts keep their original headers. Local modifications in this
+workbench remain attributed to this repository's contributors. This notice does
+not assign exclusive authorship of Horos to this workbench.
+
+The origin LICENSE at that revision does not include the Purview/HorosCloud
+notice below. That local notice is kept. The corresponding removal is not
+imported.
+
+============================================================================
+
 (C) Copyright 2018 Nimble Co LLC d/b/a Purview.  All Rights Reserved.  HorosCloud is a Trademark of Purview.
 
 */

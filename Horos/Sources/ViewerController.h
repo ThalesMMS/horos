@@ -43,6 +43,7 @@
 #import "DCMView.h" // added for ToolMode enum
 
 @class DCMView;
+@class HorosMPROpenDecision;
 @class OpacityTransferView;
 @class ColorTransferView;
 @class MyPoint;
@@ -373,6 +374,7 @@ enum
     
     NSRect                  windowFrameToRestore;
     BOOL                    scaleFitToRestore;
+    NSString                *printSpoolDirectory;
     
     IBOutlet NSView         *viewerView;
     
@@ -597,6 +599,10 @@ enum
 - (IBAction) setButtonTool:(id) sender;
 - (IBAction) shutterOnOff:(id) sender;
 - (void) setImageIndex:(long) i;
+/** Text the image view draws while the series is being received, ended short or unverified (#604); empty otherwise. */
+- (NSString*) retrieveStatusOverlay;
+/** YES while a retrieve-and-view of this series is still in flight or ended short: no complete volume can be assumed. */
+- (BOOL) isReceivingPartialSeries;
 - (void) setImage:(NSManagedObject*) image;
 - (long) imageIndex;
 - (IBAction) editSUVinjectionTime:(id)sender;
@@ -656,6 +662,7 @@ enum
 - (void) setROIToolTag:(ToolMode) roitype;
 - (void) changeImageData:(NSMutableArray*)f :(NSMutableArray*)d :(NSData*) v :(BOOL) applyTransition;
 - (ViewerController*) copyViewerWindow;
+- (IBAction) exportCroppedSeries: (id) sender;
 - (void) copyVolumeData: (NSData**) vD andDCMPix: (NSMutableArray **) newPixList forMovieIndex: (int) v;
 - (IBAction) loadSerie:(id) sender;
 - (IBAction) loadPatient:(id) sender;
@@ -677,6 +684,7 @@ enum
 - (IBAction) endBlendingType:(id) sender;
 - (IBAction) endQuicktime:(id) sender;
 - (IBAction) setDefaultTool:(id) sender;
+- (IBAction)togglePatientCrosshair:(id)sender;
 - (id) viewCinit:(NSMutableArray*)f :(NSMutableArray*) d :(NSData*) v;
 - (id) initWithPix:(NSMutableArray*)f withFiles:(NSMutableArray*) d withVolume:(NSData*) v;
 - (IBAction) speedSliderAction:(id) sender;
@@ -737,6 +745,9 @@ enum
 - (IBAction) MoviePlayStop:(id) sender;
 - (void) MovieStop:(id) sender;
 - (BOOL)isPlaying4D;
+- (NSString *)fourDReconstructionRefusalReason;
+- (NSString *)fourDFusionRefusalReason;
+- (BOOL) refuseFourDFusionWithTitle: (NSString *) title;
 - (void) checkEverythingLoaded;
 - (BOOL) isEverythingLoaded;
 + (BOOL) areLoadingViewers;
@@ -900,6 +911,10 @@ enum
 - (IBAction) roiDeleteGeneratedROIs:(id) sender;
 - (ROI*)selectedROI;
 - (NSMutableArray*) selectedROIs;
+- (IBAction) generateGeometryFromSelectedLine:(id) sender;
+- (IBAction) measureBetweenSelectedSlices:(id) sender;
+- (void) increaseFontSize:(id) sender;
+- (void) decreaseFontSize:(id) sender;
 - (ViewerController*) registeredViewer;
 - (void) setRegisteredViewer: (ViewerController*) viewer;
 - (void)setMode:(long)mode toROIGroupWithID:(NSTimeInterval)groupID;
@@ -908,6 +923,7 @@ enum
 - (void) refreshToolbar;
 - (void) redrawToolbar;
 - (NSScrollView*) previewMatrixScrollView;
+- (void) updateSeriesListMode;
 - (NSView*) previewRootView;
 
 #pragma mark-
@@ -1071,6 +1087,8 @@ enum
 /** Returns the MPRController for this ViewerController; creating one if necessary */
 
 - (MPRController *)openMPRViewer;
+/** The geometry every reconstruction door agrees about (#374, A205). */
+- (HorosMPROpenDecision*) reconstructionOpeningDecision;
 - (IBAction)mprViewer:(id)sender;
 
 /** Action to open the CPRViewer */

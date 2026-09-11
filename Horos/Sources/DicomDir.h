@@ -40,5 +40,6 @@
 @interface DicomDir : NSObject
 
 +(void)createDicomDirAtDir:(NSString*)path;
++(BOOL)createDicomDirAtDir:(NSString*)path error:(NSError**)error;
 
 @end

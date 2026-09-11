@@ -45,6 +45,7 @@
 #undef verify
 
 #include "osconfig.h"    /* make sure OS specific configuration is included first */
+#include <errno.h>
 
 BEGIN_EXTERN_C
 #ifdef HAVE_SYS_STAT_H
@@ -1135,7 +1136,13 @@ OFCondition DcmQueryRetrieveOsiriXDatabaseHandle::startMoveRequest(
 
 OFCondition DcmQueryRetrieveOsiriXDatabaseHandle::cancelMoveRequest (DcmQueryRetrieveDatabaseStatus *status)
 {
-	return DcmQROsiriXDatabaseError;
+    // The provider must see a terminal status before deciding whether to start
+    // another C-STORE and whether to release its storage association.
+    NSLog(@"---- DICOM retrieve cancellation accepted: %d remaining", handle->NumberRemainOperations);
+    [handle->dataHandler cancelMove];
+    handle->NumberRemainOperations = 0;
+    status->setStatus(STATUS_MOVE_Cancel_SubOperationsTerminatedDueToCancelIndication);
+    return EC_Normal;
 }
 
 
@@ -1248,10 +1255,35 @@ OFCondition DcmQueryRetrieveOsiriXDatabaseHandle::storeRequest(
       const char *SOPClassUID,
       const char *SOPInstanceUID,
       const char *imageFileName,
-      DcmQueryRetrieveDatabaseStatus  *status,
-      OFBool     isNew){
-	  
- return EC_Normal;
+      DcmQueryRetrieveDatabaseStatus *status,
+      OFBool isNew)
+{
+    // Publish the completed file before the C-STORE response promises Success.
+    // A TEMP file alone is not available to the database's incoming importer.
+    const char *incoming = [[DicomDatabase activeLocalDatabase] incomingDirPathC];
+    const char *basename = strrchr(imageFileName, '/');
+    basename = basename ? basename + 1 : imageFileName;
+    char destination[MAXPATHLEN + 1];
+    int length = snprintf(destination, sizeof(destination), "%s/%s", incoming, basename);
+    int failure = 0;
+    if (!incoming[0] || !basename[0])
+        failure = EINVAL;
+    else if (length < 0 || (size_t)length >= sizeof(destination))
+        failure = ENAMETOOLONG;
+    else if (rename(imageFileName, destination) != 0)
+        failure = errno;
+
+    if (failure)
+    {
+        char message[4096];
+        snprintf(message, sizeof(message),
+                 "Cannot publish received DICOM to import directory %.2048s: %s (errno %d)",
+                 incoming, strerror(failure), failure);
+        status->setStatus(STATUS_STORE_Refused_OutOfResources);
+        return makeOFCondition(OFM_imagectn, 0x001, OF_error, message);
+    }
+    status->setStatus(STATUS_Success);
+    return EC_Normal;
 }
 
 /* ========================= UTILS ========================= */

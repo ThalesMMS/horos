@@ -36,6 +36,7 @@
  ============================================================================*/
 
 #import "WebPortalDatabase.h"
+#import "Horos-Swift.h"
 #import "WebPortalUser.h"
 #import "NSString+N2.h"
 
@@ -70,10 +71,8 @@ NSString* const WebPortalDatabaseStudyEntityName = @"Study";
 }
 
 -(WebPortalUser*)userWithName:(NSString*)name {
-	NSArray* res = [self usersWithPredicate:[NSPredicate predicateWithFormat:@"name LIKE[cd] %@", name]];
-	if (res.count)
-		return [res objectAtIndex:0];
-	return NULL;
+	NSArray* res = [self usersWithPredicate:[HorosWebPortalUserLookup predicateForName: name]];
+	return (WebPortalUser*)[HorosWebPortalUserLookup userAmong: res forName: name];
 }
 
 -(WebPortalUser*)newUser {

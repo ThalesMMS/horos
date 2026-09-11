@@ -40,6 +40,7 @@
 #import "ViewerController.h"
 #import "N2Debug.h"
 #import "AppController.h"
+#import "ToolbarPanel.h"
 
 @implementation ToolBarNSWindow
 
@@ -55,6 +56,23 @@
 - (BOOL) canBecomeKeyWindow
 {
 	return YES;
+}
+
+// The panel floats behind the viewer and hands the key status back to it, so
+// AppKit draws its toolbar as inactive. AppKit asks the window for its active
+// appearance through this private hook; answer with the viewer's key status,
+// because the panel is part of that window's chrome. Verified on macOS 26:
+// overriding isKeyWindow does not change the drawing, this does.
+- (BOOL) _hasActiveAppearance
+{
+    id controller = self.windowController;
+    if( [controller isKindOfClass: [ToolbarPanelController class]])
+    {
+        NSWindow *viewerWindow = [[(ToolbarPanelController*) controller viewer] window];
+        if( viewerWindow.isVisible && viewerWindow.isKeyWindow)
+            return YES;
+    }
+    return [super isKeyWindow];
 }
 
 - (void) orderBack:(id)sender

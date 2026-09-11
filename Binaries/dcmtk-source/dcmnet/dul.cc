@@ -1997,11 +1997,31 @@ initializeNetworkTCP(PRIVATE_NETWORKKEY ** key, void *parameter)
 #endif
 
         int sock;
-    struct sockaddr_in server;
+    struct sockaddr_storage server;
 
-        /* Create socket for internet type communication */
+        /* Create socket for internet type communication.
+         *
+         * An AF_INET socket can only ever be reached over IPv4, so a peer that
+         * has only an IPv6 address could not send here at all - which is half of
+         * what a retrieval needs, since a C-MOVE has the peer connect back. Take
+         * an IPv6 socket with IPV6_V6ONLY off, which accepts both families on
+         * the systems that allow it, and fall back to the IPv4-only socket
+         * exactly as before wherever that does not work.
+         */
         (*key)->networkSpecific.TCP.port = *(int *) parameter;
-        (*key)->networkSpecific.TCP.listenSocket = socket(AF_INET, SOCK_STREAM, 0);
+
+        sock = socket(AF_INET6, SOCK_STREAM, 0);
+        if (sock >= 0)
+        {
+            int dualStack = 0;
+            if (setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, (char *) &dualStack, sizeof(dualStack)) < 0)
+            {
+                (void) close(sock);
+                sock = -1;
+            }
+        }
+
+        (*key)->networkSpecific.TCP.listenSocket = (sock >= 0) ? sock : socket(AF_INET, SOCK_STREAM, 0);
         sock = (*key)->networkSpecific.TCP.listenSocket;
         if (sock < 0) {
             char buf1[256];
@@ -2021,14 +2041,39 @@ initializeNetworkTCP(PRIVATE_NETWORKKEY ** key, void *parameter)
 #endif
         /* Name socket using wildcards */
         memset(&server, 0, sizeof(server));
-        server.sin_len = sizeof(server);
-        server.sin_family = AF_INET;
-        server.sin_addr.s_addr = INADDR_ANY;
-        server.sin_port = (unsigned short) htons((*key)->networkSpecific.TCP.port);
-        if (::bind(sock, (struct sockaddr *)&server, sizeof(server)) < 0) {
-            char buf3[256];
-            sprintf(buf3, "TCP Initialization Error: %s", strerror(errno));
-            return makeDcmnetCondition(DULC_TCPINITERROR, OF_error, buf3);
+        {
+            int listenFamily = AF_INET;
+            socklen_t listenLength = 0;
+            struct sockaddr_storage probe;
+            socklen_t probeLength = sizeof(probe);
+
+            if (getsockname(sock, (struct sockaddr *) &probe, &probeLength) == 0)
+                listenFamily = probe.ss_family;
+
+            if (listenFamily == AF_INET6)
+            {
+                struct sockaddr_in6 *any6 = (struct sockaddr_in6 *) &server;
+                any6->sin6_len = sizeof(*any6);
+                any6->sin6_family = AF_INET6;
+                any6->sin6_addr = in6addr_any;
+                any6->sin6_port = (unsigned short) htons((*key)->networkSpecific.TCP.port);
+                listenLength = sizeof(*any6);
+            }
+            else
+            {
+                struct sockaddr_in *any4 = (struct sockaddr_in *) &server;
+                any4->sin_len = sizeof(*any4);
+                any4->sin_family = AF_INET;
+                any4->sin_addr.s_addr = INADDR_ANY;
+                any4->sin_port = (unsigned short) htons((*key)->networkSpecific.TCP.port);
+                listenLength = sizeof(*any4);
+            }
+
+            if (::bind(sock, (struct sockaddr *)&server, listenLength) < 0) {
+                char buf3[256];
+                sprintf(buf3, "TCP Initialization Error: %s", strerror(errno));
+                return makeDcmnetCondition(DULC_TCPINITERROR, OF_error, buf3);
+            }
         }
         /* Find out assigned port number and print it out */
         length = sizeof(server);

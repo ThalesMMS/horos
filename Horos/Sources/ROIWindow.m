@@ -39,6 +39,7 @@
 
 
 #import "ROIWindow.h"
+#import "HorosCalibration.h"
 #import "HistogramWindow.h"
 #import "PlotWindow.h"
 #import "DCMView.h"
@@ -50,7 +51,9 @@
 - (void)comboBoxWillPopUp:(NSNotification *)notification
 {
 	NSLog(@"will display...");
-	roiNames = [curController generateROINamesArray];
+	NSArray *updatedNames = [[curController generateROINamesArray] copy];
+	[roiNames release];
+	roiNames = updatedNames;
 	[[notification object] setDataSource: self];
 	
 	[[notification object] noteNumberOfItemsChanged];
@@ -59,7 +62,7 @@
 
 - (NSUInteger)comboBox:(NSComboBox *)aComboBox indexOfItemWithStringValue:(NSString *)aString
 {
-	if( roiNames == nil) roiNames = [curController generateROINamesArray];
+	if( roiNames == nil) roiNames = [[curController generateROINamesArray] copy];
 	
 	long i;
 	
@@ -73,16 +76,16 @@
 
 - (NSInteger)numberOfItemsInComboBox:(NSComboBox *)aComboBox
 {
-	if( roiNames == nil) roiNames = [curController generateROINamesArray];
+	if( roiNames == nil) roiNames = [[curController generateROINamesArray] copy];
 	return [roiNames count];
 }
 
 - (id)comboBox:(NSComboBox *)aComboBox objectValueForItemAtIndex:(NSInteger)index
 {
-    if ( index > -1 )
+    if ( index >= 0 )
     {
-		if( roiNames == nil) roiNames = [curController generateROINamesArray];
-		return [roiNames objectAtIndex: index];
+		if( roiNames == nil) roiNames = [[curController generateROINamesArray] copy];
+		if ((NSUInteger)index < [roiNames count]) return [roiNames objectAtIndex:index];
     }
     
     return nil;
@@ -113,6 +116,8 @@
     [[NSNotificationCenter defaultCenter] removeObserver: self];
 	[previousName release];
 	previousName = nil;
+    [roiNames release];
+    roiNames = nil;
 	
 	[super dealloc];
 }
@@ -121,7 +126,7 @@
 {
 	if( [note object] == curController)
 	{
-		[self windowWillClose: nil];
+		[self close];
 	}
 }
 
@@ -129,48 +134,74 @@
 {
 	if( [note object] == curROI)
 	{
-		[self windowWillClose: nil];
+        // The removal notification can be sent from ROI dealloc. Do not write back to it.
+        curROI = nil;
+		[self close];
 	}
 }
 
 - (IBAction) recalibrate:(id) sender
 {
-    int		modalVal;
-	float	pixels;
-	float   newResolution;
-	
-    [NSApp beginSheet:recalibrateWindow 
-            modalForWindow: [self window]
-            modalDelegate:self 
-            didEndSelector:NULL 
-            contextInfo:NULL];
-	
-	[recalibrateValue setStringValue: [NSString stringWithFormat:@"%0.3f", (float) [curROI MesureLength :&pixels]] ];
-	
-    modalVal = [NSApp runModalForWindow:recalibrateWindow];
-	
-	if( modalVal)
-	{
-		newResolution = [recalibrateValue floatValue] / pixels;
-		newResolution *= 10.0;
-		
-		for( DCMPix *pix in [curController pixList])
-		{
-			float previousX = [pix pixelSpacingX];
-			
-			[pix setPixelSpacingX: newResolution];
-			
-			if( previousX)
-				[pix setPixelSpacingY: [pix pixelSpacingY] * newResolution / previousX];
-			else
-				[pix setPixelSpacingY: newResolution];
-		}
-		
-		[[NSNotificationCenter defaultCenter] postNotificationName: OsirixRecomputeROINotification object:curController userInfo: nil];
-	}
-	
+    float pixels = 0;
+    float length = curROI.points.count >= 2 ? [curROI MesureLength:&pixels] : 0;
+    if (!isfinite(pixels) || pixels <= 0 || !isfinite(length))
+    {
+        NSRunCriticalAlertPanel(NSLocalizedString(@"Error", nil),
+            NSLocalizedString(@"Use a measurement line with a finite, nonzero length to calibrate the image.", nil),
+            NSLocalizedString(@"OK", nil), nil, nil);
+        return;
+    }
+    [recalibrateValue setStringValue:[NSString stringWithFormat:@"%0.3f", length]];
+    [NSApp beginSheet:recalibrateWindow modalForWindow:[self window]
+        modalDelegate:self didEndSelector:NULL contextInfo:NULL];
+    NSInteger result = [NSApp runModalForWindow:recalibrateWindow];
     [NSApp endSheet:recalibrateWindow];
-    [recalibrateWindow orderOut:NULL];   
+    [recalibrateWindow orderOut:NULL];
+    if (!result) return;
+
+    float requestedLength = 0;
+    BOOL valid = HorosCalibrationFloat([recalibrateValue stringValue], [NSLocale currentLocale], &requestedLength) && requestedLength > 0;
+    double resolution = (double)requestedLength * 10.0 / pixels; // Entered length is in cm; spacing is in mm.
+    valid = valid && isfinite(resolution) && resolution > 0 && resolution <= FLT_MAX && (float)resolution > 0;
+    NSArray *images = [curController pixList];
+    NSMutableArray *verticalSpacings = [NSMutableArray arrayWithCapacity:images.count];
+    // Validate the entire series before changing any image, including aspect-ratio overflow.
+    for (DCMPix *pix in images)
+    {
+        double previousX = pix.pixelSpacingX;
+        double previousY = pix.pixelSpacingY;
+        double vertical = previousX == 0 ? resolution : previousY * resolution / previousX;
+        valid = valid && isfinite(previousX) && previousX >= 0 &&
+            isfinite(vertical) && vertical > 0 && vertical <= FLT_MAX && (float)vertical > 0;
+        [verticalSpacings addObject:@(vertical)];
+    }
+    if (!valid)
+    {
+        NSRunCriticalAlertPanel(NSLocalizedString(@"Error", nil),
+            NSLocalizedString(@"Enter a positive, finite length that produces valid pixel spacing for every image.", nil),
+            NSLocalizedString(@"OK", nil), nil, nil);
+        return;
+    }
+    for (NSUInteger i = 0; i < images.count; i++)
+    {
+        DCMPix *pix = [images objectAtIndex:i];
+        [pix setPixelSpacingX:(float)resolution];
+        [pix setPixelSpacingY:[[verticalSpacings objectAtIndex:i] floatValue]];
+    }
+    // Calibration changes physical units, not the ROI's image coordinates.
+    // Update every ROI now; waiting for a draw leaves off-screen measurements stale.
+    NSArray *seriesROIs = [curController roiList];
+    for (NSUInteger i = 0; i < MIN(images.count, seriesROIs.count); i++)
+    {
+        DCMPix *pix = [images objectAtIndex:i];
+        for (ROI *roi in [seriesROIs objectAtIndex:i])
+        {
+            roi.pixelSpacingX = pix.pixelSpacingX;
+            roi.pixelSpacingY = pix.pixelSpacingY;
+        }
+    }
+    [[NSNotificationCenter defaultCenter] postNotificationName:OsirixRecomputeROINotification object:curController userInfo:nil];
+    [[NSNotificationCenter defaultCenter] postNotificationName:OsirixUpdateViewNotification object:curController userInfo:nil];
 }
 
 - (IBAction)acceptSheet:(id)sender
@@ -187,8 +218,15 @@
 {
 	if( curROI == iroi) return;
 	
-	[curROI setComments: [NSString stringWithString: [comments string]]];	// stringWithString is very important - see NSText string !
-	[curROI setName: [name stringValue]];
+	@try
+	{
+		[curROI setComments: [NSString stringWithString: [comments string]]];	// stringWithString is very important - see NSText string !
+		[curROI setName: [name stringValue]];
+	}
+	@catch (NSException *e)
+	{
+		NSLog( @"ROIWindow setROI: keeping previous name/comments after exception: %@ %@", e.name, e.reason);
+	}
 	
 	[[NSNotificationCenter defaultCenter] postNotificationName: OsirixROIChangeNotification object:curROI userInfo: nil];
 
@@ -196,7 +234,8 @@
 	curROI = iroi;
 	
 	RGBColor	rgb = [curROI rgbcolor];
-	NSColor		*color = [NSColor colorWithDeviceRed:rgb.red/65535. green: rgb.green/65535. blue:rgb.blue/65535. alpha:1.0];
+	// Match setColor: so applying the displayed color does not convert device RGB again.
+	NSColor		*color = [NSColor colorWithCalibratedRed:rgb.red/65535. green: rgb.green/65535. blue:rgb.blue/65535. alpha:1.0];
 	
 	[colorButton setColor: color];
 	
@@ -245,8 +284,6 @@
 	
 	getName = [[NSTimer scheduledTimerWithTimeInterval: 0.1 target:self selector:@selector(getName:) userInfo:0 repeats: YES] retain];
 	
-	roiNames = nil;
-	
 	[self setROI: iroi :c];
 		
 	return self;
@@ -254,6 +291,10 @@
 
 - (void) windowWillClose:(NSNotification *)notification
 {
+    // Removal and viewer-close notifications can precede the window delegate callback.
+    if (closing) return;
+    closing = YES;
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
 	[[self window] setAcceptsMouseMovedEvents: NO];
 	
 	[getName invalidate];
@@ -262,9 +303,17 @@
 	
 	[ROI saveDefaultSettings];
 	
-	[curROI setComments: [NSString stringWithString: [comments string]]]; 	// stringWithString is very important - see NSText string !
-	[curROI setName: [name stringValue]];
+	@try
+	{
+		[curROI setComments: [NSString stringWithString: [comments string]]]; 	// stringWithString is very important - see NSText string !
+		[curROI setName: [name stringValue]];
+	}
+	@catch (NSException *e)
+	{
+		NSLog( @"ROIWindow windowWillClose: keeping previous name/comments after exception: %@ %@", e.name, e.reason);
+	}
 	curROI = nil;
+    curController = nil;
 	
 	[[NSNotificationCenter defaultCenter] postNotificationName: OsirixROIChangeNotification object:curROI userInfo: nil];
 	
@@ -272,25 +321,66 @@
 }
 
 - (void) setAllMatchingROIsToSameParamsAs: (ROI*) iROI withNewName: (NSString*) newName
+{
+	[self setAllMatchingROIsToSameParamsAs: iROI matchingName: [iROI name] withNewName: newName];
+}
+
+- (void) setAllMatchingROIsToSameParamsAs: (ROI*) iROI matchingName: (NSString*) matchingName withNewName: (NSString*) newName
 {	
 	NSArray *roiSeriesList = [curController roiList];	
+	NSString *oldName = [[matchingName copy] autorelease];
+	NSMutableArray *renamed = [NSMutableArray array];
 	
-	for ( NSArray *roiImageList in roiSeriesList )
+	@try
 	{
-		for ( ROI *roi in roiImageList )
+		for ( NSArray *roiImageList in roiSeriesList )
 		{
-			if ( roi == curROI ) continue;
-			
-			if ( [[roi name] isEqualToString: [iROI name]] )
+			for ( ROI *roi in roiImageList )
 			{
-				[roi setColor: [iROI rgbcolor]];
-				[roi setThickness: [iROI thickness]];
-				[roi setOpacity: [iROI opacity]];
-				if ( newName ) [roi setName: newName];
-				[[NSNotificationCenter defaultCenter] postNotificationName: OsirixROIChangeNotification object:roi userInfo: nil];
+				if ( roi == curROI ) continue;
+				
+				if ( [[roi name] isEqualToString: oldName] )
+				{
+					[roi setColor: [iROI rgbcolor]];
+					[roi setThickness: [iROI thickness]];
+					[roi setOpacity: [iROI opacity]];
+					if ( newName )
+					{
+						[roi setName: newName];
+						[renamed addObject: roi];
+					}
+					[[NSNotificationCenter defaultCenter] postNotificationName: OsirixROIChangeNotification object:roi userInfo: nil];
+				}
 			}
 		}
 	}
+	@catch (NSException *e)
+	{
+		// A failure (typically NSMallocException under memory pressure) must not leave the series with
+		// two names for the same structure: undo the renames already applied, then let the caller report.
+		for ( ROI *roi in renamed )
+		{
+			@try { [roi setName: oldName]; }
+			@catch (NSException *inner) { NSLog( @"ROIWindow: unable to restore name of %@: %@", roi, inner.reason); }
+		}
+		@throw;
+	}
+}
+
+- (void) presentRenameFailure:(NSException*) exception previousName:(NSString*) previousName
+{
+	NSLog( @"ROIWindow: renaming failed (%@: %@); name kept as %@", exception.name, exception.reason, previousName);
+	
+	if ( previousName )
+		[name setStringValue: previousName];
+	
+	NSAlert *alert = [[[NSAlert alloc] init] autorelease];
+	alert.alertStyle = NSAlertStyleCritical;
+	alert.messageText = NSLocalizedString( @"ROI Rename Error", nil);
+	alert.informativeText = [exception.name isEqualToString: NSMallocException]
+		? NSLocalizedString( @"There is not enough memory to rename the ROI. The previous name was kept.", nil)
+		: [NSString stringWithFormat: NSLocalizedString( @"The ROI could not be renamed. The previous name was kept.\n\n%@", nil), exception.reason ?: @""];
+	[alert runModal];
 }
 
 - (void) removeAllROIsWithName: (NSString*) roiName
@@ -319,9 +409,34 @@
 
 - (IBAction) setTextData:(id) sender
 {
-	if ( [self allWithSameName] ) [self setAllMatchingROIsToSameParamsAs: curROI withNewName: [sender stringValue]];
+	NSString *newName = [sender stringValue];
+	NSString *previous = [[[curROI name] copy] autorelease];
 	
-	[curROI setName: [sender stringValue]];
+	@try
+	{
+		[curROI setName: newName];
+		
+		if ( [self allWithSameName] )
+		{
+			@try
+			{
+				[self setAllMatchingROIsToSameParamsAs: curROI matchingName: previous withNewName: newName];
+			}
+			@catch (NSException *e)
+			{
+				// The matching ROIs were restored by the callee; restore the edited ROI as well.
+				@try { [curROI setName: previous]; }
+				@catch (NSException *inner) { NSLog( @"ROIWindow: unable to restore name of %@: %@", curROI, inner.reason); }
+				@throw;
+			}
+		}
+	}
+	@catch (NSException *e)
+	{
+		[self presentRenameFailure: e previousName: previous];
+		return;
+	}
+	
 	[[NSNotificationCenter defaultCenter] postNotificationName: OsirixROIChangeNotification object:curROI userInfo: nil];
 }
 

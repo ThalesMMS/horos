@@ -39,9 +39,9 @@
 #import <Cocoa/Cocoa.h>
 
 #ifdef __cplusplus
-#include "dsrdoc.h"
+#include "HorosStructuredReportBridge.h"
 #else
-typedef char DSRDocument;
+typedef char HorosSRDocument;
 #endif
 
 #import "ROI.h"
@@ -49,7 +49,7 @@ typedef char DSRDocument;
 
 @interface SRAnnotation : NSObject
 {
-	DSRDocument			*document;
+	HorosSRDocument			*document;
 	DicomImage          *image;
 	BOOL				_newSR;
 	NSString			*_seriesInstanceUID, *_DICOMSRDescription, *_DICOMSeriesNumber, *_reportURL;

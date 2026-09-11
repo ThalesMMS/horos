@@ -193,6 +193,7 @@ extern AppController* OsiriX;
 #pragma mark static menu items
 //===============OSIRIX========================
 - (IBAction) about:(id)sender; /**< Display the about window */
+- (IBAction) printFromMenu:(id)sender;
 - (IBAction) showPreferencePanel:(id)sender; /**< Show Preferences window */
 #ifndef OSIRIX_LIGHT
 #ifndef MACAPPSTORE
@@ -204,6 +205,8 @@ extern AppController* OsiriX;
 - (IBAction) setFixedTilingRows: (id) sender;
 - (IBAction) setFixedTilingColumns: (id) sender;
 - (void) initTilingWindows;
+- (void) buildTilingAreaMenu;
+- (IBAction) setTilingArea: (id) sender;
 - (IBAction) tileWindows:(id)sender;  /**< Tile open window */
 - (IBAction) tile3DWindows:(id)sender; /**< Tile 3D open window */
 - (void) tileWindows:(id)sender windows: (NSMutableArray*) viewersList display2DViewerToolbar: (BOOL) display2DViewerToolbar displayThumbnailsList: (BOOL) displayThumbnailsList;
@@ -221,7 +224,6 @@ extern AppController* OsiriX;
 - (IBAction) openCommunityPage: (id) sender;
 - (IBAction) openBugReportPage:(id)sender;
 - (IBAction) sendEmail: (id) sender;
-- (IBAction) osirix64bit: (id) sender;
 //=============================================
 
 - (IBAction) killAllStoreSCU:(id) sender;
@@ -299,6 +301,8 @@ extern AppController* OsiriX;
 - (void)playGrabSound;
 
 - (void)displayError:(NSString *)err;
+- (void)reportListenBindFailureForService:(NSString*)service port:(NSInteger)port errnoCode:(int)code;
 
+- (void)updateScreenParameters;
 @end
 

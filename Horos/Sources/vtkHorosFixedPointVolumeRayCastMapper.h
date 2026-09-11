@@ -46,13 +46,26 @@ public:
     
     static vtkHorosFixedPointVolumeRayCastMapper *New();
     void Render( vtkRenderer *, vtkVolume * );
+    bool PrepareMPRGeometry(vtkRenderer *, vtkVolume *);
+    typedef bool (*ImageRenderer)(void *, vtkHorosFixedPointVolumeRayCastMapper *, vtkRenderer *, vtkVolume *);
+    void SetImageRenderer(ImageRenderer renderer, void *context)
+    {
+        this->RenderImage = renderer;
+        this->RenderImageContext = context;
+        this->ExternalImageValid = false;
+    }
+    bool GetExternalImageValid() const { return this->ExternalImageValid; }
     
 protected:
     
     vtkHorosFixedPointVolumeRayCastMapper();
     void DisplayRenderedImage( vtkRenderer *ren, vtkVolume   *vol );
+    void SanitizeRayCastZBuffer();
     
 private:
+    ImageRenderer RenderImage = nullptr;
+    void *RenderImageContext = nullptr;
+    bool ExternalImageValid = false;
     
     vtkHorosFixedPointVolumeRayCastMapper(const vtkHorosFixedPointVolumeRayCastMapper&);  // Not implemented.
     void operator=(const vtkHorosFixedPointVolumeRayCastMapper&);  // Not implemented.

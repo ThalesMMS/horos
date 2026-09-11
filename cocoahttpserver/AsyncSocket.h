@@ -191,6 +191,14 @@ typedef enum AsyncSocketError AsyncSocketError;
 {
 	CFSocketNativeHandle theNativeSocket4;
 	CFSocketNativeHandle theNativeSocket6;
+	// Connected native sockets stay owned here; CFNetwork never receives them.
+	BOOL theNativeSocketIsOurs;
+	BOOL theNativeTransport;
+	BOOL theNativeTransportOpen;
+	BOOL theNativeWriteBlocked;
+	NSUInteger theNativeOpenGeneration;
+	void *theNativeTLSContext;
+	NSError *theNativeTransportError;
 	
 	CFSocketRef theSocket4;            // IPv4 accept or connect socket
 	CFSocketRef theSocket6;            // IPv6 accept or connect socket
@@ -221,6 +229,9 @@ typedef enum AsyncSocketError AsyncSocketError;
 	long theUserData;
 }
 
+// errno of the last failed accept/bind, or 0 after a successful listen.
++ (int)lastBindErrno;
+
 - (id)init;
 - (id)initWithDelegate:(id)delegate;
 - (id)initWithDelegate:(id)delegate userData:(long)userData;
@@ -242,6 +253,8 @@ typedef enum AsyncSocketError AsyncSocketError;
 
 /* Don't use these to read or write. And don't close them either! */
 - (CFSocketRef)getCFSocket;
+// Hostname connections expose CFStreams. Accepted/address connections use the
+// owned native socket returned by getCFSocket; configure TLS with startTLS:.
 - (CFReadStreamRef)getCFReadStream;
 - (CFWriteStreamRef)getCFWriteStream;
 

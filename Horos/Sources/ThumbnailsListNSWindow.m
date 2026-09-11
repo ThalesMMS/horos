@@ -53,8 +53,22 @@
 	return NO;
 }
 
+- (void)hideForReconfiguration
+{
+    [super orderOut:self];
+}
+
 - (void) orderOut:(id)sender
 {
+    // The spare controller has no display of its own. Its nib window can still
+    // sit on a real screen: that must not let it borrow the same list as the
+    // registered panel, or reveal itself while handling focus notifications.
+    if( [AppController thumbnailsListPanelForScreen: self.screen].window != self)
+    {
+        [super orderOut:sender];
+        return;
+    }
+
     if( [[NSUserDefaults standardUserDefaults] boolForKey: @"SeriesListVisible"] == NO)
     {
         [super orderOut:sender];

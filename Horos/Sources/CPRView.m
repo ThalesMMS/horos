@@ -130,6 +130,13 @@
     [[self reformationView] waitUntilPixUpdate];
 }
 
+- (BOOL)cancelStraightenedGeneration
+{
+    if (_reformationType == CPRViewStraightenedReformationType)
+        return [_straightenedView cancelStraightenedGeneration];
+    return NO;
+}
+
 
 #pragma mark DCMView-like methods
 

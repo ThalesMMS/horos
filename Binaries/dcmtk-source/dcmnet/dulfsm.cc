@@ -2197,63 +2197,102 @@ requestAssociationTCP(PRIVATE_NETWORKKEY ** network,
     
     retry:
     
-    char node[128];
+    char node[256];
     int  port;
-    struct sockaddr_in server;
-    struct hostent *hp;
+    struct sockaddr_storage server;
+    socklen_t serverLen = 0;
     int s;
     struct linger sockarg;
 
-    if (sscanf(params->calledPresentationAddress, "%[^:]:%d", node, &port) != 2) // This will fail with IPv6
-    {
-        char buf[1024];
-        sprintf(buf,"Illegal service parameter: %s", params->calledPresentationAddress);
-        return makeDcmnetCondition(DULC_ILLEGALSERVICEPARAMETER, OF_error, buf);
-    }
-
-    s = socket(AF_INET, SOCK_STREAM, 0);
-    if (s < 0)
-    {
-      char buf1[256];
-      sprintf(buf1, "TCP Initialization Error: %s", strerror(errno));
-      return makeDcmnetCondition(DULC_TCPINITERROR, OF_error, buf1);
-    }
-    server.sin_family = AF_INET;
-
-#ifdef NO_WINDOWS95_ADDRESS_TRANSLATION_WORKAROUND
-    hp = gethostbyname(node);
-    if (hp == NULL)
-    {
-        char buf2[4095]; // node could be a long string
-        sprintf(buf2, "Attempt to connect to unknown host: %s", node);
-        return makeDcmnetCondition(DULC_UNKNOWNHOST, OF_error, buf2);
-    }
-    (void) memcpy(&server.sin_addr, hp->h_addr, (size_t) hp->h_length);
-#else
-    /*
-     * Under Win95 gethostbyname will not accept an IP address e.g.
-     * "134.106.1.1".  This appears to work without problems under WindowsNT
-     * and several Unix variants.
-     * Workaround is to explicitly handle the IP address case.
+    /* The address arrives as one string. It used to be split with
+     * "%[^:]:%d", which takes everything up to the *first* colon as the host -
+     * so an IPv6 literal was rejected outright as an illegal service parameter,
+     * as the comment that stood here said. Split at the last colon instead, and
+     * accept the bracketed form as well, so that "1.2.3.4:104", "host:104",
+     * "::1:104" and "[::1]:104" all name what they look like.
      */
-    unsigned long addr = inet_addr(node);
-    if (addr != INADDR_NONE) {
-        // it is an IP address
-        server.sin_addr.s_addr = addr;
-    } else {
-        // must be a host name
-        hp = gethostbyname(node);
-        if (hp == NULL)
-        {
-          char buf2[4095]; // node could be a long string
-          sprintf(buf2, "Attempt to connect to unknown host: %s", node);
-          return makeDcmnetCondition(DULC_UNKNOWNHOST, OF_error, buf2);
-        }
-        (void) memcpy(&server.sin_addr, hp->h_addr, (size_t) hp->h_length);
-    }
-#endif
+    {
+        const char *address = params->calledPresentationAddress;
+        const char *lastColon = (address == NULL) ? NULL : strrchr(address, ':');
+        size_t hostLength = 0;
 
-    server.sin_port = (unsigned short) htons(port);
+        if (lastColon == NULL || lastColon == address || lastColon[1] == '\0')
+        {
+            char buf[1024];
+            sprintf(buf,"Illegal service parameter: %s", address ? address : "(none)");
+            return makeDcmnetCondition(DULC_ILLEGALSERVICEPARAMETER, OF_error, buf);
+        }
+
+        hostLength = (size_t)(lastColon - address);
+        if (hostLength >= sizeof(node))
+        {
+            char buf[1024];
+            sprintf(buf,"Illegal service parameter: %s", address);
+            return makeDcmnetCondition(DULC_ILLEGALSERVICEPARAMETER, OF_error, buf);
+        }
+        memcpy(node, address, hostLength);
+        node[hostLength] = '\0';
+
+        if (hostLength >= 2 && node[0] == '[' && node[hostLength - 1] == ']')
+        {
+            memmove(node, node + 1, hostLength - 2);
+            node[hostLength - 2] = '\0';
+        }
+
+        port = atoi(lastColon + 1);
+        if (node[0] == '\0' || port <= 0)
+        {
+            char buf[1024];
+            sprintf(buf,"Illegal service parameter: %s", address);
+            return makeDcmnetCondition(DULC_ILLEGALSERVICEPARAMETER, OF_error, buf);
+        }
+    }
+
+    /* Resolve without deciding the family first: gethostbyname and a hardwired
+     * AF_INET socket could only ever reach an IPv4 peer, whatever the address
+     * said.
+     */
+    {
+        struct addrinfo hints;
+        struct addrinfo *resolved = NULL, *candidate = NULL;
+        char portText[16];
+        int resolveError = 0;
+
+        sprintf(portText, "%d", port);
+        memset(&hints, 0, sizeof(hints));
+        hints.ai_family = AF_UNSPEC;
+        hints.ai_socktype = SOCK_STREAM;
+
+        resolveError = getaddrinfo(node, portText, &hints, &resolved);
+        if (resolveError != 0 || resolved == NULL)
+        {
+            char buf2[4095]; // node could be a long string
+            sprintf(buf2, "Attempt to connect to unknown host: %s", node);
+            if (resolved) freeaddrinfo(resolved);
+            return makeDcmnetCondition(DULC_UNKNOWNHOST, OF_error, buf2);
+        }
+
+        s = -1;
+        for (candidate = resolved; candidate != NULL; candidate = candidate->ai_next)
+        {
+            if (candidate->ai_addrlen > sizeof(server)) continue;
+            s = socket(candidate->ai_family, candidate->ai_socktype, candidate->ai_protocol);
+            if (s >= 0)
+            {
+                memcpy(&server, candidate->ai_addr, candidate->ai_addrlen);
+                serverLen = (socklen_t) candidate->ai_addrlen;
+                break;
+            }
+        }
+        freeaddrinfo(resolved);
+
+        if (s < 0)
+        {
+            char buf1[256];
+            sprintf(buf1, "TCP Initialization Error: %s", strerror(errno));
+            return makeDcmnetCondition(DULC_TCPINITERROR, OF_error, buf1);
+        }
+    }
 
     // get global connection timeout
     Sint32 connectTimeout = dcmConnectionTimeout.get();
@@ -2277,7 +2316,7 @@ requestAssociationTCP(PRIVATE_NETWORKKEY ** network,
     
     
     // depending on the socket mode, connect will block or return immediately
-    int rc = connect(s, (struct sockaddr *) & server, sizeof(server));
+    int rc = connect(s, (struct sockaddr *) & server, serverLen);
 
 #ifdef HAVE_WINSOCK_H
     if (rc == SOCKET_ERROR && WSAGetLastError() == WSAEWOULDBLOCK)

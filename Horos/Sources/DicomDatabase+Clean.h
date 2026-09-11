@@ -46,6 +46,8 @@
 
 -(void)initiateCleanUnlessAlreadyCleaning;
 
+- (NSDictionary *)automaticCleanupPreview; // property-list values only; no mutation
+
 -(void)cleanOldStuff;
 -(void)cleanForFreeSpace;
 -(void)cleanForFreeSpaceMB:(NSInteger)freeMemoryRequested; // so we can allow timed "deep clean"

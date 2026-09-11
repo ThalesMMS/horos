@@ -54,6 +54,7 @@
 - (void) thumbnailsListWillClose :(NSView*) tb;
 - (id)initForScreen: (long) s;
 - (NSView*) thumbnailsView;
+- (void)prepareForScreenReconfiguration;
 + (void) checkScreenParameters;
 
 @end

@@ -13,6 +13,7 @@
 =========================================================================*/
 
 #include <Accelerate/Accelerate.h>
+#import "Horos-Swift.h"
 #import "LLMPRViewer.h"
 #import "LLSubtraction.h"
 #import "LLMPRView.h"
@@ -895,6 +896,7 @@ static NSString*	ParameterPanelToolbarItemIdentifier		= @"3D";
 			[toolbarItem release];
 			toolbarItem = nil;
 		}
+     [HorosToolbarPolicy prepareItem: toolbarItem];
      return [toolbarItem autorelease];
 }
 

@@ -36,6 +36,7 @@
  ============================================================================*/
 
 #import "SRController.h"
+#import "Horos-Swift.h"
 #import "DCMView.h"
 #import "Photos.h"
 #import "SRView.h"
@@ -418,6 +419,11 @@ static NSString*	BackgroundColorViewToolbarItemIdentifier		= @"BackgroundColorVi
 
 -(IBAction) ApplySettings:(id) sender
 {
+    // Commit the field editor and its bindings before rendering or saving values.
+    // If validation refuses the edit, keep the settings sheet open.
+    if ([sender tag] && ![SRSettingsWindow makeFirstResponder:nil]) return;
+    if (![sender tag]) [SRSettingsWindow endEditingFor:nil];
+
     [SRSettingsWindow orderOut:sender];
     
     [NSApp endSheet:SRSettingsWindow returnCode:[sender tag]];
@@ -835,6 +841,10 @@ static NSString*	BackgroundColorViewToolbarItemIdentifier		= @"BackgroundColorVi
                 toolbarItem = item;
         }
     }
+    
+    // Plugins supply their own items, so prepare after they had their turn.
+    if( toolbarItem)
+        [HorosToolbarPolicy prepareItem: toolbarItem];
     
     return toolbarItem;
 }

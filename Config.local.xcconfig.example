@@ -1,0 +1,13 @@
+//
+//  Config.local.xcconfig.example
+//  Horos
+//
+//  Copy to Config.local.xcconfig — which Git ignores — and edit. Values here
+//  override Config.xcconfig, so this is where personal signing settings belong.
+//
+
+/// Your Apple Developer team, from Xcode > Settings > Accounts.
+// HOROS_DEVELOPMENT_TEAM = ABCDE12345
+
+/// Signing identity for the DCMTK helpers, if it differs from the default.
+// DCMTK_SIGN_IDENTITY = Developer ID Application: Your Name (ABCDE12345)

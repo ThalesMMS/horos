@@ -1,3 +1,4 @@
+#import <Foundation/Foundation.h>
 /*=========================================================================
  This file is part of the Horos Project (www.horosproject.org)
  
@@ -144,13 +145,8 @@ selectReadable(T_ASC_Association *assoc,
     assocCount = 1;
     assocList[1] = subAssoc;
     if (subAssoc != NULL) assocCount++;
-    if (subAssoc == NULL) {
-        timeout = 5;    /* poll wait until an assoc req or move rsp */
-    } else {
-        if (blockMode == DIMSE_BLOCKING) {
-            timeout = 10000;    /* a long time */
-        }
-    }
+    // Poll even a silent peer so local cancellation does not need a response.
+    timeout = 1;
     if (!ASC_selectReadableAssociation(assocList, assocCount, timeout)) {
         /* none readable */
         return 0;
@@ -211,7 +207,18 @@ DIMSE_moveUser(
     /* receive responses */
     
     OFTimer timer;
+    BOOL cancelSent = NO;
+    NSTimeInterval cancelDeadline = 0;
+    const T_ASC_PresentationContextID movePresentationContext = presID;
     while (cond == EC_Normal && status == STATUS_Pending) {
+        if (NSThread.currentThread.isCancelled && !cancelSent) {
+            cond = DIMSE_sendCancelRequest(assoc, movePresentationContext, msgId);
+            if (cond.bad()) return cond;
+            cancelSent = YES;
+            cancelDeadline = NSProcessInfo.processInfo.systemUptime + 5.0;
+        }
+        if (cancelSent && NSProcessInfo.processInfo.systemUptime >= cancelDeadline)
+            return makeDcmnetCondition(DIMSEC_RECEIVEFAILED, OF_error, "C-MOVE cancellation response timed out");
         
         /* if user wants, multiplex between net/subAssoc
          * and move responses over main assoc.
@@ -219,7 +226,7 @@ DIMSE_moveUser(
         switch (selectReadable(assoc, net, subAssoc, blockMode, timeout)) {
             case 0:
                 /* none are readable, timeout */
-                if ((blockMode == DIMSE_BLOCKING) || firstLoop) {
+                if (cancelSent || (blockMode == DIMSE_BLOCKING) || firstLoop) {
                     firstLoop = OFFalse;
                 } else if ((blockMode == DIMSE_NONBLOCKING) && (timer.getDiff() > timeout)) {
                     ofConsole.lockCerr() << "timeout of " << timeout << " seconds elapsed while waiting for C-MOVE Responses" << endl;
@@ -242,7 +249,7 @@ DIMSE_moveUser(
         
         bzero((char*)&rsp, sizeof(rsp));
         
-        cond = DIMSE_receiveCommand(assoc, blockMode, timeout, &presID, &rsp, statusDetail);
+        cond = DIMSE_receiveCommand(assoc, cancelSent ? DIMSE_NONBLOCKING : blockMode, cancelSent ? 1 : timeout, &presID, &rsp, statusDetail);
         if (cond != EC_Normal) {
             return cond;
         }

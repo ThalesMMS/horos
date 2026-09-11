@@ -5,8 +5,9 @@ export PATH="$PATH:/opt/local/bin:/opt/local/sbin:/opt/homebrew/bin/"
 path="$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )/$(basename "${BASH_SOURCE[0]}")"
 cd "$TARGET_NAME"; pwd
 
-env=$(env|sort|grep -v 'LLBUILD_BUILD_ID=\|LLBUILD_LANE_ID=\|LLBUILD_TASK_ID=\|Apple_PubSub_Socket_Render=\|DISPLAY=\|SHLVL=\|SSH_AUTH_SOCK=\|SECURITYSESSIONID=')
-hash="$(git describe --always --tags --dirty) $(md5 -q "$path")-$(md5 -qs "$env")"
+# One narrow hash for every dependency; see Horos/Scripts/dependency-hash.sh.
+. "$(dirname "$path")/../dependency-hash.sh"
+dependency_hash "$path"
 
 set -e; set -o xtrace
 
@@ -40,6 +41,9 @@ args=("$source_dir")
 cfs=($OTHER_CFLAGS)
 cxxfs=($OTHER_CPLUSPLUSFLAGS)
 
+args+=(-DCMAKE_POLICY_VERSION_MINIMUM=3.5)
+# OpenJPEG's decoder is C; CXX flags alone leave even Release unoptimized.
+args+=(-DCMAKE_BUILD_TYPE="$CONFIGURATION")
 args+=(-DCMAKE_OSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET")
 args+=(-DCMAKE_OSX_ARCHITECTURES="$ARCHS")
 
@@ -51,8 +55,8 @@ args+=(-DBUILD_DOC=OFF)
 args+=(-DBUILD_SHARED_LIBS=OFF)
 args+=(-DBUILD_STATIC_LIBS=ON)
 args+=(-DBUILD_TESTING=OFF)
-args+=(-DBUILD_THIRDPARTY=ON)
-args+=(-DCMAKE_POLICY_VERSION_MINIMUM=3.5)
+args+=(-DBUILD_CODEC=OFF)
+args+=(-DBUILD_THIRDPARTY=OFF)
 
 args+=(-DCMAKE_PREFIX_PATH="/opt/homebrew")
 args+=(-DCMAKE_LIBRARY_PATH="/opt/homebrew/lib")
@@ -68,12 +72,6 @@ elif [ -f "/opt/homebrew/opt/libtiff/lib/libtiff.dylib" ]; then
 fi
 
 args+=(-DCMAKE_IGNORE_PATH="/opt/local/include;/opt/local/lib")
-
-if [ "$CONFIGURATION" = 'Debug' ]; then
-    cxxfs+=( -g )
-else
-    cxxfs+=( -O2 )
-fi
 
 if [ ! -z "$CLANG_CXX_LIBRARY" ] && [ "$CLANG_CXX_LIBRARY" != 'compiler-default' ]; then
     cxxfs+=(-stdlib="$CLANG_CXX_LIBRARY")

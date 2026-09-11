@@ -976,9 +976,15 @@ constructSCUSCPRoles(unsigned char type,
 	    if (presentationCtx->proposedSCRole != DUL_SC_ROLE_DEFAULT) {
 		    scuscpItem = (PRV_SCUSCPROLE*)malloc(sizeof(PRV_SCUSCPROLE));
 		    if (scuscpItem == NULL) return EC_MemoryExhausted;
+		    /* Both roles are set for every context: leaving the other one
+		     * alone let a role carry over to the contexts that follow, so a
+		     * single SCU context made every later SCP context go out as
+		     * SCU/SCP - a different negotiation from the one asked for. */
 		    if (presentationCtx->proposedSCRole == DUL_SC_ROLE_SCU) {
 		      scuRole = 1;
+		      scpRole = 0;
 	 	    } else if (presentationCtx->proposedSCRole == DUL_SC_ROLE_SCP) {
+		      scuRole = 0;
 		      scpRole = 1;
 		    } else {
 		      scuRole = scpRole = 1;
@@ -987,10 +993,13 @@ constructSCUSCPRoles(unsigned char type,
 			    DUL_TYPESCUSCPROLE, scuRole, scpRole,
 			    scuscpItem, &length);
 		    if (cond.bad())
+		    {
+		      free(scuscpItem);
 		      return cond;
+		    }
 		    *rtnLength += length;
 		    cond = LST_Enqueue(lst, (LST_NODE*)scuscpItem);
-        if (cond.bad()) return cond;
+        if (cond.bad()) { free(scuscpItem); return cond; }
       }
 //	    presentationCtx = params->acceptedPresentationContext != NULL ?
 // 	      (DUL_PRESENTATIONCONTEXT*)LST_Head(&params->acceptedPresentationContext) :
@@ -1012,7 +1021,9 @@ constructSCUSCPRoles(unsigned char type,
 		    if (scuscpItem == NULL) return EC_MemoryExhausted;
 		    if (presentationCtx->acceptedSCRole == DUL_SC_ROLE_SCU) {
 		      scuRole = 1;
+		      scpRole = 0;
 		    } else if (presentationCtx->acceptedSCRole == DUL_SC_ROLE_SCP) {
+		      scuRole = 0;
 		      scpRole = 1;
 		    } else {
 		      scuRole = scpRole = 1;
@@ -1020,10 +1031,13 @@ constructSCUSCPRoles(unsigned char type,
 		    cond = constructSCUSCPSubItem(presentationCtx->abstractSyntax,
 				  DUL_TYPESCUSCPROLE, scuRole, scpRole, scuscpItem, &length);
 		    if (cond.bad())
+		    {
+		      free(scuscpItem);
 		      return cond;
+		    }
 		    *rtnLength += length;
 		    cond = LST_Enqueue(lst, (LST_NODE*)scuscpItem);
-		    if (cond.bad()) return cond;
+		    if (cond.bad()) { free(scuscpItem); return cond; }
       }
 	    presentationCtx = (DUL_PRESENTATIONCONTEXT*)LST_Next(&params->acceptedPresentationContext);
     }

@@ -45,8 +45,11 @@
 -(NSString*)findSystemFolderOfType:(int)folderType forDomain:(int)domain __deprecated;
 -(NSString*)userApplicationSupportFolderForApp;
 -(NSString*)tmpFilePathInDir:(NSString*)dirPath;
+-(NSString*)tmpDirectoryPathInDir:(NSString*)dirPath;
 -(NSString*)tmpDirPath;
 -(NSString*)tmpFilePathInTmp;
+// Exclusively create a directory for callers that need a temporary database root.
+-(NSString*)tmpDirectoryPathInTmp;
 -(NSString*)confirmDirectoryAtPath:(NSString*)dirPath;
 -(NSString*)confirmNoIndexDirectoryAtPath:(NSString*)path;
 -(NSUInteger)sizeAtPath:(NSString*)path __deprecated;
