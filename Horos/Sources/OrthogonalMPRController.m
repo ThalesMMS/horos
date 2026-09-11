@@ -45,6 +45,7 @@
 #include <OpenGL/CGLContext.h>
 
 #import "ROI.h"
+#import "HorosMPRBrush.h"
 
 @interface OrthogonalMPRController (Dummy)
 
@@ -993,6 +994,8 @@
     
     int imageWidth = [[[yReslicedView pixList] lastObject] pwidth];
     int imageHeight = [[[yReslicedView pixList] lastObject] pheight];
+    if (imageWidth <= 0 || imageHeight <= 0 ||
+        (size_t)imageWidth > SIZE_MAX / (size_t)imageHeight) return roisAtX;
     
 	int i, j;
 	for(i=0; i<[rois count]; i++)
@@ -1021,11 +1024,13 @@
             
             if( [aROI type] == tPlain)
             {
-                if( x >= aROI.textureUpLeftCornerX && x < aROI.textureDownRightCornerX)
+                if( aROI.textureBuffer && aROI.textureWidth > 0 && aROI.textureHeight > 0 &&
+                    x >= aROI.textureUpLeftCornerX &&
+                    (unsigned long)x - (unsigned long)aROI.textureUpLeftCornerX < (unsigned long)aROI.textureWidth)
                 {
                     if( [plainDict objectForKey: [aROI name]] == nil)
                     {
-                        unsigned char* t = calloc( imageWidth * imageHeight, sizeof(unsigned char));
+                        unsigned char* t = calloc( (size_t)imageWidth * imageHeight, sizeof(unsigned char));
                         
                         if( t)
                         {
@@ -1047,19 +1052,10 @@
                     
                     if( p)
                     {
-                        unsigned char* destPtr = [p textureBuffer];
-                        unsigned char* srcPtr = [aROI textureBuffer];
-                        int sliceIndex = (sign>0)? (long)[[originalView dcmPixList] count]-1 -i : i; // i is slice number
-                        
-                        destPtr += sliceIndex * imageWidth + aROI.textureUpLeftCornerY;
-                        srcPtr += (x - aROI.textureUpLeftCornerX);
-                        
-                        int c = aROI.textureHeight;
-                        int w = aROI.textureWidth;
-                        while( c-- > 0)
-                        {
-                            *(destPtr + c) = *(srcPtr + c * w);
-                        }
+                        long sliceIndex = sign > 0 ? (long)[[originalView dcmPixList] count] - 1 - i : i;
+                        HorosCopyMPRBrushLine([p textureBuffer], imageWidth, imageHeight, sliceIndex,
+                            aROI.textureBuffer, aROI.textureWidth, aROI.textureHeight,
+                            aROI.textureUpLeftCornerX, aROI.textureUpLeftCornerY, x, true);
                     }
                 }
             }
@@ -1086,6 +1082,8 @@
 
     int imageWidth = [[[xReslicedView pixList] lastObject] pwidth];
     int imageHeight = [[[xReslicedView pixList] lastObject] pheight];
+    if (imageWidth <= 0 || imageHeight <= 0 ||
+        (size_t)imageWidth > SIZE_MAX / (size_t)imageHeight) return roisAtY;
     
 	int i, j;
 	for(i=0; i<[rois count]; i++)
@@ -1114,15 +1112,17 @@
             
             if( [aROI type] == tPlain)
             {
-                if( y >= aROI.textureUpLeftCornerY && y < aROI.textureDownRightCornerY)
+                if( aROI.textureBuffer && aROI.textureWidth > 0 && aROI.textureHeight > 0 &&
+                    y >= aROI.textureUpLeftCornerY &&
+                    (unsigned long)y - (unsigned long)aROI.textureUpLeftCornerY < (unsigned long)aROI.textureHeight)
                 {
                     if( [plainDict objectForKey: [aROI name]] == nil)
                     {
-                        unsigned char* t = calloc( imageWidth * imageHeight, sizeof(unsigned char));
+                        unsigned char* t = calloc( (size_t)imageWidth * imageHeight, sizeof(unsigned char));
                         
                         if( t)
                         {
-                            ROI *newROI = [[[ROI alloc] initWithType: tPlain :[yReslicedView pixelSpacingX] :[yReslicedView pixelSpacingY] :NSMakePoint( [yReslicedView origin].x, [yReslicedView origin].y)] autorelease];
+                            ROI *newROI = [[[ROI alloc] initWithType: tPlain :[xReslicedView pixelSpacingX] :[xReslicedView pixelSpacingY] :NSMakePoint( [xReslicedView origin].x, [xReslicedView origin].y)] autorelease];
                             
                             newROI.name = [aROI name];
                             newROI.thickness = aROI.thickness;
@@ -1140,18 +1140,10 @@
                     
                     if( p)
                     {
-                        unsigned char* destPtr = [p textureBuffer];
-                        unsigned char* srcPtr = [aROI textureBuffer];
-                        int sliceIndex = (sign>0)? (long)[[originalView dcmPixList] count]-1 -i : i; // i is slice number
-                        
-                        destPtr += sliceIndex*imageWidth + aROI.textureUpLeftCornerX;
-                        srcPtr += (y - aROI.textureUpLeftCornerY)*aROI.textureWidth;
-                        
-                        int c = aROI.textureWidth;
-                        while( c-- > 0)
-                        {
-                            *(destPtr + c) = *(srcPtr + c);
-                        }
+                        long sliceIndex = sign > 0 ? (long)[[originalView dcmPixList] count] - 1 - i : i;
+                        HorosCopyMPRBrushLine([p textureBuffer], imageWidth, imageHeight, sliceIndex,
+                            aROI.textureBuffer, aROI.textureWidth, aROI.textureHeight,
+                            aROI.textureUpLeftCornerX, aROI.textureUpLeftCornerY, y, false);
                     }
                 }
             }

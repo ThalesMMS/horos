@@ -41,6 +41,8 @@ static BOOL dontConstrainWindow = NO;
 
 @implementation OSIWindow
 
++ (BOOL) dontConstrainWindow { return dontConstrainWindow; }
+
 + (void) setDontConstrainWindow: (BOOL) v
 {
 	dontConstrainWindow = v;

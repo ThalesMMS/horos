@@ -1064,11 +1064,13 @@
 	[[prefPane dicomGroupTextField] setStringValue:@""];
 	[[prefPane dicomElementTextField] setStringValue:@""];
 
+	// Black on the pane's own background disappeared in the dark appearance;
+	// the semantic colours follow whichever one is active.
 	NSColor *textColor;
 	if(boo)
-		textColor = [NSColor blackColor];
+		textColor = [NSColor labelColor];
 	else
-		textColor = [NSColor grayColor];
+		textColor = [NSColor disabledControlTextColor];
 		
 	[[prefPane groupLabel] setTextColor:textColor];
 	[[prefPane elementLabel] setTextColor:textColor];

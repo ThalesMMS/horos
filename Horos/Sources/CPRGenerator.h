@@ -61,6 +61,7 @@
 - (id)initWithVolumeData:(CPRVolumeData *)volumeData;
 
 - (void)requestVolume:(CPRGeneratorRequest *)request;
+- (void)cancelOutstandingRequests; // must be called on the main thread. Cancels in-flight and queued requests; the original volume and caller markings are untouched.
 
 - (void)runUntilAllRequestsAreFinished; // must be called on the main thread. Delegate callbacks will happen, but this method will not return until all outstanding requests have been processed
 

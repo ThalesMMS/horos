@@ -337,6 +337,18 @@ typedef char* VTKStereoVRView;
 	vtkPolyDataMapper2D			*Line2D;
 	vtkActor2D					*Line2DActor;
 	vtkTextActor				*Line2DText;
+    NSMutableArray              *storedLineMeasurements;
+    double                      lineMeasurementWorld[2][3], lineMeasurementDirection[3];
+    BOOL                        lineMeasurementHasProjection;
+    vtkTextActor                *lineMeasurementProjectionNotice;
+    unsigned long               lineMeasurementRenderObserver;
+    vtkPolyData                 *Angle2DData;
+    vtkPolyDataMapper2D         *Angle2D;
+    vtkActor2D                  *Angle2DActor;
+    vtkTextActor                *Angle2DText;
+    double                      angleMeasurementPatient[3][3];
+    int                         angleMeasurementCount;
+    float                       measureAngle;
 	
     vtkRegularPolygonSource		*Oval2DData;
 	vtkPolyDataMapper2D			*Oval2D;
@@ -378,6 +390,7 @@ typedef char* VTKStereoVRView;
 	float						_startWW, _startWL, _startMin, _startMax;
 	
 	NSRect						savedViewSizeFrame;
+    id                          matrixExportLayout;
 	
 	float						firstPixel, secondPixel;
 	

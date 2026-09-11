@@ -67,7 +67,7 @@
                         </items>
                     </menu>
                 </menuItem>
-                <menuItem title="ファイル" id="848">
+                <menuItem title="ファイル" id="848" identifier="org.horos.menu.file">
                     <menu key="submenu" title="ファイル" id="849">
                         <items>
                             <menuItem title="Show Database Window" keyEquivalent="d" id="854">
@@ -159,6 +159,18 @@
                                                 <action selector="generateReport:" target="898" id="12363"/>
                                             </connections>
                                         </menuItem>
+                                        <menuItem title="Attach existing report..." id="horos-attach-report-menu">
+                                            <modifierMask key="keyEquivalentModifierMask"/>
+                                            <connections>
+                                                <action selector="attachExistingReport:" target="898" id="horos-attach-report-action"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem title="Insert selected images" id="horos-insert-report-images-menu">
+                                            <modifierMask key="keyEquivalentModifierMask"/>
+                                            <connections>
+                                                <action selector="insertSelectedImagesIntoReport:" target="898" id="horos-insert-report-images-action"/>
+                                            </connections>
+                                        </menuItem>
                                         <menuItem title="Delete report" keyEquivalent="D" id="12356">
                                             <connections>
                                                 <action selector="deleteReport:" target="898" id="12365"/>
@@ -220,46 +232,46 @@
                                     </items>
                                 </menu>
                             </menuItem>
-                            <menuItem title="エクスポート" id="11542">
+                            <menuItem title="エクスポート" id="11542" identifier="org.horos.menu.export">
                                 <menu key="submenu" title="エクスポート" id="11543">
                                     <items>
-                                        <menuItem title="Export to DICOM Network Node" keyEquivalent="S" id="12980">
+                                        <menuItem title="Export to DICOM Network Node…" keyEquivalent="S" id="12980">
                                             <connections>
                                                 <action selector="export2PACS:" target="-1" id="12981"/>
                                             </connections>
                                         </menuItem>
-                                        <menuItem title="Export to Movie" keyEquivalent="s" id="11544">
+                                        <menuItem title="Export to Movie…" keyEquivalent="s" id="11544">
                                             <connections>
                                                 <action selector="exportQuicktime:" target="-1" id="11555"/>
                                             </connections>
                                         </menuItem>
-                                        <menuItem title="Export to JPEG" keyEquivalent="E" id="11545">
+                                        <menuItem title="Export to JPEG…" keyEquivalent="E" id="11545">
                                             <connections>
                                                 <action selector="exportJPEG:" target="-1" id="11557"/>
                                             </connections>
                                         </menuItem>
-                                        <menuItem title="Export to Raw" id="11546">
+                                        <menuItem title="Export to Raw…" id="11546">
                                             <connections>
                                                 <action selector="exportRAW:" target="-1" id="11554"/>
                                             </connections>
                                         </menuItem>
-                                        <menuItem title="Export to TIFF" keyEquivalent="e" id="11547">
+                                        <menuItem title="Export to TIFF…" keyEquivalent="e" id="11547">
                                             <modifierMask key="keyEquivalentModifierMask" option="YES" command="YES"/>
                                             <connections>
                                                 <action selector="exportTIFF:" target="-1" id="11558"/>
                                             </connections>
                                         </menuItem>
-                                        <menuItem title="Export to DICOM file(s)" keyEquivalent="e" id="11548">
+                                        <menuItem title="Export to DICOM file(s)…" keyEquivalent="e" id="11548">
                                             <connections>
                                                 <action selector="exportDICOMFile:" target="-1" id="11559"/>
                                             </connections>
                                         </menuItem>
-                                        <menuItem title="Export to Email" id="11549">
+                                        <menuItem title="Export to Email…" id="11549">
                                             <connections>
                                                 <action selector="sendMail:" target="-1" id="11552"/>
                                             </connections>
                                         </menuItem>
-                                        <menuItem title="Export to Photos" id="11550">
+                                        <menuItem title="Export to Photos…" id="11550">
                                             <connections>
                                                 <action selector="export2iPhoto:" target="-1" id="11553"/>
                                             </connections>
@@ -402,7 +414,7 @@
                     <modifierMask key="keyEquivalentModifierMask"/>
                     <menu key="submenu" title="ネットワーク" id="13788">
                         <items>
-                            <menuItem title="Export to DICOM Network Node" keyEquivalent="S" id="13801">
+                            <menuItem title="Export to DICOM Network Node…" keyEquivalent="S" id="13801">
                                 <connections>
                                     <action selector="export2PACS:" target="-1" id="13802"/>
                                 </connections>
@@ -509,7 +521,7 @@
                         </items>
                     </menu>
                 </menuItem>
-                <menuItem title="2D ビューア" id="13064">
+                <menuItem title="2D ビューア" id="13064" identifier="org.horos.menu.viewer">
                     <menu key="submenu" title="2D ビューア" id="13065">
                         <items>
                             <menuItem title="次のシリーズ" tag="1" keyEquivalent="" id="13189">
@@ -658,10 +670,22 @@
                                                 <action selector="sortSeriesByValue:" target="-1" id="14127"/>
                                             </connections>
                                         </menuItem>
+                                        <menuItem title="Acquisition Time - Ascending" tag="4" id="acq-sort-4">
+                                            <modifierMask key="keyEquivalentModifierMask"/>
+                                            <connections>
+                                                <action selector="sortSeriesByValue:" target="-1" id="acq-action-4"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem title="Acquisition Time - Descending" tag="5" id="acq-sort-5">
+                                            <modifierMask key="keyEquivalentModifierMask"/>
+                                            <connections>
+                                                <action selector="sortSeriesByValue:" target="-1" id="acq-action-5"/>
+                                            </connections>
+                                        </menuItem>
                                     </items>
                                 </menu>
                             </menuItem>
-                            <menuItem title="Orientation" id="13164">
+                            <menuItem title="Orientation" id="13164" identifier="org.horos.menu.orientation">
                                 <menu key="submenu" title="Orientation" id="14106">
                                     <items>
                                         <menuItem title="Flip Image Horizontal" id="14107">
@@ -1050,10 +1074,10 @@
                                     </items>
                                 </menu>
                             </menuItem>
-                            <menuItem title="Window Width &amp; Level" id="13159">
+                            <menuItem title="Window Width &amp; Level" id="13159" identifier="org.horos.menu.wlww">
                                 <menu key="submenu" title="Window Width &amp; Level" id="13160"/>
                             </menuItem>
-                            <menuItem title="Color Look Up Table" id="13180">
+                            <menuItem title="Color Look Up Table" id="13180" identifier="org.horos.menu.clut">
                                 <menu key="submenu" title="Color Look Up Table" id="13750"/>
                             </menuItem>
                             <menuItem title="Color Look Up Table Bar" id="13194">
@@ -1082,10 +1106,10 @@
                                     </items>
                                 </menu>
                             </menuItem>
-                            <menuItem title="Opacity" id="13751">
+                            <menuItem title="Opacity" id="13751" identifier="org.horos.menu.opacity">
                                 <menu key="submenu" title="Opacity" id="13752"/>
                             </menuItem>
-                            <menuItem title="Convolution Filters" id="13068">
+                            <menuItem title="Convolution Filters" id="13068" identifier="org.horos.menu.convolution">
                                 <menu key="submenu" title="Convolution Filters" id="13069"/>
                             </menuItem>
                             <menuItem title="Apply Convolution Filter on raw data" id="13081">
@@ -1109,7 +1133,7 @@
                                     </items>
                                 </menu>
                             </menuItem>
-                            <menuItem title="Image Tiling" id="13084">
+                            <menuItem title="Image Tiling" id="13084" identifier="org.horos.menu.image-tiling">
                                 <menu key="submenu" id="13994">
                                     <items>
                                         <menuItem title="1 X 1" id="14038">
@@ -1290,7 +1314,7 @@
                                     <action selector="loadWindowsState:" target="-1" id="13215"/>
                                 </connections>
                             </menuItem>
-                            <menuItem title="Load Workspace State DICOM SR" id="URm-XW-3AR">
+                            <menuItem title="Load Workspace State DICOM SR" id="URm-XW-3AR" identifier="org.horos.menu.workspace">
                                 <modifierMask key="keyEquivalentModifierMask"/>
                                 <menu key="submenu" title="Load Workspace State DICOM SR" id="0DA-9z-DyX">
                                     <connections>
@@ -4004,7 +4028,7 @@ Gw
             </view>
         </window>
         <window title="Local Database" allowsToolTipsWhenApplicationIsInactive="NO" autorecalculatesKeyViewLoop="NO" oneShot="NO" releasedWhenClosed="NO" frameAutosaveName="" animationBehavior="default" id="aMa-Mw-HRb" customClass="N2OpenGLViewWithSplitsWindow">
-            <windowStyleMask key="styleMask" titled="YES" closable="YES" miniaturizable="YES" resizable="YES" texturedBackground="YES"/>
+            <windowStyleMask key="styleMask" titled="YES" closable="YES" miniaturizable="YES" resizable="YES"/>
             <rect key="contentRect" x="283" y="305" width="1043" height="691"/>
             <rect key="screenRect" x="0.0" y="0.0" width="2560" height="1417"/>
             <view key="contentView" id="gW4-gx-6JH">

@@ -193,7 +193,7 @@
                                                             <binding destination="283" name="value" keyPath="arrangedObjects.QR" id="305"/>
                                                         </connections>
                                                     </tableColumn>
-                                                    <tableColumn identifier="RetrieveMode" width="60" minWidth="60" maxWidth="60" id="452">
+                                                    <tableColumn identifier="RetrieveMode" width="90" minWidth="90" maxWidth="90" id="452">
                                                         <tableHeaderCell key="headerCell" lineBreakMode="truncatingTail" borderStyle="border" alignment="center" title="Retrieve">
                                                             <font key="font" metaFont="smallSystem"/>
                                                             <color key="textColor" name="headerTextColor" catalog="System" colorSpace="catalog"/>
@@ -209,6 +209,11 @@
                                                                     <menuItem title="WADO" state="on" tag="2" id="475">
                                                                         <connections>
                                                                             <action selector="editWADO:" target="-2" id="582"/>
+                                                                        </connections>
+                                                                    </menuItem>
+                                                                    <menuItem title="DICOMweb" tag="3" id="DWeb197">
+                                                                        <connections>
+                                                                            <action selector="editDICOMweb:" target="-2" id="DWebAction197"/>
                                                                         </connections>
                                                                     </menuItem>
                                                                 </items>
@@ -233,6 +238,9 @@
                                                         <connections>
                                                             <binding destination="283" name="enabled" keyPath="arrangedObjects.Activated" id="1170"/>
                                                             <binding destination="283" name="value" keyPath="arrangedObjects.Send" id="325"/>
+                                                            <binding destination="283" name="enabled2" keyPath="arrangedObjects.retrieveMode" previousBinding="1170" id="DWebSend197">
+                                                                <dictionary key="options"><string key="NSValueTransformerName">NotDICOMwebValueTransformer</string></dictionary>
+                                                            </binding>
                                                         </connections>
                                                     </tableColumn>
                                                     <tableColumn identifier="TLS" width="40" minWidth="40" maxWidth="40" id="632">

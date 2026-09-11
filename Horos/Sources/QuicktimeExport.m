@@ -36,6 +36,7 @@
  ============================================================================*/
 
 #import "QuicktimeExport.h"
+#import "Horos-Swift.h"
 #import "Wait.h"
 #import "WaitRendering.h"
 #import "BrowserController.h"
@@ -160,7 +161,7 @@
     
     if( produceFiles)
     {
-        result = NSFileHandlingPanelOKButton;
+        result = NSModalResponseOK;
         
         NSString *path = [[[[BrowserController currentBrowser] database] tempDirPath] stringByAppendingPathComponent:@"Photos"];
         [[NSFileManager defaultManager] removeItemAtPath:path error:NULL];
@@ -195,6 +196,10 @@
         fileName = panel.URL.path;
     }
     
+    // A cancelled save panel must never modify its last selected destination.
+    if( result != NSModalResponseOK)
+        return nil;
+
     [[NSFileManager defaultManager] removeItemAtPath: fileName error: nil];
     
     if( [[NSFileManager defaultManager] fileExistsAtPath: fileName])
@@ -202,15 +207,18 @@
     
     @try
     {
-        if( result == NSFileHandlingPanelOKButton)
+        if( result == NSModalResponseOK)
         {
             CMTimeValue timeValue = 600 / [[NSUserDefaults standardUserDefaults] integerForKey:@"quicktimeExportRateValue"];
             CMTime frameDuration = CMTimeMake( timeValue, 600);
             
             NSError *error = nil;
             BOOL aborted = NO;
+            BOOL completed = NO;
+            BOOL failed = NO;
             
             AVAssetWriter *writer = [[AVAssetWriter alloc] initWithURL:[NSURL fileURLWithPath: fileName] fileType: AVFileTypeQuickTimeMovie error:&error];
+            BOOL encoderReady = NO;
             if (!error)
             {
                 Wait *wait = [[[Wait alloc] initWithString: NSLocalizedString( @"Movie Export", nil)] autorelease];
@@ -258,7 +266,12 @@
                                                          [NSNumber numberWithInt: im.size.width], AVVideoWidthKey,
                                                          [NSNumber numberWithInt: im.size.height], AVVideoHeightKey, nil];
                                     else
+                                    {
                                         N2LogStackTrace( @"********** bitsPerSecond == 0");
+                                        NSLog(@"%@", [HorosMovieExportDiagnostics logLineForPhase:HorosMovieExportPhaseEncoder
+                                                                                errorDescription:@"bitsPerSecond == 0"
+                                                                                    stackSymbols:[NSThread callStackSymbols]]);
+                                    }
                                 }
                                 else if( [c isEqualToString: AVVideoCodecJPEG])
                                 {
@@ -274,7 +287,14 @@
                                     writerInput = [[AVAssetWriterInput assetWriterInputWithMediaType:AVMediaTypeVideo outputSettings:videoSettings] retain];
                                     
                                     if( writerInput == nil)
+                                    {
                                         N2LogStackTrace( @"**** writerInput == nil : %@", videoSettings);
+                                        NSLog(@"%@", [HorosMovieExportDiagnostics logLineForPhase:HorosMovieExportPhaseEncoder
+                                                                                errorDescription:[videoSettings description]
+                                                                                    stackSymbols:[NSThread callStackSymbols]]);
+                                    }
+                                    else
+                                        encoderReady = YES;
                                     
                                     pixelBufferAdaptor = [[AVAssetWriterInputPixelBufferAdaptor assetWriterInputPixelBufferAdaptorWithAssetWriterInput:writerInput sourcePixelBufferAttributes:nil] retain];
                                     
@@ -290,16 +310,21 @@
                         if( buffer)
                         {
                             CVPixelBufferLockBaseAddress(buffer, 0);
-                            while( writerInput && [writerInput isReadyForMoreMediaData] == NO)
+                            while( writerInput && writer.status == AVAssetWriterStatusWriting && [writerInput isReadyForMoreMediaData] == NO)
                                 [NSThread sleepForTimeInterval: 0.1];
-                            [pixelBufferAdaptor appendPixelBuffer:buffer withPresentationTime:nextPresentationTimeStamp];
+                            if( writer.status != AVAssetWriterStatusWriting ||
+                                ![pixelBufferAdaptor appendPixelBuffer:buffer withPresentationTime:nextPresentationTimeStamp])
+                            {
+                                failed = YES;
+                                NSLog(@"%@", [HorosMovieExportDiagnostics logLineForPhase:HorosMovieExportPhaseWrite
+                                                                        errorDescription:(writer.error.localizedDescription ?: @"rejected pixel buffer")
+                                                                            stackSymbols:[NSThread callStackSymbols]]);
+                            }
                             CVPixelBufferUnlockBaseAddress(buffer, 0);
                             CVPixelBufferRelease(buffer);
                             buffer = nil;
                             
                             nextPresentationTimeStamp = CMTimeAdd(nextPresentationTimeStamp, frameDuration);
-                            
-                            CVPixelBufferRelease(buffer);
                         }
                         
                         [wait incrementBy: 1];
@@ -311,28 +336,69 @@
                     }
                     @catch (NSException *e) {
                         N2LogExceptionWithStackTrace( e);
+                        failed = YES;
+                        NSLog(@"%@", [HorosMovieExportDiagnostics logLineForPhase:HorosMovieExportPhaseWrite
+                                                                errorDescription:e.reason
+                                                                    stackSymbols:[NSThread callStackSymbols]]);
                     }
                     [pool release];
+                    if( failed) break;
                 }
-                [writerInput markAsFinished];
-                [writer finishWritingWithCompletionHandler:^{ }];
-                //instead of deprecated [writer finishWriting];
+                if( writer.status == AVAssetWriterStatusWriting)
+                    [writerInput markAsFinished];
+                // Do not expose the movie before AVFoundation has finalized its container.
+                if( aborted || failed)
+                    [writer cancelWriting];
+                else if( writer.status == AVAssetWriterStatusWriting)
+                {
+                    dispatch_semaphore_t finished = dispatch_semaphore_create(0);
+                    [writer finishWritingWithCompletionHandler:^{ dispatch_semaphore_signal(finished); }];
+                    dispatch_semaphore_wait(finished, DISPATCH_TIME_FOREVER);
+                    dispatch_release(finished);
+                    completed = writer.status == AVAssetWriterStatusCompleted;
+                }
+                if( !completed && !aborted)
+                    error = [[writer.error retain] autorelease];
                 
                 [object performSelector: selector withObject: [NSNumber numberWithLong: 0] withObject:[NSNumber numberWithLong: numberOfFrames]];
+                
+                if( completed)
+                    NSLog(@"%@", [HorosMovieExportDiagnostics logLineForPhase:HorosMovieExportPhaseFinalization
+                                                            errorDescription:@"completed"
+                                                                stackSymbols:nil]);
+                else if( !aborted && !failed && encoderReady)
+                    NSLog(@"%@", [HorosMovieExportDiagnostics logLineForPhase:HorosMovieExportPhaseFinalization
+                                                            errorDescription:(error.localizedDescription ?: @"writer did not reach Completed")
+                                                                stackSymbols:[NSThread callStackSymbols]]);
+                else if( !aborted && !failed && !encoderReady)
+                    NSLog(@"%@", [HorosMovieExportDiagnostics logLineForPhase:HorosMovieExportPhaseEncoder
+                                                            errorDescription:(error.localizedDescription ?: @"encoder was not ready")
+                                                                stackSymbols:[NSThread callStackSymbols]]);
                 
                 [wait close];
                 
                 [writerInput release];
                 [pixelBufferAdaptor release];
                 
-                if( openIt && aborted == NO)
-                    [[NSWorkspace sharedWorkspace] openFile:fileName];
+                if( openIt && completed &&
+                    ![[NSWorkspace sharedWorkspace] openFile:fileName])
+                    NSLog(@"%@", [HorosMovieExportDiagnostics logLineForPhase:HorosMovieExportPhaseOpeningResult
+                                                            errorDescription:fileName
+                                                                stackSymbols:[NSThread callStackSymbols]]);
             }
+            else if( error)
+                NSLog(@"%@", [HorosMovieExportDiagnostics logLineForPhase:HorosMovieExportPhaseEncoder
+                                                        errorDescription:error.localizedDescription
+                                                            stackSymbols:[NSThread callStackSymbols]]);
             
             [writer release];
             
-            if( aborted == NO)
+            if( completed)
                 return fileName;
+            if( !aborted)
+                NSRunAlertPanel(NSLocalizedString(@"Movie Export", nil), @"%@",
+                                NSLocalizedString(@"OK", nil), nil, nil,
+                                error.localizedDescription ?: NSLocalizedString(@"The movie could not be saved. Check the destination and try again.", nil));
         }
     }
     @catch (NSException *e) {

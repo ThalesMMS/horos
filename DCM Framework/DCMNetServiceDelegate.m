@@ -1,3 +1,4 @@
+#import "DCMBonjourEndpoint.h"
 /*=========================================================================
  This file is part of the Horos Project (www.horosproject.org)
  
@@ -110,19 +111,10 @@ static DCMNetServiceDelegate *_netServiceDelegate = nil;
 }
 
 - (int)portForNetService:(NSNetService *)netService
-{		
-	//NSArray *addresses = [[_dicomServices objectAtIndex:0] addresses];
-	NSArray *addresses = [netService addresses];
-	NSLog( @"portForNetService addresses:%d", (int) [addresses count]);
-	struct sockaddr *addr = ( struct sockaddr *) [[addresses objectAtIndex:0]  bytes];
-	int aPort = -1;
-	if(addr->sa_family == AF_INET)		
-		aPort = ((struct sockaddr_in *)addr)->sin_port;
-	
-	else if(addr->sa_family == AF_INET6)		
-		aPort = ((struct sockaddr_in6 *)addr)->sin6_port;
-			
-	return NSSwapBigShortToHost(aPort);
+{
+    int port = 0;
+    [DCMNetServiceDelegate gethostnameAndPort:&port forService:netService];
+    return port;
 }
 
 - (void)netServiceBrowser:(NSNetServiceBrowser *)aNetServiceBrowser didFindDomain:(NSString *)domainString moreComing:(BOOL)moreComing
@@ -386,6 +378,21 @@ static DCMNetServiceDelegate *_netServiceDelegate = nil;
                                                                                                         description, @"Description",
                                                                                                         [NSNumber numberWithInt: transferSyntax], @"TransferSyntax",
                                                                                                         nil];
+                        // Discovery only: version and port. The token is never copied from TXT.
+                        NSData *directVersionData = [dict valueForKey:@"HorosDirectTransferVersion"];
+                        if ([directVersionData isKindOfClass:[NSData class]])
+                        {
+                            NSString *directVersion = [[[NSString alloc] initWithData:directVersionData encoding:NSUTF8StringEncoding] autorelease];
+                            if ([directVersion integerValue] > 0)
+                                [s setObject:[NSNumber numberWithInteger:[directVersion integerValue]] forKey:@"HorosDirectTransferVersion"];
+                        }
+                        NSData *directPortData = [dict valueForKey:@"HorosDirectTransferPort"];
+                        if ([directPortData isKindOfClass:[NSData class]])
+                        {
+                            NSString *directPort = [[[NSString alloc] initWithData:directPortData encoding:NSUTF8StringEncoding] autorelease];
+                            if ([directPort integerValue] > 0)
+                                [s setObject:[NSNumber numberWithInteger:[directPort integerValue]] forKey:@"HorosDirectTransferPort"];
+                        }
                         
                         if( [dict valueForKey: @"icon"])
                         {
@@ -398,30 +405,9 @@ static DCMNetServiceDelegate *_netServiceDelegate = nil;
                         
                         [s setObject: @1 forKey: @"Activated"];
                         
-                        // Dont add duplicate addresses
-                        BOOL alreadyHere = NO;
-                        for( int v = 0; v < [serversArray count]; v++)
-                        {
-                            NSDictionary *d = [serversArray objectAtIndex: v];
-                            
-                            if( [[d valueForKey: @"Port"] intValue] == [[s valueForKey: @"Port"] intValue])
-                            {
-                                if( [[d valueForKey: @"Address"] isEqualToString: [s valueForKey: @"Address"]])
-                                    alreadyHere = YES;
-                                else if( [[DCMNetServiceDelegate getIPAddress: [d valueForKey: @"Address"]] isEqualToString: [DCMNetServiceDelegate getIPAddress: [s valueForKey: @"Address"]]])
-                                {
-                                    // If one of these addresses is numeric -> keep the dns name
-                                    if( [[NSCharacterSet decimalDigitCharacterSet] characterIsMember: [[d valueForKey: @"Address"] characterAtIndex: 0]])
-                                    {
-                                        [serversArray objectAtIndex: v];
-                                        v--;
-                                    }
-                                    else
-                                        alreadyHere = YES;
-                                }
-                            }
-                        }
-                        
+                        // Keep explicit settings and compare only already-resolved endpoints.
+                        BOOL alreadyHere = DCMBonjourEndpointAlreadyConfigured(serversArray, aServer, port);
+
                         if( alreadyHere == NO)
                             [serversArray addObject: s];
                     }
@@ -441,7 +427,7 @@ static DCMNetServiceDelegate *_netServiceDelegate = nil;
 			{
 				for( int i = 0 ; i < [serversArray count] ; i++)
 				{
-					if( [[serversArray objectAtIndex: i] valueForKey:@"Send"] != nil && [[[serversArray objectAtIndex: i] valueForKey:@"Send"] boolValue] == NO)
+					if( [[[serversArray objectAtIndex: i] valueForKey:@"retrieveMode"] intValue] == DICOMwebRetrieveMode || ([[serversArray objectAtIndex: i] valueForKey:@"Send"] != nil && [[[serversArray objectAtIndex: i] valueForKey:@"Send"] boolValue] == NO))
 					{
 						[serversArray removeObjectAtIndex: i];
 						i--;
@@ -520,56 +506,20 @@ static DCMNetServiceDelegate *_netServiceDelegate = nil;
 
 + (NSString*) gethostnameAndPort: (int*) port forService:(NSNetService*) sender
 {
-	struct sockaddr		*result;
-	char				buffer[256];
-	NSString			*hostname = nil;
-	NSString			*portString = nil;
-	
-    // IPv4
-	for( NSData *addr in [sender addresses])
-	{
-		result = (struct sockaddr *)[addr bytes];
-	
-		int family = result->sa_family;
-		if (family == AF_INET)
-		{
-			if (inet_ntop(AF_INET, &((struct sockaddr_in *)result)->sin_addr, buffer, sizeof(buffer)))
-			{
-				hostname = [NSString stringWithCString:buffer encoding: NSISOLatin1StringEncoding];
-				portString = [NSString stringWithFormat:@"%d", ntohs(((struct sockaddr_in *)result)->sin_port)];
-				
-				if(port) *port = [portString intValue];
-                
-                break;
-			}
-		}
-    }
-    
-    if( hostname == nil)
-    {
-        // IPv6
-        for( NSData *addr in [sender addresses])
-        {
-            result = (struct sockaddr *)[addr bytes];
-            
-            int family = result->sa_family;
-            
-            if (family == AF_INET6)
-            {
-                if (inet_ntop(AF_INET6, &((struct sockaddr_in6 *)result)->sin6_addr, buffer, sizeof(buffer)))
-                {
-                    hostname = [NSString stringWithCString:buffer encoding: NSISOLatin1StringEncoding];
-                    portString = [NSString stringWithFormat:@"%d", ntohs(((struct sockaddr_in6 *)result)->sin6_port)];
-                    
-                    if(port) *port = [portString intValue];
-                    
-                    break;
-                }
-            }
+    if (port) *port = 0;
+    // Prefer IPv4 where available, retaining the scope of IPv6-only services.
+    for (NSNumber *family in @[@(AF_INET), @(AF_INET6)]) {
+        for (NSData *data in sender.addresses) {
+            int candidatePort = 0;
+            NSString *address = DCMBonjourSocketAddress(data, &candidatePort);
+            if (!address || candidatePort < 1) continue;
+            BOOL ipv6 = [address rangeOfString:@":"].location != NSNotFound;
+            if (ipv6 != (family.intValue == AF_INET6)) continue;
+            if (port) *port = candidatePort;
+            return address;
         }
     }
-    
-	return hostname;
+    return nil;
 }
 
 - (void)netServiceDidResolveAddress:(NSNetService *)aNetService

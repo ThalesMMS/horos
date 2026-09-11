@@ -41,6 +41,7 @@
 #import "Spline3D.h"
 #import "Piecewise3D.h"
 #import "N3Geometry.h"
+#import "Horos-Swift.h"
 #import <math.h>
 
 @implementation FlyThru
@@ -134,6 +135,8 @@
 	stepMovieIndexIn4D = [NSMutableArray arrayWithCapacity:nbStep];
 	
 	// initialisation
+	float envelopeLevelMin = 0, envelopeLevelMax = 0, envelopeWidthMin = 0, envelopeWidthMax = 0;
+	BOOL haveWindowEnvelope = NO;
 	Camera *cam;
 	for (cam in tempStepCameras)
 	{
@@ -152,6 +155,23 @@
 		[stepMovieIndexIn4D addObject: [[[Point3D alloc] initWithValues:[cam movieIndexIn4D]:0:0] autorelease]];
 		
 		[stepCroppingPlanes addObject:[cam croppingPlanes]];
+
+		if (isfinite([cam wl]) && isfinite([cam ww]) && [cam ww] != 0)
+		{
+			if (!haveWindowEnvelope)
+			{
+				envelopeLevelMin = envelopeLevelMax = [cam wl];
+				envelopeWidthMin = envelopeWidthMax = [cam ww];
+				haveWindowEnvelope = YES;
+			}
+			else
+			{
+				if ([cam wl] < envelopeLevelMin) envelopeLevelMin = [cam wl];
+				if ([cam wl] > envelopeLevelMax) envelopeLevelMax = [cam wl];
+				if ([cam ww] < envelopeWidthMin) envelopeWidthMin = [cam ww];
+				if ([cam ww] > envelopeWidthMax) envelopeWidthMax = [cam ww];
+			}
+		}
 	}
 	
 	// interpolation
@@ -231,7 +251,14 @@
 		[c setViewAngle: [view x]];
 		[c setEyeAngle: [eye x]];
 		[c setParallelScale: [para x]];
-		[c setWLWW: (long)[iwl x] : (long)[iww x]];
+		float interpolatedLevel = [iwl x];
+		float interpolatedWidth = [iww x];
+		if (haveWindowEnvelope)
+		{
+			interpolatedLevel = [HorosFlyThruWindow clampedLevel:interpolatedLevel rangeMin:envelopeLevelMin rangeMax:envelopeLevelMax];
+			interpolatedWidth = [HorosFlyThruWindow clampedWidth:interpolatedWidth rangeMin:envelopeWidthMin rangeMax:envelopeWidthMax];
+		}
+		[c setWLWW: interpolatedLevel : interpolatedWidth];
 		[c setCroppingPlanes: cropp];
 		[c setFusionPercentage: [fusion x]];
 		[c setMovieIndexIn4D: (long)[index4D x]];

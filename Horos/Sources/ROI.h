@@ -134,6 +134,7 @@ enum
 	
 	float			rmean, rmax, rmin, rdev, rtotal, rskewness, rkurtosis;
 	float			Brmean, Brmax, Brmin, Brdev, Brtotal, Brskewness, Brkurtosis;
+    double Brmedian;
 	
 	float			mousePosMeasure;
 	
@@ -203,6 +204,7 @@ enum
 @property(retain) ROI *parentROI;
 @property double sliceThickness, pixelSpacingX, pixelSpacingY;
 @property float min, max, mean;
+@property double median;
 @property(assign) NSColor* NSColor;
 @property(assign) BOOL isSpline;
 

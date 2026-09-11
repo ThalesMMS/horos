@@ -357,7 +357,11 @@ The Horos Project was based originally upon the OsiriX Project which at the time
 	
 	vtkMarchingSquares*		isoContour = vtkMarchingSquares::New();
 	
-	isoContour->SetValue(0, 1);
+	// VTK places the value of mask pixel i at coordinate i (its center). The ROI coordinate system
+	// puts the corners of pixel i at i and i+1. Extracting the iso-line at the middle of the 0/255 range
+	// puts the contour exactly on the pixel boundaries; the +0.5 below moves it from center coordinates
+	// to corner coordinates so that the polygon overlays the brush instead of being shifted up-left.
+	isoContour->SetValue(0, 127.5);
 	isoContour->SetInputConnection( image2D->GetOutputPort());
 	isoContour->Update();
 
@@ -393,7 +397,7 @@ The Horos Project was based originally upon the OsiriX Project which at the time
 		{
 			double p[ 3];
 			output->GetPoint(ii, p);
-			[tempArray addObject: [MyPoint point: NSMakePoint(p[0], p[1])]];		//[srcViewer newPoint: p[0]  : p[1] ]];
+			[tempArray addObject: [MyPoint point: NSMakePoint(p[0] + 0.5, p[1] + 0.5)]];
 		}
 		
 		ii--;
@@ -404,7 +408,7 @@ The Horos Project was based originally upon the OsiriX Project which at the time
 		{
 			double p[ 3];
 			output->GetPoint(ii, p);
-			[tempArray addObject: [MyPoint point: NSMakePoint(p[0], p[1])]];
+			[tempArray addObject: [MyPoint point: NSMakePoint(p[0] + 0.5, p[1] + 0.5)]];
 		}
 		
 		long roiResolution = 1;
@@ -702,6 +706,7 @@ The Horos Project was based originally upon the OsiriX Project which at the time
                                 color.blue = 0.58*65535.;
                                 
                                 [theNewROI setColor: color];
+                                [theNewROI setComments: NSLocalizedString( @"3D region growing preview (whole volume)", nil)];
                             }
                             
                             [theNewROI setROIMode: ROI_selected];
@@ -714,7 +719,10 @@ The Horos Project was based originally upon the OsiriX Project which at the time
                         buff+= buffHeight*buffWidth;
                     }
                 
-                    if( mergeWithExistingROIs)
+                    // A preview must never absorb the user's existing brush ROIs: merging folds them into the
+                    // "Segmentation Preview" ROI, which is deleted by the next click or Compute, so every
+                    // previous seed result would be lost when working with several seeds.
+                    if( mergeWithExistingROIs && [newname isEqualToString: NSLocalizedString( @"Segmentation Preview", nil)] == NO)
                     {
                         int currentImageIndex = [[srcViewer imageView] curImage];
                         
@@ -730,8 +738,7 @@ The Horos Project was based originally upon the OsiriX Project which at the time
                 }
                 else
                 {
-                    if( NSRunAlertPanel( NSLocalizedString(@"32-bit",nil), NSLocalizedString( @"Upgrade to Horos 64-bit to solve this issue.",nil), NSLocalizedString(@"OK", nil), NSLocalizedString(@"Horos 64-bit", nil), nil) == NSAlertAlternateReturn)
-                        [[AppController sharedAppController] osirix64bit: self];	
+                    NSRunAlertPanel( NSLocalizedString( @"Not enough memory", nil), NSLocalizedString( @"Close other studies or open a smaller series. Nothing was reduced silently.", nil), NSLocalizedString( @"OK", nil), nil, nil);
                 }
             }
             else
@@ -770,6 +777,7 @@ The Horos Project was based originally upon the OsiriX Project which at the time
                     color.blue = 0.58*65535.;
                     
                     [theNewROI setColor: color];
+                    [theNewROI setComments: NSLocalizedString( @"2D region growing preview (this image only)", nil)];
                 }
                 else if( mergeWithExistingROIs)
                 {
@@ -868,7 +876,8 @@ The Horos Project was based originally upon the OsiriX Project which at the time
                     vtkContourFilter*		isoContour = vtkContourFilter::New();
                 //	vtkMarchingSquares*		isoContour = vtkMarchingSquares::New();
                     
-                    isoContour->SetValue(0, 1);
+                    // Middle of the 0/255 mask: the contour lies on the pixel boundaries (see extractContour).
+                    isoContour->SetValue(0, 127.5);
                     isoContour->SetInputConnection( image2D->GetOutputPort());
                    
                     vtkPolyDataConnectivityFilter	*filter = vtkPolyDataConnectivityFilter::New();
@@ -918,7 +927,7 @@ The Horos Project was based originally upon the OsiriX Project which at the time
                         {
                             double p[ 3];
                             output->GetPoint(ii, p);
-                            [points addObject: [srcViewer newPoint: p[0]  : p[1] ]];
+                            [points addObject: [srcViewer newPoint: p[0] + 0.5 : p[1] + 0.5]];	// VTK pixel centers -> ROI pixel corners
                         }
                         ii--;
                         if(ii>= output->GetNumberOfLines()) ii-=2;
@@ -926,7 +935,7 @@ The Horos Project was based originally upon the OsiriX Project which at the time
                         {
                             double p[ 3];
                             output->GetPoint(ii, p);
-                            [points addObject: [srcViewer newPoint: p[0]  : p[1] ]];
+                            [points addObject: [srcViewer newPoint: p[0] + 0.5 : p[1] + 0.5]];
                         }
                         
                         #define MAXPOINTS 200

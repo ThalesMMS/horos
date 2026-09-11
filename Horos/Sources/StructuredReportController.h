@@ -22,7 +22,7 @@
 
 /** \brief  Window Controller for StructuredReport management */
 
-@interface StructuredReportController : NSWindowController {
+@interface StructuredReportController : NSWindowController <WebFrameLoadDelegate, NSToolbarDelegate> {
 
 	id _study;
 	NSURL *_url;

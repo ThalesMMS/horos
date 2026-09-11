@@ -36,6 +36,7 @@
  ============================================================================*/
 
 #import "NSImage+N2.h"
+#import "Horos-Swift.h"
 #include <algorithm>
 #import <Accelerate/Accelerate.h>
 #import "N2Operators.h"
@@ -109,6 +110,21 @@
 
 
 @implementation NSImage (N2)
+
++ (NSImage *)toolbarImageNamed:(NSString *)name
+{
+    return [self toolbarImageNamed:name size:NSMakeSize(32, 32)];
+}
+
++ (NSImage *)toolbarImageNamed:(NSString *)name size:(NSSize)size
+{
+    // Forcing the requested size squashed non-square artwork such as the
+    // 124x100 windows.tif used by the tiling items. Fit the longest edge into
+    // the box instead, so the icon keeps its proportions and the toolbar keeps
+    // its height.
+    return [HorosToolbarImage imageFittingImage: [NSImage imageNamed: name]
+                                           size: MIN( size.width, size.height)];
+}
 
 -(NSImage*)shadowImage
 {

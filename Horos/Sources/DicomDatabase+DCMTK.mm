@@ -36,6 +36,7 @@
  ============================================================================*/
 
 #import "DicomDatabase+DCMTK.h"
+#import "HorosReportExtraction.h"
 #import "DCMObject.h"
 #import "DCM.h"
 #import "DCMTransferSyntax.h"
@@ -49,23 +50,24 @@
 #import "WaitRendering.h"
 
 #undef verify
-#include "osconfig.h" /* make sure OS specific configuration is included first */
-#include "djdecode.h"  /* for dcmjpeg decoders */
-#include "djencode.h"  /* for dcmjpeg encoders */
-#include "dcrledrg.h"  /* for DcmRLEDecoderRegistration */
-#include "dcrleerg.h"  /* for DcmRLEEncoderRegistration */
-#include "djrploss.h"
-#include "djrplol.h"
-#include "dcpixel.h"
-#include "dcrlerp.h"
+#include "HorosDCMTKCompatibility.h"
+#include <dcmtk/config/osconfig.h> /* make sure OS specific configuration is included first */
+#include <dcmtk/dcmjpeg/djdecode.h>  /* for dcmjpeg decoders */
+#include <dcmtk/dcmjpeg/djencode.h>  /* for dcmjpeg encoders */
+#include <dcmtk/dcmdata/dcrledrg.h>  /* for DcmRLEDecoderRegistration */
+#include <dcmtk/dcmdata/dcrleerg.h>  /* for DcmRLEEncoderRegistration */
+#include <dcmtk/dcmjpeg/djrploss.h>
+#include <dcmtk/dcmjpeg/djrplol.h>
+#include <dcmtk/dcmdata/dcpixel.h>
+#include <dcmtk/dcmdata/dcrlerp.h>
 
-#include "dcdatset.h"
-#include "dcmetinf.h"
-#include "dcfilefo.h"
-#include "dcdebug.h"
-#include "dcuid.h"
-#include "dcdict.h"
-#include "dcdeftag.h"
+#include <dcmtk/dcmdata/dcdatset.h>
+#include <dcmtk/dcmdata/dcmetinf.h>
+#include <dcmtk/dcmdata/dcfilefo.h>
+#include "HorosDCMTKCompatibility.h"
+#include <dcmtk/dcmdata/dcuid.h>
+#include <dcmtk/dcmdata/dcdict.h>
+#include <dcmtk/dcmdata/dcdeftag.h>
 
 #define CHUNK_SUBPROCESS 200
 #define TIMEOUT 20UL
@@ -144,6 +146,7 @@
     if (dest == nil)
         dest = @"sameAsDestination";
     
+    BOOL succeeded = YES;
     int total = [paths count];
     NSThread* thread = [NSThread currentThread];
     [thread enterOperation];
@@ -187,10 +190,12 @@
                 if( [theTask isRunning])
                 {
                     N2LogStackTrace( @"***** task timeout reached -> terminate the NSTask : %@", paths);
+                    succeeded = NO;
                     [theTask terminate];
                 }
                 else if( [theTask terminationReason] == NSTaskTerminationReasonUncaughtSignal)
                 {
+                    succeeded = NO;
                     N2LogStackTrace( @"***** Decompress process crashed.");
                     
                     if( [[NSUserDefaults standardUserDefaults] boolForKey: @"DELETEFILELISTENER"])
@@ -199,20 +204,25 @@
                             [[NSFileManager defaultManager] moveItemAtPath: path toPath: [[[DicomDatabase defaultDatabase] errorsDirPath] stringByAppendingPathComponent: [path lastPathComponent]] error: nil];
                     }
                 }
+                if (![theTask isRunning] && [theTask terminationStatus] != 0)
+                    succeeded = NO;
                 
             } @catch (NSException *e) {
+                succeeded = NO;
                 N2LogExceptionWithStackTrace(e);
             }
             
             [theTask release];
             free( objs);
         }
+        else
+            succeeded = NO;
         
         i += no;
     }
     
     [thread exitOperation];
-    return YES;
+    return succeeded;
     
     //    #ifndef OSIRIX_LIGHT
     //	@synchronized( [BrowserController currentBrowser])
@@ -324,6 +334,7 @@
     if (dest == nil)
         dest = @"sameAsDestination";
     
+    BOOL succeeded = YES;
     int total = [files count];
     NSThread* thread = [NSThread currentThread];
     [thread enterOperation];
@@ -367,23 +378,29 @@
                 if( [theTask isRunning])
                 {
                     N2LogStackTrace( @"***** task timeout reached -> terminate the NSTask : %@", files);
+                    succeeded = NO;
                     [theTask terminate];
                 }
+                if (![theTask isRunning] && [theTask terminationStatus] != 0)
+                    succeeded = NO;
             }
             @catch (NSException *e)
             {
+                succeeded = NO;
                 N2LogExceptionWithStackTrace(e);
             }
             
             [theTask release];
             free(objs);
         }
+        else
+            succeeded = NO;
         
         i += no;
     }
     
     [thread exitOperation];
-    return YES;
+    return succeeded;
     
     //	OFCondition cond;
     //
@@ -441,55 +458,31 @@
     //	return YES;
 }
 
+// The legacy entry point retains its nil-on-failure contract for callers that
+// only open reports. Importers need to distinguish a cleared report from damage.
 +(NSString*)extractReportSR:(NSString*)dicomSR contentDate:(NSDate*)date {
-    NSString* destPath = nil;
-    NSString* uidName = [SRAnnotation getReportFilenameFromSR: dicomSR];
-    if( [uidName length] > 0)
-    {
-        NSString *zipFile = [@"/tmp/" stringByAppendingPathComponent: uidName];
-        
-        // Extract the CONTENT to the REPORTS folder
-        SRAnnotation *r = [[[SRAnnotation alloc] initWithContentsOfFile: dicomSR] autorelease];
-        [[NSFileManager defaultManager] removeItemAtPath: zipFile error:NULL];
-        
-        // Check for http/https !
-        if( [[r reportURL] length] > 8 && ([[r reportURL] hasPrefix: @"http://"] || [[r reportURL] hasPrefix: @"https://"]))
-            destPath = [[[r reportURL] copy] autorelease];
-        else
-        {
-            if( [[r dataEncapsulated] length] > 0)
-            {
-                [[r dataEncapsulated] writeToFile: zipFile atomically: YES];
-                
-                [[NSFileManager defaultManager] removeItemAtPath: @"/tmp/zippedFile/" error:NULL];
-                [BrowserController unzipFile: zipFile withPassword: nil destination: @"/tmp/zippedFile/" showGUI: NO];
-                [[NSFileManager defaultManager] removeItemAtPath: zipFile error:NULL];
-                
-                for( NSString *f in [[NSFileManager defaultManager] contentsOfDirectoryAtPath: @"/tmp/zippedFile/" error: nil])
-                {
-                    if( [f hasPrefix: @"."] == NO)
-                    {
-                        if( destPath)
-                            NSLog( @"*** multiple files in Report decompression ?");
-                        
-                        destPath = [@"/tmp/" stringByAppendingPathComponent: f];
-                        if( destPath)
-                        {
-                            [[NSFileManager defaultManager] removeItemAtPath: destPath error: nil];
-                            [[NSFileManager defaultManager] moveItemAtPath: [@"/tmp/zippedFile/" stringByAppendingPathComponent: f] toPath: destPath error: nil];
-                        }
-                    }
-                }
-            }
-        }
+    return [self extractReportSR:dicomSR contentDate:date error:NULL];
+}
+
++(NSString*)extractReportSR:(NSString*)dicomSR contentDate:(NSDate*)date error:(NSError**)error {
+    DcmFileFormat file;
+    HorosSRDocument document;
+    if (!dicomSR.length || file.loadFile(dicomSR.fileSystemRepresentation).bad() ||
+        document.read(*file.getDataset()).bad()) {
+        if (error) *error = [NSError errorWithDomain:@"HorosReportExtraction" code:1 userInfo:
+            @{NSLocalizedDescriptionKey: NSLocalizedString(@"The DICOM structured report could not be read.", nil)}];
+        return nil;
     }
-    
-    [[NSFileManager defaultManager] removeItemAtPath: @"/tmp/zippedFile/" error:NULL];
-    
-    if( destPath)
-        [[NSFileManager defaultManager] setAttributes: [NSDictionary dictionaryWithObjectsAndKeys: date, NSFileModificationDate, nil] ofItemAtPath: destPath error: nil];
-    
-    return destPath;
+    SRAnnotation *report = [[[SRAnnotation alloc] initWithContentsOfFile:dicomSR] autorelease];
+    NSString *url = report.reportURL;
+    if (url.length > 8 && ([url hasPrefix:@"http://"] || [url hasPrefix:@"https://"]))
+        return [[url copy] autorelease];
+    // An intentionally empty SR clears the report; an invalid archive must not.
+    if (!report.dataEncapsulated.length) return nil;
+    NSString *path = HorosExtractReportArchive(report.dataEncapsulated, date);
+    if (!path && error) *error = [NSError errorWithDomain:@"HorosReportExtraction" code:2 userInfo:
+        @{NSLocalizedDescriptionKey: NSLocalizedString(@"The report archive could not be extracted completely.", nil)}];
+    return path;
 }
 
 +(BOOL)testFiles:(NSArray*)files {

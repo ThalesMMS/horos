@@ -53,25 +53,27 @@
 #import <Quartz/Quartz.h>
 
 #undef verify
-#include "osconfig.h" /* make sure OS specific configuration is included first */
-#include "dcmjpeg/djdecode.h"  /* for dcmjpeg decoders */
-#include "dcmjpeg/djencode.h"  /* for dcmjpeg encoders */
-#include "dcrledrg.h"  /* for DcmRLEDecoderRegistration */
-#include "dcrleerg.h"  /* for DcmRLEEncoderRegistration */
-#include "djrploss.h"
-#include "djrplol.h"
-#include "dcpixel.h"
-#include "dcrlerp.h"
-#include "dcdicdir.h"
-#include "dcdatset.h"
-#include "dcmetinf.h"
-#include "dcfilefo.h"
-#include "dcdebug.h"
-#include "dcuid.h"
-#include "dcdict.h"
-#include "dcdeftag.h"
-#include "dcmjpls/djdecode.h" //JPEG-LS
-#include "dcmjpls/djencode.h" //JPEG-LS
+#include "HorosDCMTKCompatibility.h"
+#include "HorosDICOMRepresentation.h"
+#include <dcmtk/config/osconfig.h> /* make sure OS specific configuration is included first */
+#include <dcmtk/dcmjpeg/djdecode.h>  /* for dcmjpeg decoders */
+#include <dcmtk/dcmjpeg/djencode.h>  /* for dcmjpeg encoders */
+#include <dcmtk/dcmdata/dcrledrg.h>  /* for DcmRLEDecoderRegistration */
+#include <dcmtk/dcmdata/dcrleerg.h>  /* for DcmRLEEncoderRegistration */
+#include <dcmtk/dcmjpeg/djrploss.h>
+#include <dcmtk/dcmjpeg/djrplol.h>
+#include <dcmtk/dcmdata/dcpixel.h>
+#include <dcmtk/dcmdata/dcrlerp.h>
+#include <dcmtk/dcmdata/dcdicdir.h>
+#include <dcmtk/dcmdata/dcdatset.h>
+#include <dcmtk/dcmdata/dcmetinf.h>
+#include <dcmtk/dcmdata/dcfilefo.h>
+#include "HorosDCMTKCompatibility.h"
+#include <dcmtk/dcmdata/dcuid.h>
+#include <dcmtk/dcmdata/dcdict.h>
+#include <dcmtk/dcmdata/dcdeftag.h>
+#include <dcmtk/dcmjpls/djdecode.h> //JPEG-LS
+#include <dcmtk/dcmjpls/djencode.h> //JPEG-LS
 
 #include "options.h"
 #include "url.h"
@@ -93,7 +95,7 @@ NSMutableDictionary		*DATABASECOLUMNS = 0L;
 //short					Altivec = 0;
 short					UseOpenJpeg = 1, Use_kdu_IfAvailable = 0;
 
-extern void dcmtkSetJPEGColorSpace( int);
+
 
 /*
 void myunlink(const char * path) {
@@ -155,6 +157,164 @@ int compressionForModality( NSArray *array, NSArray *arrayLow, int limit, NSStri
 void createSwfMovie(NSArray* inputFiles, NSString* path, float frameRate);
 #endif
 
+typedef NS_ENUM(NSInteger, HorosArchiveExtraction)
+{
+    HorosArchiveExtracted,           // the contents are in place and the archive is gone
+    HorosArchiveNotExpanded,         // the archive itself is at fault; nothing came out of it
+    HorosArchiveNotExpandedForNow,   // the destination is at fault - no room, no permission
+    HorosArchiveExpandedNotCleared   // the contents are in place; the archive itself could not be removed
+};
+
+static HorosArchiveExtraction extractDICOMArchive(NSString *source, NSString *destination)
+{
+    NSFileManager *manager = [NSFileManager defaultManager];
+    NSString *staging = [[destination stringByDeletingLastPathComponent] stringByAppendingPathComponent:[@".horos-extract-" stringByAppendingString:[[NSUUID UUID] UUIDString]]];
+    if (![manager createDirectoryAtPath:staging withIntermediateDirectories:NO attributes:@{NSFilePosixPermissions:@0700} error:NULL])
+    {
+        // Nothing here says the archive is bad: the place it would go is.
+        NSLog(@"---- decompress: %@ could not be expanded: no working directory beside %@", [source lastPathComponent], [destination stringByDeletingLastPathComponent]);
+        return HorosArchiveNotExpandedForNow;
+    }
+    @try
+    {
+        NSString *output = [staging stringByAppendingPathComponent:@"contents"];
+        NSTask *task = [[[NSTask alloc] init] autorelease];
+        [task setLaunchPath:@"/usr/bin/unzip"];
+        [task setArguments:@[@"-o", @"-d", output, source]];
+        [task setStandardInput:[NSFileHandle fileHandleWithNullDevice]];
+        [task launch];
+        while ([task isRunning]) [NSThread sleepForTimeInterval:0.1];
+        int status = [task terminationStatus];
+        // 1 means unzip finished and warned about something, so the contents are
+        // there and throwing them away would be the loss this is meant to avoid.
+        // 50 is "the disk is (or was) full": the archive is fine and the
+        // destination is not, which is a different answer. Everything else means
+        // the archive itself is at fault.
+        if (status != 0 && status != 1)
+        {
+            NSLog(@"---- decompress: %@ could not be expanded: unzip exited with %d", [source lastPathComponent], status);
+            return status == 50 ? HorosArchiveNotExpandedForNow : HorosArchiveNotExpanded;
+        }
+        // Swap an existing destination into staging; never pre-delete it.
+        if (renamex_np([output fileSystemRepresentation], [destination fileSystemRepresentation], RENAME_SWAP) != 0)
+        {
+            if (errno != ENOENT || renamex_np([output fileSystemRepresentation], [destination fileSystemRepresentation], RENAME_EXCL) != 0)
+            {
+                NSLog(@"---- decompress: %@ was expanded but its contents could not be put in place: %s", [source lastPathComponent], strerror(errno));
+                return HorosArchiveNotExpandedForNow;
+            }
+        }
+        if ([[source stringByStandardizingPath] isEqualToString:[destination stringByStandardizingPath]]) return HorosArchiveExtracted;
+        if ([manager removeItemAtPath:source error:NULL]) return HorosArchiveExtracted;
+        NSLog(@"---- decompress: %@ was expanded but the archive itself could not be removed", [source lastPathComponent]);
+        return HorosArchiveExpandedNotCleared;
+    }
+    @catch (NSException *exception)
+    {
+        NSLog(@"Archive extraction failed: %@", exception);
+        return HorosArchiveNotExpanded;
+    }
+    @finally
+    {
+        [manager removeItemAtPath:staging error:NULL];
+    }
+}
+
+// Nothing ever rescans the decompression folder, so an archive left in it is
+// neither imported nor mentioned again. Hand it back to the folder it came from
+// under a name that no longer reads as an archive - kept as it is, it would be
+// sent straight back here on the next scan - and let the importer report and
+// dispose of it the way it does with any other file it cannot read, which is
+// also what makes DELETEFILELISTENER apply to it.
+static BOOL surrenderUnreadableArchive(NSString *source, NSString *destination)
+{
+    NSFileManager *manager = [NSFileManager defaultManager];
+    NSString *handBack = [destination stringByAppendingPathExtension:@"horos-unexpanded"];
+    for (int attempt = 1; [manager fileExistsAtPath:handBack] && attempt < 1000; attempt++)
+        handBack = [[destination stringByAppendingFormat:@"-%d", attempt] stringByAppendingPathExtension:@"horos-unexpanded"];
+    if (![manager moveItemAtPath:source toPath:handBack error:NULL])
+    {
+        NSLog(@"---- decompress: %@ could not be handed back for import; it stays in the decompression folder", [source lastPathComponent]);
+        return NO;
+    }
+    NSLog(@"---- decompress: %@ handed back as %@ so the import folder can report it", [source lastPathComponent], [handBack lastPathComponent]);
+    return YES;
+}
+
+// An archive that could not be expanded because of the destination - no room,
+// no permission - is not a bad archive, and disposing of it the way an unreadable
+// file is disposed of would destroy something the next attempt could read
+// perfectly well. Put it back where it came from, under its own name, so the
+// next scan tries again once the cause is gone.
+static BOOL returnArchiveForRetry(NSString *source, NSString *destination)
+{
+    NSFileManager *manager = [NSFileManager defaultManager];
+    if ([[source stringByStandardizingPath] isEqualToString:[destination stringByStandardizingPath]])
+        return YES;
+    [manager removeItemAtPath:destination error:NULL]; // a partial from a previous attempt
+    if (![manager moveItemAtPath:source toPath:destination error:NULL])
+    {
+        NSLog(@"---- decompress: %@ could not be put back for another attempt; it stays in the decompression folder", [source lastPathComponent]);
+        return NO;
+    }
+    NSLog(@"---- decompress: %@ put back for another attempt once there is room for it", [source lastPathComponent]);
+    return YES;
+}
+
+// Copy beside the destination before committing, including moves across volumes.
+static BOOL relocateDICOMFile(NSString *source, NSString *destination)
+{
+    if ([[source stringByStandardizingPath] isEqualToString:[destination stringByStandardizingPath]])
+        return [[NSFileManager defaultManager] fileExistsAtPath:source];
+    NSFileManager *manager = [NSFileManager defaultManager];
+    NSString *staging = [[destination stringByDeletingLastPathComponent] stringByAppendingPathComponent:[@".horos-move-" stringByAppendingString:[[NSUUID UUID] UUIDString]]];
+    if (![manager createDirectoryAtPath:staging withIntermediateDirectories:NO attributes:@{NSFilePosixPermissions:@0700} error:NULL])
+        return NO;
+    @try
+    {
+        NSString *temporary = [staging stringByAppendingPathComponent:@"file"];
+        if (![manager copyItemAtPath:source toPath:temporary error:NULL]) return NO;
+        if (rename([temporary fileSystemRepresentation], [destination fileSystemRepresentation]) != 0) return NO;
+        return [manager removeItemAtPath:source error:NULL];
+    }
+    @finally
+    {
+        [manager removeItemAtPath:staging error:NULL];
+    }
+}
+
+// Save beside the final destination, then replace it without removing the source first.
+static BOOL saveConvertedDICOM(DcmFileFormat& fileformat, E_TransferSyntax syntax,
+                               NSString *source, NSString *destination)
+{
+    NSString *pattern = [[destination stringByDeletingLastPathComponent] stringByAppendingPathComponent:@".horos-codec-XXXXXX"];
+    char *temporary = strdup([pattern fileSystemRepresentation]);
+    if (!temporary) return NO;
+    int descriptor = mkstemp(temporary);
+    if (descriptor < 0) { free(temporary); return NO; }
+    close(descriptor);
+    BOOL succeeded = NO;
+    try
+    {
+        OFCondition condition = fileformat.saveFile(temporary, syntax);
+        if (condition.good() && rename(temporary, [destination fileSystemRepresentation]) == 0)
+        {
+            succeeded = YES;
+            if (![source isEqualToString:destination] && unlink([source fileSystemRepresentation]) != 0)
+                succeeded = NO;
+        }
+    }
+    catch (...)
+    {
+        unlink(temporary);
+        free(temporary);
+        throw;
+    }
+    unlink(temporary);
+    free(temporary);
+    return succeeded;
+}
+
 int main(int argc, const char *argv[])
 {
 	[[NSAutoreleasePool alloc] init]; // yes, the Decompress tool will exit anyway
@@ -172,14 +332,13 @@ int main(int argc, const char *argv[])
 	if( argv[ 1] && argv[ 2])
 	{
 		// register global JPEG decompression codecs
-		DJDecoderRegistration::registerCodecs();
+		// JPEG decoders are registered below, after reading the color policy.
         DJLSDecoderRegistration::registerCodecs();
         
 		// register global JPEG compression codecs
 		DJEncoderRegistration::registerCodecs(
 			ECC_lossyRGB,
 			EUC_never,
-			OFFalse,
 			OFFalse,
 			0,
 			0,
@@ -231,13 +390,15 @@ int main(int argc, const char *argv[])
 			}
 		}
 		
-		dcmtkSetJPEGColorSpace( [[dict objectForKey:@"UseJPEGColorSpace"] intValue]);
+		DJDecoderRegistration::registerCodecs(
+            [[dict objectForKey:@"UseJPEGColorSpace"] boolValue] ? EDC_guess : EDC_photometricInterpretation, EUC_never);
 		
 //		BOOL useDCMTKForJP2K = [[dict objectForKey:@"useDCMTKForJP2K"] intValue];
 		
 #pragma mark compress
 		if( [what isEqualToString:@"compress"])
 		{
+            BOOL conversionSucceeded = YES;
 			UseOpenJpeg = [[dict objectForKey:@"UseOpenJpegForJPEG2000"] intValue];
 			Use_kdu_IfAvailable = [[dict objectForKey:@"UseKDUForJPEG2000"] intValue];
 			
@@ -266,39 +427,22 @@ int main(int argc, const char *argv[])
 				if( [[curFile pathExtension] isEqualToString: @"zip"] ||
                 [[curFile pathExtension] isEqualToString: @"osirixzip"])
                 {
-                    NSString *tempCurFileDest = [[curFileDest stringByDeletingLastPathComponent] stringByAppendingPathComponent: [NSString stringWithFormat: @".%@", [curFileDest lastPathComponent]]];
-                    
-                    myunlink([tempCurFileDest fileSystemRepresentation]);
-                    myunlink([curFileDest fileSystemRepresentation]);
-                    
-					NSTask *t = [[[NSTask alloc] init] autorelease];
-	
-					@try
-					{
-						[t setLaunchPath: @"/usr/bin/unzip"];
-						[t setCurrentDirectoryPath: @"/tmp/"];
-						NSArray *args = [NSArray arrayWithObjects: @"-o", @"-d", tempCurFileDest, curFile, nil];
-						[t setArguments: args];
-						[t launch];
-                        
-                        while( [t isRunning])
-                            [NSThread sleepForTimeInterval: 0.1];
-                        
-                        //[t waitUntilExit];		// <- This is VERY DANGEROUS : the main runloop is continuing...
-					}
-					@catch ( NSException *e)
-					{
-						NSLog( @"***** unzipFile exception: %@", e);
-					}
-                    
-					[[NSFileManager defaultManager] moveItemAtPath: tempCurFileDest toPath: curFileDest error: nil];
-                    
-                    myunlink([curFile fileSystemRepresentation]);
+                    HorosArchiveExtraction outcome = extractDICOMArchive(curFile, curFileDest);
+                    if (outcome != HorosArchiveExtracted)
+                    {
+                        conversionSucceeded = NO;
+                        if (outcome == HorosArchiveNotExpanded)
+                            surrenderUnreadableArchive(curFile, curFileDest);
+                        else if (outcome == HorosArchiveNotExpandedForNow)
+                            returnArchiveForRetry(curFile, curFileDest);
+                    }
 				}
 				else
 				{
 					DcmFileFormat fileformat;
 					OFCondition cond = fileformat.loadFile( [curFile UTF8String]);
+                    if (!cond.good())
+                        conversionSucceeded = NO;
 					// if we can't read it stop
 					if( cond.good())
 					{
@@ -467,7 +611,7 @@ int main(int argc, const char *argv[])
                                     
                                     // this causes the lossless JPEG version of the dataset to be created
                                     DcmXfer oxferSyn( tSyntax);
-                                    dataset->chooseRepresentation(tSyntax, params);
+                                    HorosChooseDICOMRepresentation(fileformat, tSyntax, params, quality);
                                     
                                     // check if everything went well
                                     if (dataset->canWriteXfer(tSyntax))
@@ -482,48 +626,17 @@ int main(int argc, const char *argv[])
                                         // store in lossless JPEG format
                                         fileformat.loadAllDataIntoMemory();
                                         
-                                        {
-                                            NSString *tempCurFileDest = [[curFileDest stringByDeletingLastPathComponent] stringByAppendingPathComponent: [NSString stringWithFormat: @".%@", [curFileDest lastPathComponent]]];
-                                            
-                                            myunlink([tempCurFileDest fileSystemRepresentation]);
-                                            myunlink([curFileDest fileSystemRepresentation]);
-                                            
-                                            cond = fileformat.saveFile( [tempCurFileDest UTF8String], tSyntax);
-                                            status =  (cond.good()) ? YES : NO;
-                                            
-                                            [[NSFileManager defaultManager] moveItemAtPath: tempCurFileDest toPath: curFileDest error: nil];
-                                        }
-                                        
-                                        if( status == NO)
-                                        {
-                                            myunlink([curFileDest fileSystemRepresentation]);
-                                            if ([[dict objectForKey: @"DecompressMoveIfFail"] boolValue])
-                                            {
-                                                [[NSFileManager defaultManager] moveItemAtPath: curFile toPath: curFileDest error: nil];
-                                            }
-                                            else if( destDirec)
-                                            {
-                                                myunlink([curFile fileSystemRepresentation]);
-                                                NSLog( @"failed to compress file: %@, the file is deleted", curFile);
-                                            }
-                                            else
-                                                NSLog( @"failed to compress file: %@", curFile);
-                                        }
-                                        else
-                                        {
-                                            myunlink([curFile fileSystemRepresentation]);
-                                            if( destDirec == nil)
-                                                [[NSFileManager defaultManager] moveItemAtPath: curFileDest toPath: curFile error: nil];
-                                        }
+                                        status = saveConvertedDICOM(fileformat, tSyntax, curFile, destDirec ? curFileDest : curFile);
+                                        if (!status) conversionSucceeded = NO;
                                     }
+                                    else conversionSucceeded = NO;
                                 }
                                 else
                                 {
                                     if( destDirec)
                                     {
-                                        myunlink([curFileDest fileSystemRepresentation]);
-                                        [[NSFileManager defaultManager] moveItemAtPath: curFile toPath: curFileDest error: nil];
-                                        myunlink([curFile fileSystemRepresentation]);
+                                        if (!relocateDICOMFile(curFile, curFileDest))
+                                            conversionSucceeded = NO;
                                     }
                                 }
                             }
@@ -531,21 +644,21 @@ int main(int argc, const char *argv[])
                             {
                                 if( destDirec)
                                 {
-                                    myunlink([curFileDest fileSystemRepresentation]);
-                                    [[NSFileManager defaultManager] moveItemAtPath: curFile toPath: curFileDest error: nil];
-                                    myunlink([curFile fileSystemRepresentation]);
+                                    if (!relocateDICOMFile(curFile, curFileDest))
+                                        conversionSucceeded = NO;
                                 }
                             }
 						}
 					}
 					else if ([[dict objectForKey: @"DecompressMoveIfFail"] boolValue])
                     {
-                        myunlink([curFileDest fileSystemRepresentation]);
-                        [[NSFileManager defaultManager] moveItemAtPath: curFile toPath: curFileDest error: nil];
+                        if (!relocateDICOMFile(curFile, curFileDest))
+                            conversionSucceeded = NO;
                     }
                     else NSLog( @"compress : cannot read file: %@", curFile);
 				}
 			}
+            return conversionSucceeded ? EXIT_SUCCESS : EXIT_FAILURE;
 		}
 		
         if( [what isEqualToString: @"testDICOMDIR"])
@@ -600,6 +713,7 @@ int main(int argc, const char *argv[])
 # pragma mark decompressList
 		if( [what isEqualToString:@"decompressList"])
 		{
+            BOOL conversionSucceeded = YES;
 			NSString *destDirec;
 			if( [path isEqualToString: @"sameAsDestination"])
 				destDirec = nil;
@@ -623,154 +737,36 @@ int main(int argc, const char *argv[])
 				
 				if( [[curFile pathExtension] isEqualToString: @"zip"] || [[curFile pathExtension] isEqualToString: @"osirixzip"])
 				{
-                    NSString *tempCurFileDest = [[curFileDest stringByDeletingLastPathComponent] stringByAppendingPathComponent: [NSString stringWithFormat: @".%@", [curFileDest lastPathComponent]]];
-                    
-                    myunlink([tempCurFileDest fileSystemRepresentation]);
-                    myunlink([curFileDest fileSystemRepresentation]);
-                    
-					NSTask *t = [[[NSTask alloc] init] autorelease];
-	
-					@try
-					{
-						[t setLaunchPath: @"/usr/bin/unzip"];
-						[t setCurrentDirectoryPath: @"/tmp/"];
-						NSArray *args = [NSArray arrayWithObjects: @"-o", @"-d", tempCurFileDest, curFile, nil];
-						[t setArguments: args];
-						[t launch];
-						while( [t isRunning])
-                            [NSThread sleepForTimeInterval: 0.1];
-                        
-                        //[t waitUntilExit];		// <- This is VERY DANGEROUS : the main runloop is continuing...
-					}
-					@catch ( NSException *e)
-					{
-						NSLog( @"***** unzipFile exception: %@", e);
-					}
-					
-                    [[NSFileManager defaultManager] moveItemAtPath: tempCurFileDest toPath: curFileDest error: nil];
-                    
-                    myunlink([curFile fileSystemRepresentation]);
+                    HorosArchiveExtraction outcome = extractDICOMArchive(curFile, curFileDest);
+                    if (outcome != HorosArchiveExtracted)
+                    {
+                        conversionSucceeded = NO;
+                        if (outcome == HorosArchiveNotExpanded)
+                            surrenderUnreadableArchive(curFile, curFileDest);
+                        else if (outcome == HorosArchiveNotExpandedForNow)
+                            returnArchiveForRetry(curFile, curFileDest);
+                    }
 				}
-				else
-				{
-					OFCondition cond;
-					
-					const char *fname = (const char *)[curFile UTF8String];
-					
-					DcmFileFormat fileformat;
-					cond = fileformat.loadFile(fname);
-					
-					if (cond.good())
-					{
-						DcmXfer filexfer(fileformat.getDataset()->getOriginalXfer());
-						
-						//hopefully dcmtk willsupport jpeg2000 compression and decompression in the future: November 7th 2010 : I did it !
-						
-//						if( useDCMTKForJP2K == NO && (filexfer.getXfer() == EXS_JPEG2000LosslessOnly || filexfer.getXfer() == EXS_JPEG2000))
-//						{
-//                          [DCMPixelDataAttribute setUse_kdu_IfAvailable: [[dict objectForKey:@"UseKDUForJPEG2000"]; intValue]];
-//							DCMObject *dcmObject = [[DCMObject alloc] initWithContentsOfFile: curFile decodingPixelData: NO];
-//							@try
-//							{
-//								status = [dcmObject writeToFile: curFileDest withTransferSyntax:[DCMTransferSyntax ImplicitVRLittleEndianTransferSyntax] quality:1 AET:@"Horos" atomically:YES];	//ImplicitVRLittleEndianTransferSyntax
-//							}
-//							@catch (NSException *e)
-//							{
-//								NSLog( @"dcmObject writeToFile failed: %@", e);
-//							}
-//							[dcmObject release];
-//							
-//							if( status == NO)
-//							{
-//                                myunlink([curFileDest fileSystemRepresentation]);
-//								
-//								if( destDirec)
-//								{
-//                                    myunlink([curFile fileSystemRepresentation]);
-//									NSLog( @"failed to decompress file: %@, the file is deleted", curFile);
-//								}
-//								else
-//									NSLog( @"failed to decompress file: %@", curFile);
-//							}
-//						}
-//						else
-                            if( filexfer.getXfer() != EXS_LittleEndianExplicit || filexfer.getXfer() != EXS_LittleEndianImplicit)
-						{
-							DcmDataset *dataset = fileformat.getDataset();
-							
-                            delete dataset->remove( DcmTagKey( 0x0009, 0x1110)); // "GEIIS" The problematic private group, containing a *always* JPEG compressed PixelData
-                            
-							// decompress data set if compressed
-							dataset->chooseRepresentation(EXS_LittleEndianExplicit, NULL);
-							
-							// check if everything went well
-							if (dataset->canWriteXfer(EXS_LittleEndianExplicit))
-							{
-								fileformat.loadAllDataIntoMemory();
-                                
-                                NSString *tempCurFileDest = [[curFileDest stringByDeletingLastPathComponent] stringByAppendingPathComponent: [NSString stringWithFormat: @".%@", [curFileDest lastPathComponent]]];
-                                
-                                myunlink([tempCurFileDest fileSystemRepresentation]);
-                                myunlink([curFileDest fileSystemRepresentation]);
-                                
-								cond = fileformat.saveFile( [tempCurFileDest UTF8String], EXS_LittleEndianExplicit);
-								status =  (cond.good()) ? YES : NO;
-                                
-                                [[NSFileManager defaultManager] moveItemAtPath: tempCurFileDest toPath: curFileDest error: nil];
-							}
-							else status = NO;
-							
-//							if( status == NO) // Try DCM Framework...
-//							{
-//                                NSLog( @"********* Failed to open with dcmtk, try DCMFramework");
-//                                
-//                                myunlink([curFileDest fileSystemRepresentation]);
-//								
-//								DCMObject *dcmObject = [[DCMObject alloc] initWithContentsOfFile: curFile decodingPixelData: NO];
-//								@try
-//								{
-//									status = [dcmObject writeToFile: curFileDest withTransferSyntax:[DCMTransferSyntax ImplicitVRLittleEndianTransferSyntax] quality:1 AET:@"Horos" atomically:YES];	//ImplicitVRLittleEndianTransferSyntax
-//								}
-//								@catch (NSException *e)
-//								{
-//									NSLog( @"******** dcmObject writeToFile failed: %@", e);
-//								}
-//								[dcmObject release];
-//							}
-							
-							if( status == NO)
-							{
-                                myunlink([curFileDest fileSystemRepresentation]);
-								
-								if( destDirec)
-								{
-                                    myunlink([curFile fileSystemRepresentation]);
-									NSLog( @"failed to decompress file: %@, the file is deleted", curFile);
-								}
-								else
-									NSLog( @"failed to decompress file: %@", curFile);
-							}
-						}
-						else
-						{
-							if( destDirec)
-							{
-                                myunlink([curFileDest fileSystemRepresentation]);
-								[[NSFileManager defaultManager] moveItemAtPath: curFile toPath: curFileDest error: nil];
-                                myunlink([curFile fileSystemRepresentation]);
-							}
-							status = NO;
-						}
-					}
-				}
-				
-				if( status)
-				{
-                    myunlink([curFile fileSystemRepresentation]);
-					if( destDirec == nil)
-						[[NSFileManager defaultManager] moveItemAtPath: curFileDest toPath: curFile error: nil];
-				}
-			}
+                else
+                {
+                    DcmFileFormat fileformat;
+                    OFCondition condition = fileformat.loadFile([curFile fileSystemRepresentation]);
+                    if (condition.good())
+                    {
+                        DcmDataset *dataset = fileformat.getDataset();
+                        // GEIIS may contain JPEG PixelData in this private group.
+                        delete dataset->remove(DcmTagKey(0x0009, 0x1110));
+                        HorosChooseDICOMRepresentation(fileformat, EXS_LittleEndianExplicit);
+                        if (dataset->canWriteXfer(EXS_LittleEndianExplicit))
+                        {
+                            fileformat.loadAllDataIntoMemory();
+                            status = saveConvertedDICOM(fileformat, EXS_LittleEndianExplicit, curFile, destDirec ? curFileDest : curFile);
+                        }
+                    }
+                    if (!status) conversionSucceeded = NO;
+                }
+            }
+            return conversionSucceeded ? EXIT_SUCCESS : EXIT_FAILURE;
 		}
 		
 # pragma mark writeMovie

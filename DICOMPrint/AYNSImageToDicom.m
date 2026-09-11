@@ -62,6 +62,8 @@ extern BOOL FULL32BITPIPELINE;
 	{
 		m_ImageDataBytes = nil;
         self.prepareForDCMTK = NO;
+        self.previewImages = [NSMutableArray array];
+        self.annotatedPreviewImages = [NSMutableArray array];
 	}
 
 	return self;
@@ -74,6 +76,8 @@ extern BOOL FULL32BITPIPELINE;
 		[m_ImageDataBytes release];
 		m_ImageDataBytes = nil;
 	}
+    [_previewImages release];
+    [_annotatedPreviewImages release];
 	[super dealloc];
 }
 
@@ -215,6 +219,8 @@ extern BOOL FULL32BITPIPELINE;
 - (NSArray *) dicomFileListForViewer: (ViewerController *) currentViewer destinationPath: (NSString *) destPath options: (NSDictionary*) options fileList: (NSArray *) fileList asColorPrint: (BOOL) colorPrint withAnnotations: (BOOL) annotations 
 {
 	NSMutableArray	*dicomFilePathList = [NSMutableArray array];
+    [self.previewImages removeAllObjects];
+    [self.annotatedPreviewImages removeAllObjects];
 	int currentImageIndex = [[currentViewer imageView] curImage];
 	
 	/////// ****************
@@ -225,6 +231,13 @@ extern BOOL FULL32BITPIPELINE;
 	NSRect rf = [[currentViewer window] frame];
 	BOOL m = [currentViewer magnetic];
 	BOOL v = [currentViewer checkFrameSize];
+    BOOL cropToRestore = [[NSUserDefaults standardUserDefaults] boolForKey:@"allowSmartCropping"];
+    BOOL constrainToRestore = [OSIWindow dontConstrainWindow];
+    BOOL magneticToRestore = [OSIWindowController dontEnterMagneticFunctions];
+    BOOL screenToRestore = [OSIWindowController dontWindowDidChangeScreen];
+    int previousRows = [[currentViewer seriesView] imageRows], previousColumns = [[currentViewer seriesView] imageColumns];
+    BOOL copyFULL32BITPIPELINE = FULL32BITPIPELINE;
+    @try {
 	[OSIWindow setDontConstrainWindow: YES];
 	[currentViewer setMagnetic : NO];
 	[currentViewer setMatrixVisible: NO];
@@ -245,18 +258,16 @@ extern BOOL FULL32BITPIPELINE;
 	[OSIWindowController setDontEnterMagneticFunctions: YES];
 	[OSIWindowController setDontEnterWindowDidChangeScreen: YES];
 	
-	int previousRows = [[currentViewer seriesView] imageRows], previousColumns = [[currentViewer seriesView] imageColumns];
 	
 	if( previousRows != 1 || previousColumns != 1)
 		[currentViewer setImageRows: 1 columns: 1];
 	
-	BOOL copyFULL32BITPIPELINE = FULL32BITPIPELINE;
 	
     FULL32BITPIPELINE = NO;
     
 	for(NSNumber *imageIndex in fileList)
 	{
-		NSAutoreleasePool	*pool = [[NSAutoreleasePool alloc] init];
+        @autoreleasepool {
 		
 		[currentViewer setImageIndex: [imageIndex intValue]];
 		
@@ -296,19 +307,27 @@ extern BOOL FULL32BITPIPELINE;
 			[[NSNotificationCenter defaultCenter] postNotificationName: OsirixGLFontChangeNotification object: currentViewer];
 		}
 		
-		[dicomFilePathList addObject: [self _createDicomImageWithViewer: currentViewer toDestinationPath: destPath asColorPrint: colorPrint withAnnotations: annotations]];
+        NSString *prepared = [self _createDicomImageWithViewer: currentViewer toDestinationPath: destPath asColorPrint: colorPrint withAnnotations: annotations];
+        if (!prepared.length) [NSException raise:@"HorosPrintPreparation" format:@"No printable image was produced."];
+        [dicomFilePathList addObject:prepared];
 		
 		if( windowSizeChanged)
 			[[currentViewer window] setFrame: NSMakeRect( o.x, o.y, rf.size.width, rf.size.height) display: YES];
 		
-		[pool release];
+        }
 	}
 	
+    } @catch (NSException *exception) {
+        for (NSString *prepared in dicomFilePathList)
+            [NSFileManager.defaultManager removeItemAtPath:prepared error:NULL];
+        [dicomFilePathList removeAllObjects];
+        NSLog(@"DICOM print image preparation failed; no partial job will be sent.");
+    } @finally {
 	FULL32BITPIPELINE = copyFULL32BITPIPELINE;
 	
 	/////// ****************
 	
-	[[NSUserDefaults standardUserDefaults] setBool: YES forKey: @"allowSmartCropping"];
+	[[NSUserDefaults standardUserDefaults] setBool: cropToRestore forKey: @"allowSmartCropping"];
 	
 	if( fontSizeCopy != [[NSUserDefaults standardUserDefaults] floatForKey: @"FONTSIZE"])
 	{
@@ -324,14 +343,17 @@ extern BOOL FULL32BITPIPELINE;
 	if( previousRows != 1 || previousColumns != 1)
 		[currentViewer setImageRows: previousRows columns: previousColumns];
 	
-	[OSIWindowController setDontEnterMagneticFunctions: NO];
-	[OSIWindowController setDontEnterWindowDidChangeScreen: NO];
+	[OSIWindowController setDontEnterMagneticFunctions: magneticToRestore];
+	[OSIWindowController setDontEnterWindowDidChangeScreen: screenToRestore];
+    [OSIWindow setDontConstrainWindow:constrainToRestore];
 	
 	/////// ****************
 	
 	[[currentViewer imageView] setIndex: currentImageIndex];
 	[[currentViewer imageView] sendSyncMessage:0];
 	[currentViewer adjustSlider];
+    [[currentViewer imageView] display];
+    }
 	
 	return dicomFilePathList;
 }
@@ -340,7 +362,24 @@ extern BOOL FULL32BITPIPELINE;
 - (NSString *) _createDicomImageWithViewer: (ViewerController *) viewer toDestinationPath: (NSString *) destPath asColorPrint: (BOOL) colorPrint withAnnotations: (BOOL) annotations
 {
     DCMView* imageView = [viewer imageView];
-    NSImage *currentImage = [[viewer imageView] nsimage];
+    NSImage *currentImage = nil;
+    if (self.prepareForDCMTK) {
+        long originalAnnotations = imageView.annotationType;
+        @try {
+            imageView.annotationType = annotNone;
+            [imageView display];
+            currentImage = [imageView nsimage];
+            imageView.annotationType = annotFull;
+            [imageView display];
+            NSImage *annotated = [imageView nsimage];
+            if (!currentImage || !annotated) return nil;
+            [self.previewImages addObject:currentImage];
+            [self.annotatedPreviewImages addObject:annotated];
+        } @finally {
+            imageView.annotationType = originalAnnotations;
+            [imageView display];
+        }
+    } else currentImage = [imageView nsimage];
     NSString *imagePath = nil;
     
     if (self.prepareForDCMTK)
@@ -383,6 +422,23 @@ extern BOOL FULL32BITPIPELINE;
 
 
 //********************************************************************************************
+- (NSArray*)writePreviewImages:(NSArray*)images sourceFiles:(NSArray*)files destinationPath:(NSString*)path
+{
+    if (images.count != files.count) return nil;
+    NSMutableArray *written = [NSMutableArray array];
+    for (NSUInteger index = 0; index < images.count; index++) {
+        struct rawData bitmap = [self _convertRGBToGrayscale:[images objectAtIndex:index]];
+        if (bitmap.width <= 0 || bitmap.height <= 0 || !m_ImageDataBytes.length) return nil;
+        DICOMExport *exporter = [[[DICOMExport alloc] init] autorelease];
+        [exporter setSourceFile:[files objectAtIndex:index]];
+        [exporter setPixelData:(unsigned char*)m_ImageDataBytes.bytes samplesPerPixel:1 bitsPerSample:8 width:bitmap.width height:bitmap.height];
+        NSString *output = [exporter writeDCMFile:[self generateUniqueFileName:path]];
+        if (!output.length) return nil;
+        [written addObject:output];
+    }
+    return written;
+}
+
 - (NSString*) generateUniqueFileName:(NSString*) destinationPath
 {
 	NSTimeInterval secs = [NSDate timeIntervalSinceReferenceDate];
@@ -453,7 +509,8 @@ extern BOOL FULL32BITPIPELINE;
     rawImage.height = 0;
     rawImage.width = 0;
 	
-	if( [imageRepresentation samplesPerPixel] != 3)
+    if (imageRepresentation.isPlanar || imageRepresentation.bitsPerSample != 8) return rawImage;
+	if( [imageRepresentation samplesPerPixel] != 3 && [imageRepresentation samplesPerPixel] != 4)
 		return rawImage;
 	
 	long bytesWritten = 0;
@@ -463,23 +520,29 @@ extern BOOL FULL32BITPIPELINE;
 		m_ImageDataBytes = nil;
 	}
 	
-	m_ImageDataBytes = [[NSMutableData alloc] initWithCapacity: ([imageRepresentation bytesPerRow] * [imageRepresentation size].height) + 1];
+	m_ImageDataBytes = [[NSMutableData alloc] initWithCapacity: ([imageRepresentation bytesPerRow] * imageRepresentation.pixelsHigh) + 1];
 	
 	float monoR, monoG, monoB;
 	unsigned char grayValue = 0;
+    NSUInteger pixelStride = imageRepresentation.bitsPerPixel / 8;
+    if (pixelStride < imageRepresentation.samplesPerPixel) return rawImage;
 	unsigned char * bitMapDataPtr = (unsigned char *) [imageRepresentation bitmapData];
 
 	int i;
-	for(i = 0; i < [imageRepresentation size].height; i++)
+	for(i = 0; i < imageRepresentation.pixelsHigh; i++)
 	{
-		unsigned char *sourceBuffer = bitMapDataPtr + i * [imageRepresentation bytesPerRow];
+        unsigned char *row = bitMapDataPtr + i * imageRepresentation.bytesPerRow;
 
 		int x;
-		for(x = 0; x <  [imageRepresentation size].width; x++)
+		for(x = 0; x <  imageRepresentation.pixelsWide; x++)
 		{
+            unsigned char *sourceBuffer = row + x * pixelStride;
+            BOOL alphaFirst = imageRepresentation.samplesPerPixel == 4 && (imageRepresentation.bitmapFormat & NSBitmapFormatAlphaFirst);
+            if (alphaFirst) sourceBuffer++;
 			monoR = 0.299 * (float) *sourceBuffer++;	//76.245
 			monoG = 0.587 * (float) *sourceBuffer++;	//149.685
 			monoB = 0.114 * (float) *sourceBuffer++;	//29.07
+            if (imageRepresentation.samplesPerPixel == 4 && !alphaFirst) sourceBuffer++;
 			
 			grayValue = roundf(monoR + monoG + monoB);
 			[m_ImageDataBytes appendBytes: &grayValue length: 1];
@@ -495,8 +558,8 @@ extern BOOL FULL32BITPIPELINE;
 	}
 	
 	rawImage.bytesWritten = bytesWritten;
-    rawImage.height = [imageRepresentation size].height;
-    rawImage.width = [imageRepresentation size].width;
+    rawImage.height = imageRepresentation.pixelsHigh;
+    rawImage.width = imageRepresentation.pixelsWide;
 	return rawImage;
 }
 

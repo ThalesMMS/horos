@@ -38,6 +38,7 @@
 #import "WebPortalUser.h"
 #import "WebPortalStudy.h"
 #import "WebPortalDatabase.h"
+#import "Horos-Swift.h"
 #import "DicomDatabase.h"
 #import "PSGenerator.h"
 #import "WebPortal.h"
@@ -303,7 +304,9 @@ static NSMutableDictionary *studiesForUserCache = nil;
 		NSError* err = NULL;
 		NSFetchRequest* request = [[[NSFetchRequest alloc] init] autorelease];
 		request.entity = [NSEntityDescription entityForName:@"User" inManagedObjectContext:self.managedObjectContext];
-		request.predicate = [NSPredicate predicateWithFormat:@"name LIKE[cd] %@", *value];
+		// Equality, not LIKE: a name carrying * or ? used to be compared as a
+		// pattern, so it collided with names it does not equal.
+		request.predicate = [HorosWebPortalUserLookup predicateForName: *value];
 		NSArray* users = [self.managedObjectContext executeFetchRequest:request error:&err];
 		if (err) [NSException exceptionWithName:NSGenericException reason:@"Database error." userInfo:[NSDictionary dictionaryWithObject:err forKey:NSUnderlyingErrorKey]];
 		

@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
-	<string>English</string>
+	<string>en</string>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
@@ -56,28 +56,12 @@
 			</array>
 			<key>CFBundleTypeRole</key>
 			<string>Viewer</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>org.nema.dicom</string>
+			</array>
 			<key>LSCanProvideIMVideoDataSource</key>
 			<string>Yes</string>
-		</dict>
-		<dict>
-			<key>CFBundleTypeExtensions</key>
-			<array>
-				<string>sql</string>
-			</array>
-			<key>CFBundleTypeIconFile</key>
-			<string>DAT.icns</string>
-			<key>CFBundleTypeMIMETypes</key>
-			<array>
-				<string>text/sql</string>
-			</array>
-			<key>CFBundleTypeName</key>
-			<string>OsiriX database</string>
-			<key>CFBundleTypeOSTypes</key>
-			<array>
-				<string>sql </string>
-			</array>
-			<key>CFBundleTypeRole</key>
-			<string>Viewer</string>
 		</dict>
 		<dict>
 			<key>CFBundleTypeExtensions</key>
@@ -257,11 +241,13 @@
 		<true/>
 	</dict>
 	<key>NSAppleEventsUsageDescription</key>
-	<string></string>
+	<string>Horos uses automation to create Mail drafts and exchange images and reports with the applications you choose.</string>
 	<key>NSAppleScriptEnabled</key>
 	<string>YES</string>
 	<key>NSContactsUsageDescription</key>
 	<string>Your account will be used for the built-in iChat sharing service. If you don&apos;t allow access, you cannot use the iChat functions.</string>
+		<key>NSLocalNetworkUsageDescription</key>
+	<string>Horos connects to DICOM nodes - PACS, modalities and workstations - on your local network to query, retrieve and send studies.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>$(HUMAN_READABLE_COPYRIGHT)</string>
 	<key>NSMainNibFile</key>
@@ -290,6 +276,7 @@
 				<key>public.filename-extension</key>
 				<array>
 					<string>dcm</string>
+					<string>dicom</string>
 				</array>
 				<key>public.mime-type</key>
 				<string>Application/dicom</string>

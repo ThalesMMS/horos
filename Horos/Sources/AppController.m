@@ -1,3 +1,6 @@
+#include "HorosDICOMGlobalAbort.h"
+#import "Horos-Swift.h"
+#import "DICOMDataDictionary.h"
 /*=========================================================================
  This file is part of the Horos Project (www.horosproject.org)
  
@@ -51,6 +54,8 @@
 #import "BrowserController.h"
 #import "BrowserControllerDCMTKCategory.h"
 #import "ViewerController.h"
+#import "ViewerController+ROIInterchange.h"
+#import "ViewerController+GSPS.h"
 #import "XMLController.h"
 #import "SplashScreen.h"
 #import "NSFont_OpenGL.h"
@@ -157,6 +162,7 @@ enum	{kSuccess = 0,
         kUnableToAllocateMemoryForBuffer = -4,
         kPIDBufferOverrunError = -5};
 
+#include <libproc.h>
 #include <sys/sysctl.h>
 
 #include <netdb.h>
@@ -198,6 +204,48 @@ const char *GetPrivateIP()
 	}
 	
 	return privateIPstring;
+}
+
+/* A process may only be signalled when its executable lives inside our own
+ * application bundle. Matching on the BSD process name alone would signal any
+ * process of the same name owned by this user, including a copy of Horos the
+ * user started deliberately and other vendors' helpers.
+ *
+ * Both paths are compared as whole path components, so "/A/Horos.app" does not
+ * contain "/A/Horos.app.backup/x".
+ */
+bool HorosPathIsInsideBundle(const char* executablePath, const char* bundlePath)
+{
+    if (executablePath == NULL || bundlePath == NULL)
+        return false;
+
+    size_t bundleLength = strlen(bundlePath);
+
+    while (bundleLength > 1 && bundlePath[bundleLength - 1] == '/')
+        bundleLength--; // a trailing slash does not change which bundle this is
+
+    if (bundleLength == 0 || strlen(executablePath) <= bundleLength)
+        return false;
+
+    if (strncmp(executablePath, bundlePath, bundleLength) != 0)
+        return false;
+
+    return executablePath[bundleLength] == '/';
+}
+
+/* True when the running process with this identifier was launched from inside
+ * our bundle. A process that has already exited, or one we may not inspect,
+ * answers false rather than being signalled on the strength of its name.
+ */
+static bool HorosProcessIsOurs(pid_t pid, const char* bundlePath)
+{
+    char path[PROC_PIDPATHINFO_MAXSIZE];
+    path[0] = 0;
+
+    if (proc_pidpath(pid, path, sizeof(path)) <= 0)
+        return false;
+
+    return HorosPathIsInsideBundle(path, bundlePath);
 }
 
 int GetAllPIDsForProcessName(const char* ProcessName, 
@@ -272,8 +320,25 @@ int GetAllPIDsForProcessName(const char* ProcessName,
     */
     SuccessfullyGotProcessInformation = FALSE;
     
+    /* The process table changes between sizing the buffer and filling it, so the
+     * second sysctl can fail with ENOMEM and the call has to be retried. That
+     * retry used to be unbounded: on a busy machine it could spin without ever
+     * finishing. Bound it, and ask for room to spare so an ordinary amount of
+     * churn is absorbed rather than retried.
+     */
+    int RemainingAttempts = 8;
+    
     while (SuccessfullyGotProcessInformation == FALSE)
     {
+        if (RemainingAttempts-- <= 0)
+        {
+            if (SysctlError != NULL)
+            {
+                *SysctlError = ENOMEM;
+            }
+            return(kErrorGettingSizeOfBufferRequired);
+        }
+
         /* Now that we have the MIB for looking up process information we will pass it to sysctl to get the 
         * information we want on BSD processes.  However, before we do this we must know the size of the buffer to 
         * allocate to accomidate the return value.  We can get the size of the data to allocate also using the 
@@ -317,6 +382,7 @@ int GetAllPIDsForProcessName(const char* ProcessName,
         /* Now we successful obtained the size of the buffer required for the sysctl call.  This is stored in the 
         * SizeOfBufferRequired variable.  We will malloc a buffer of that size to hold the sysctl result.
         */
+        sizeOfBufferRequired += 32 * sizeof(struct kinfo_proc); // room for churn
         BSDProcessInformationStructure = (struct kinfo_proc*) malloc(sizeOfBufferRequired);
 
         if (BSDProcessInformationStructure == NULL)
@@ -630,17 +696,6 @@ void exceptionHandler(NSException *exception)
 //———————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
 
 
-#import "JRSwizzle.h"
-
-@implementation NSWindow (FFS)
-- (BOOL) HOROS_showsFullScreenButton {
-    return NO;
-}
-@end
-
-
-
-
 @interface AppController ()
 
 - (BOOL) setupCrashReporter;
@@ -653,7 +708,6 @@ void exceptionHandler(NSException *exception)
 - (void)ApplyConv:(id)dummy;
 - (void)AddConv:(id)dummy;
 - (void)addPreferencesFromURL:(id)dummy;
-- (BOOL)showsFullScreenButton;
 
 @end
 
@@ -748,27 +802,57 @@ void exceptionHandler(NSException *exception)
 
 - (void)updateScreenParameters {
     NSMutableArray *screenParameters = [NSMutableArray array];
-    for (NSScreen *screen in [NSScreen screens])
-        [screenParameters addObject:@[screen.deviceDescription, @(screen.frame)]];
-    
-    static NSArray *previousScreenParameters = nil;
-    if ([screenParameters isEqual:previousScreenParameters])
+    NSMutableArray *screenIdentifiers = [NSMutableArray array];
+    NSArray *screens = [NSScreen screens];
+    if (screens.count == 0) {
+        NSLog(@"updateScreenParameters: ignoring transient empty display list");
         return;
+    }
+    for (NSScreen *screen in screens)
+    {
+        // During a display reconfiguration AppKit can transiently report a 0x0 screen. Rescaling or
+        // closing windows from such a snapshot corrupts window frames; wait for the final notification.
+        if (NSIsEmptyRect(screen.frame) || !isfinite(screen.frame.origin.x) || !isfinite(screen.frame.origin.y) || !isfinite(screen.frame.size.width) || !isfinite(screen.frame.size.height))
+        {
+            NSLog(@"updateScreenParameters: ignoring transient empty screen frame");
+            return;
+        }
+        
+        id identifier = [screen.deviceDescription objectForKey:@"NSScreenNumber"] ?: @0;
+        [screenIdentifiers addObject:identifier];
+        [screenParameters addObject:@[identifier, @(screen.frame), @(screen.visibleFrame)]];
+    }
     
-    [[AppController sharedAppController] closeAllViewers:self];
+    // NSScreen order can change when focus/main screen changes. Compare by the
+    // stable display identifier so reordering cannot close open studies/ROIs.
+    NSArray *orderedIdentifiers = [screenIdentifiers copy];
+    [screenParameters sortUsingComparator:^NSComparisonResult(NSArray *left, NSArray *right) {
+        return [left[0] compare:right[0]];
+    }];
+    [screenIdentifiers sortUsingSelector:@selector(compare:)];
 
-    [AppController resetThumbnailsList];
-    
-    previousScreenParameters = screenParameters;
+    static NSArray *previousScreenParameters = nil;
+    static NSArray *previousOrderedIdentifiers = nil;
+    BOOL geometryChanged = ![screenParameters isEqual:previousScreenParameters];
+    BOOL panelMappingChanged = ![orderedIdentifiers isEqual:previousOrderedIdentifiers];
+    if (!geometryChanged && !panelMappingChanged) return;
+
+    // Publish before moving any windows: AppKit can synchronously send another
+    // screen notification while the new layout is being applied.
+    previousScreenParameters = [screenParameters copy];
+    previousOrderedIdentifiers = orderedIdentifiers;
+    if (panelMappingChanged) [AppController resetThumbnailsList];
+    [[BrowserController currentBrowser] recoverWindowsAfterScreenChange];
 }
 
 + (void) resetThumbnailsList
 {
-	int numberOfScreens = [[NSScreen screens] count] + 1; //Just in case, we connect a second monitor when using Horos.
+	NSUInteger numberOfScreens = MIN((NSUInteger)MAXSCREENS, [[NSScreen screens] count] + 1); //Just in case, we connect a second monitor when using Horos.
 	
 	for( int i = 0; i < MAXSCREENS; i++)
     {
-		thumbnailsListPanel[ i] = nil;
+		[thumbnailsListPanel[i] prepareForScreenReconfiguration];
+        thumbnailsListPanel[ i] = nil;
 	}
     
 	for( int i = 0; i < numberOfScreens; i++)
@@ -867,6 +951,11 @@ void exceptionHandler(NSException *exception)
     pid_t MyArray [kPIDArrayLength];
     unsigned int NumberOfMatches;
     int Counter, Error;
+    
+    // Every candidate below is matched on its BSD process name, which is shared
+    // by anything else of that name this user is running. Only a process
+    // launched from inside our own bundle may be signalled.
+    const char *bundlePath = [[[NSBundle mainBundle] bundlePath] fileSystemRepresentation];
 	
     if( [[NSUserDefaults standardUserDefaults] boolForKey: @"SingleProcessMultiThreadedListener"] == NO)
     {
@@ -876,13 +965,13 @@ void exceptionHandler(NSException *exception)
         {
             for (Counter = 0 ; Counter < NumberOfMatches ; Counter++)
             {
-                if( MyArray[ Counter] != getpid())
+                if( MyArray[ Counter] != getpid() && HorosProcessIsOurs( MyArray[ Counter], bundlePath))
                 {
                     NSLog( @"Child Process to kill: %d (PID)", MyArray[ Counter]);
                     kill( MyArray[ Counter], 15);
                     
                     char dir[ 1024];
-                    sprintf( dir, "%s-%d", "/tmp/lock_process", MyArray[ Counter]);
+                    snprintf( dir, sizeof( dir), "%s-%d", "/tmp/lock_process", MyArray[ Counter]);
                     unlink( dir);
                 }
             } 
@@ -895,7 +984,7 @@ void exceptionHandler(NSException *exception)
     {
         for (Counter = 0 ; Counter < NumberOfMatches ; Counter++)
         {
-			if( MyArray[ Counter] != getpid())
+			if( MyArray[ Counter] != getpid() && HorosProcessIsOurs( MyArray[ Counter], bundlePath))
 			{
 				NSLog( @"Child Process to kill (CrashReporter): %d (PID)", MyArray[ Counter]);
 				kill( MyArray[ Counter], 15);
@@ -1272,6 +1361,8 @@ void exceptionHandler(NSException *exception)
             
         if( [[previousDefaults valueForKey: @"DisplayDICOMOverlays"] intValue] != [defaults integerForKey: @"DisplayDICOMOverlays"])
             revertViewer = YES;
+        if( [[previousDefaults valueForKey:@"ROIPRIMARYMEASUREMENTONLY"] boolValue] != [defaults boolForKey:@"ROIPRIMARYMEASUREMENTONLY"])
+            refreshViewer = YES;
         if( [[previousDefaults valueForKey: @"ROITEXTNAMEONLY"] intValue] != [defaults integerForKey: @"ROITEXTNAMEONLY"])
             refreshViewer = YES;
         if( [[previousDefaults valueForKey: @"ROITEXTIFSELECTED"] intValue] != [defaults integerForKey: @"ROITEXTIFSELECTED"])
@@ -1307,6 +1398,8 @@ void exceptionHandler(NSException *exception)
         if ([[previousDefaults valueForKey: @"httpXMLRPCServer"] intValue] != [defaults integerForKey: @"httpXMLRPCServer"])
             restartListener = YES;
         if ([[previousDefaults valueForKey: @"httpXMLRPCServerPort"] intValue] != [defaults integerForKey: @"httpXMLRPCServerPort"])
+            restartListener = YES;
+        if ([[previousDefaults valueForKey: @"httpXMLRPCServerAllowRemote"] intValue] != [defaults integerForKey: @"httpXMLRPCServerAllowRemote"])
             restartListener = YES;
         if ([[previousDefaults valueForKey: @"httpWebServer"] intValue] != [defaults integerForKey: @"httpWebServer"])
             restartListener = YES;
@@ -1594,20 +1687,9 @@ void exceptionHandler(NSException *exception)
 
 - (NSMenu*) viewerMenuTestLocalized: (BOOL) testLocalized
 {
-    NSMenu *mainMenu = [NSApp mainMenu];
-    NSMenu *viewerMenu = [[mainMenu itemWithTitle:NSLocalizedString(@"2D Viewer", nil)] submenu];
-    if( testLocalized) viewerMenu = nil;
-    if( viewerMenu == nil)
-    {
-        viewerMenu = [[mainMenu itemAtIndex: 5]  submenu];
-        if( testLocalized)
-        {
-            if( [[viewerMenu title] isEqualToString: NSLocalizedString(@"2D Viewer", nil)] == NO)
-                return nil;
-        }
-    }
-    
-    return viewerMenu;
+    // Resource identifiers remain stable when menu titles or positions change.
+    (void)testLocalized;
+    return [HorosApplicationMenuLookup submenuInMenu:[NSApp mainMenu] identifier:@"org.horos.menu.viewer"];
 }
 
 - (NSMenu*) viewerMenu
@@ -1617,20 +1699,9 @@ void exceptionHandler(NSException *exception)
 
 - (NSMenu*) fileMenuTestLocalized: (BOOL) testLocalized
 {
-    NSMenu *mainMenu = [NSApp mainMenu];
-    NSMenu *fileMenu = [[mainMenu itemWithTitle:NSLocalizedString(@"File", nil)] submenu];
-    if( testLocalized) fileMenu = nil;
-    if( fileMenu == nil)
-    {
-        fileMenu = [[mainMenu itemAtIndex: 1] submenu];
-        if( testLocalized)
-        {
-            if( [[fileMenu title] isEqualToString: NSLocalizedString(@"File", nil)] == NO)
-                return nil;
-        }
-    }
-    
-    return fileMenu;
+    // Resource identifiers remain stable when menu titles or positions change.
+    (void)testLocalized;
+    return [HorosApplicationMenuLookup submenuInMenu:[NSApp mainMenu] identifier:@"org.horos.menu.file"];
 }
 
 - (NSMenu*) fileMenu
@@ -1640,20 +1711,9 @@ void exceptionHandler(NSException *exception)
 
 - (NSMenu*) exportMenuTestLocalized: (BOOL) testLocalized
 {
-    NSMenu *fileMenu = [self fileMenu];
-    NSMenu *exportMenu = [[fileMenu itemWithTitle:NSLocalizedString(@"Export", nil)] submenu];
-    if( testLocalized) exportMenu = nil;
-    if( exportMenu == nil)
-    {
-        exportMenu = [[fileMenu itemAtIndex: 12] submenu];
-        if( testLocalized)
-        {
-            if( [[exportMenu title] isEqualToString: NSLocalizedString(@"Export", nil)] == NO)
-                return nil;
-        }
-    }
-    
-    return exportMenu;
+    // Resource identifiers remain stable when menu titles or positions change.
+    (void)testLocalized;
+    return [HorosApplicationMenuLookup submenuInMenu:[self fileMenu] identifier:@"org.horos.menu.export"];
 }
 
 - (NSMenu*) exportMenu
@@ -1661,21 +1721,11 @@ void exceptionHandler(NSException *exception)
     return [self exportMenuTestLocalized: NO];
 }
 
-- (NSMenu*)imageTilingMenuTestLocalized: (BOOL) testLocalized
+- (NSMenu*) imageTilingMenuTestLocalized: (BOOL) testLocalized
 {
-    NSMenu *viewerMenu = [self viewerMenu];
-    NSMenu *imageTilingMenu = [[viewerMenu itemWithTitle: NSLocalizedString(@"Image Tiling", nil)] submenu];
-    if( imageTilingMenu == nil)
-    {
-        imageTilingMenu = [[viewerMenu itemAtIndex: 48]  submenu];
-        if( testLocalized)
-        {
-            if( [[imageTilingMenu title] isEqualToString: NSLocalizedString(@"Image Tiling", nil)] == NO)
-                return nil;
-        }
-    }
-    
-    return imageTilingMenu;
+    // Resource identifiers remain stable when menu titles or positions change.
+    (void)testLocalized;
+    return [HorosApplicationMenuLookup submenuInMenu:[self viewerMenu] identifier:@"org.horos.menu.image-tiling"];
 }
 
 - (NSMenu*)imageTilingMenu
@@ -1685,20 +1735,9 @@ void exceptionHandler(NSException *exception)
 
 - (NSMenu*) orientationMenuTestLocalized: (BOOL) testLocalized
 {
-    NSMenu *viewerMenu = [self viewerMenu];
-    NSMenu *orientationMenu = [[viewerMenu itemWithTitle: NSLocalizedString(@"Orientation", nil)] submenu];
-    if( testLocalized) orientationMenu = nil;
-    if( orientationMenu == nil)
-    {
-        orientationMenu = [[viewerMenu itemAtIndex: 12]  submenu];
-        if( testLocalized)
-        {
-            if( [[orientationMenu title] isEqualToString: NSLocalizedString(@"Orientation", nil)] == NO)
-                return nil;
-        }
-    }
-    
-    return orientationMenu;
+    // Resource identifiers remain stable when menu titles or positions change.
+    (void)testLocalized;
+    return [HorosApplicationMenuLookup submenuInMenu:[self viewerMenu] identifier:@"org.horos.menu.orientation"];
 }
 
 - (NSMenu*) orientationMenu
@@ -1708,20 +1747,9 @@ void exceptionHandler(NSException *exception)
 
 - (NSMenu*) opacityMenuTestLocalized: (BOOL) testLocalized
 {
-    NSMenu *viewerMenu = [self viewerMenu];
-    NSMenu *opacityMenu = [[viewerMenu itemWithTitle: NSLocalizedString(@"Opacity", nil)] submenu];
-    if( testLocalized) opacityMenu = nil;
-    if( opacityMenu == nil)
-    {
-        opacityMenu = [[viewerMenu itemAtIndex: 44]  submenu];
-        if( testLocalized)
-        {
-            if( [[opacityMenu title] isEqualToString: NSLocalizedString(@"Opacity", nil)] == NO)
-                return nil;
-        }
-    }
-    
-    return opacityMenu;
+    // Resource identifiers remain stable when menu titles or positions change.
+    (void)testLocalized;
+    return [HorosApplicationMenuLookup submenuInMenu:[self viewerMenu] identifier:@"org.horos.menu.opacity"];
 }
 
 - (NSMenu*) opacityMenu
@@ -1731,20 +1759,9 @@ void exceptionHandler(NSException *exception)
 
 - (NSMenu*) wlwwMenuTestLocalized: (BOOL) testLocalized
 {
-    NSMenu *viewerMenu = [self viewerMenu];
-    NSMenu *wlwwMenu = [[viewerMenu itemWithTitle:NSLocalizedString(@"Window Width & Level", nil)] submenu];
-    if( testLocalized) wlwwMenu = nil;
-    if( wlwwMenu == nil)
-    {
-        wlwwMenu = [[viewerMenu itemAtIndex: 41]  submenu];
-        if( testLocalized)
-        {
-            if( [[wlwwMenu title] isEqualToString: NSLocalizedString(@"Window Width & Level", nil)] == NO)
-                return nil;
-        }
-    }
-    
-    return wlwwMenu;
+    // Resource identifiers remain stable when menu titles or positions change.
+    (void)testLocalized;
+    return [HorosApplicationMenuLookup submenuInMenu:[self viewerMenu] identifier:@"org.horos.menu.wlww"];
 }
 
 - (NSMenu*) wlwwMenu
@@ -1754,20 +1771,9 @@ void exceptionHandler(NSException *exception)
 
 - (NSMenu*) convMenuTestLocalized: (BOOL) testLocalized
 {
-    NSMenu *viewerMenu = [self viewerMenu];
-    NSMenu *convMenu = [[viewerMenu itemWithTitle: NSLocalizedString(@"Convolution Filters", nil)] submenu];
-    if( testLocalized) convMenu = nil;
-    if( convMenu == nil)
-    {
-        convMenu = [[viewerMenu itemAtIndex: 45]  submenu];
-        if( testLocalized)
-        {
-            if( [[convMenu title] isEqualToString: NSLocalizedString(@"Convolution Filters", nil)] == NO)
-                return nil;
-        }
-    }
-    
-    return convMenu;
+    // Resource identifiers remain stable when menu titles or positions change.
+    (void)testLocalized;
+    return [HorosApplicationMenuLookup submenuInMenu:[self viewerMenu] identifier:@"org.horos.menu.convolution"];
 }
 
 - (NSMenu*) convMenu
@@ -1777,20 +1783,9 @@ void exceptionHandler(NSException *exception)
 
 - (NSMenu*) clutMenuTestLocalized: (BOOL) testLocalized
 {
-    NSMenu *viewerMenu = [self viewerMenu];
-    NSMenu *clutMenu = [[viewerMenu itemWithTitle:NSLocalizedString(@"Color Look Up Table", nil)] submenu];
-    if( testLocalized) clutMenu = nil;
-    if( clutMenu == nil)
-    {
-        clutMenu = [[viewerMenu itemAtIndex: 42]  submenu];
-        if( testLocalized)
-        {
-            if( [[clutMenu title] isEqualToString: NSLocalizedString(@"Color Look Up Table", nil)] == NO)
-                return nil;
-        }
-    }
-    
-    return clutMenu;
+    // Resource identifiers remain stable when menu titles or positions change.
+    (void)testLocalized;
+    return [HorosApplicationMenuLookup submenuInMenu:[self viewerMenu] identifier:@"org.horos.menu.clut"];
 }
 
 - (NSMenu*) clutMenu
@@ -1800,25 +1795,9 @@ void exceptionHandler(NSException *exception)
 
 - (NSMenu*) workspaceMenuTestLocalized: (BOOL) testLocalized
 {
-    NSMenu *viewerMenu = [self viewerMenu];
-    NSMenu *workspaceMenu = [[viewerMenu itemWithTitle:NSLocalizedString(@"Load Workspace State DICOM SR", nil)] submenu];
-    if( testLocalized) workspaceMenu = nil;
-    if( workspaceMenu == nil)
-    {
-        @try {
-            workspaceMenu = [[viewerMenu itemAtIndex: 55]  submenu];
-            if( testLocalized)
-            {
-                if( [[workspaceMenu title] isEqualToString: NSLocalizedString(@"Load Workspace State DICOM SR", nil)] == NO)
-                    return nil;
-            }
-        }
-        @catch (NSException *exception) {
-            N2LogException( exception);
-        }
-    }
-    
-    return workspaceMenu;
+    // Resource identifiers remain stable when menu titles or positions change.
+    (void)testLocalized;
+    return [HorosApplicationMenuLookup submenuInMenu:[self viewerMenu] identifier:@"org.horos.menu.workspace"];
 }
 
 - (NSMenu*) workspaceMenu
@@ -1974,7 +1953,10 @@ void exceptionHandler(NSException *exception)
 		}
 		[mainMenuWLWWMenu addItem: [NSMenuItem separatorItem]];
 		[mainMenuWLWWMenu addItemWithTitle:NSLocalizedString(@"Add Current WL/WW", nil) action:@selector (AddCurrentWLWW:) keyEquivalent:@""];
-		[mainMenuWLWWMenu addItemWithTitle:NSLocalizedString(@"Set WL/WW manually", nil) action:@selector (AddCurrentWLWW:) keyEquivalent:@""];
+		// This opened the preset-naming sheet, the same one as the item above it,
+		// so setting a window without saving it as a preset was reachable only
+		// from the viewer's own pop-up menu, which wires it correctly.
+		[mainMenuWLWWMenu addItemWithTitle:NSLocalizedString(@"Set WL/WW manually", nil) action:@selector (SetWLWW:) keyEquivalent:@""];
 	}
 }
 
@@ -2209,6 +2191,22 @@ void exceptionHandler(NSException *exception)
 	NSRunCriticalAlertPanel( NSLocalizedString( @"Error", nil), @"%@", NSLocalizedString( @"OK", nil), nil, nil, err);
 }
 
+-(void)reportListenBindFailureForService:(NSString*)service port:(NSInteger)port errnoCode:(int)code
+{
+    NSString* line = [HorosListenBindFailure logLineForService:service port:port errnoCode:code];
+    NSLog(@"%@", line);
+    BOOL hideDICOM = [service hasPrefix:@"DICOM"]
+        && [[NSUserDefaults standardUserDefaults] boolForKey:@"hideListenerError"];
+    if (hideDICOM)
+        return;
+    if (![HorosListenBindFailure consumeUserNoticeForService:service port:port])
+        return;
+    NSString* message = [service isEqualToString:HorosListenBindFailure.webPortalService]
+        ? [HorosListenBindFailure webPortalUserMessageForPort:port]
+        : [HorosListenBindFailure userMessageForService:service port:port errnoCode:code];
+    [HorosListenBindFailure presentUserNotice:message];
+}
+
 -(void) displayListenerError: (NSString*) err // the DiscPublishing plugin swizzles this method, do not rename it
 {
 	NSLog( @"*** listener error (displayListenerError): %@", err);
@@ -2239,6 +2237,21 @@ void exceptionHandler(NSException *exception)
 		
 		if( [[NSUserDefaults standardUserDefaults] boolForKey: @"UseHostNameForAETitle"])
 			[self setAETitleToHostname];
+		
+		// Until it is stored, AETITLE is a registered default computed from the
+		// computer's name at every launch - so renaming the Mac renames the
+		// listener, and the remote nodes configured with the old title stop
+		// being able to send to it. Nothing said so. Store it the first time,
+		// so what the listener answers to is a value the user can see and keep.
+		if( [[[NSUserDefaults standardUserDefaults] persistentDomainForName: [[NSBundle mainBundle] bundleIdentifier]] objectForKey: @"AETITLE"] == nil)
+		{
+			NSString *derived = [[NSUserDefaults standardUserDefaults] stringForKey: @"AETITLE"];
+			if( derived.length)
+			{
+				[[NSUserDefaults standardUserDefaults] setObject: derived forKey: @"AETITLE"];
+				NSLog( @"--- DICOM listener AE title was not stored; it is now \"%@\", taken from this computer's name. It will no longer change if the computer is renamed.", derived);
+			}
+		}
 		
 		NSString *c = [[NSUserDefaults standardUserDefaults] stringForKey:@"AETITLE"];
 		if( [c length] > 16)
@@ -2304,114 +2317,66 @@ void exceptionHandler(NSException *exception)
 }
 
 // Manage osirix URL : osirix://
+// Parsing lives in HorosSchemeURL so a Chrome 94+ protocol block and a missing
+// StudyInstanceUID are not the same diagnosis. LaunchServices is not rewritten
+// here; the scheme is already in Info.plist.
 
 - (void)getUrl:(NSAppleEventDescriptor *)event withReplyEvent:(NSAppleEventDescriptor *)replyEvent
 {
 	NSString *str = [[event paramDescriptorForKeyword:keyDirectObject] stringValue];
-	NSURL *url = [NSURL URLWithString: str];
-		
-	if( [[url scheme] isEqualToString: @"osirix"] || [[url scheme] isEqualToString: @"horos"] )
+	if ([HorosSchemeURL consumeDuplicate:str])
 	{
-		if( [[NSUserDefaults standardUserDefaults] boolForKey: @"httpXMLRPCServer"] == NO)
+		NSLog( @"horos URL ignored duplicate within 1s");
+		return;
+	}
+
+	HorosSchemeDiagnosis *parsed = [HorosSchemeURL parseString:str];
+	HorosSchemeURL *invocation = parsed.invocation;
+
+	if ([parsed.layer isEqualToString:@"parser"])
+	{
+		NSURL *fallback = [NSURL URLWithString: str];
+		if (invocation == nil && [fallback.pathExtension isEqualToString: @"xml"])
 		{
-			int result = NSRunInformationalAlertPanel(NSLocalizedString(@"URL scheme", nil), NSLocalizedString(@"Horos URL scheme [horos:// , osirix://] is currently not activated!\r\rShould I activate it now? Restart is necessary.", nil), NSLocalizedString(@"No",nil), NSLocalizedString(@"Activate & Restart",nil), nil);
-			
-			if( result == NSAlertAlternateReturn)
-			{
-				[[NSUserDefaults standardUserDefaults] setBool: YES forKey: @"httpXMLRPCServer"];
-				[[NSUserDefaults standardUserDefaults] synchronize];
-				[[NSApplication sharedApplication] terminate: self];
-			}
+			[BrowserController asyncWADOXMLDownloadURL: fallback];
+			return;
 		}
-		
-		NSString *content = [url resourceSpecifier];
-		
-		BOOL betweenQuotation = NO;
-		
-		NSMutableString *parsedContent = [NSMutableString string];
-		for( int i = 0 ; i < content.length; i++)
+		NSLog( @"horos URL parser (%@): %@", parsed.code, parsed.message);
+		return;
+	}
+
+	if (invocation == nil)
+		return;
+
+	if( [[NSUserDefaults standardUserDefaults] boolForKey: @"httpXMLRPCServer"] == NO)
+	{
+		int result = NSRunInformationalAlertPanel(NSLocalizedString(@"URL scheme", nil), NSLocalizedString(@"Horos URL scheme [horos:// , osirix://] is currently not activated!\r\rShould I activate it now? Restart is necessary.", nil), NSLocalizedString(@"No",nil), NSLocalizedString(@"Activate & Restart",nil), nil);
+
+		if( result == NSAlertAlternateReturn)
 		{
-			if( [content characterAtIndex: i] == '\'')
-				betweenQuotation = !betweenQuotation;
-				
-			if( [content characterAtIndex: i] == '?' && betweenQuotation)
-				[parsedContent appendString: @"__question__"];
-			else
-				[parsedContent appendFormat: @"%c", [content characterAtIndex: i]];
+			[[NSUserDefaults standardUserDefaults] setBool: YES forKey: @"httpXMLRPCServer"];
+			[[NSUserDefaults standardUserDefaults] synchronize];
+			[[NSApplication sharedApplication] terminate: self];
 		}
-		
-		// parse the URL to find the parameters (if any)
-		
-		NSArray *urlComponents = [NSArray array];
-		for( NSString *s in [parsedContent componentsSeparatedByString: @"?"])
+	}
+
+	if( invocation.methodName.length)
+	{
+		NSMutableDictionary* paramDict = [NSMutableDictionary dictionaryWithDictionary:invocation.parameters];
+		[XMLRPCServer methodCall:invocation.methodName parameters:paramDict error:NULL];
+		return;
+	}
+
+	if( invocation.imageSpecifier.length)
+	{
+		NSArray *components = [invocation.imageSpecifier componentsSeparatedByString:@"+"];
+
+		if( [components count] == 2)
 		{
-			urlComponents = [urlComponents arrayByAddingObject: [s stringByReplacingOccurrencesOfString:@"__question__" withString:@"?"]];
-		}
-		
-        if([urlComponents count] == 2)
-		{
-            NSString *parameterString = @"";
-			parameterString = [[urlComponents lastObject] stringByReplacingPercentEscapesUsingEncoding: NSUTF8StringEncoding];
-		
-			NSMutableDictionary *urlParameters = [NSMutableDictionary dictionary];
-			if(![parameterString isEqualToString: @""])
-			{
-				NSMutableString *parsedParameterString = [NSMutableString string];
-				for( int i = 0 ; i < parameterString.length; i++)
-				{
-					if( [parameterString characterAtIndex: i] == '\'')
-						betweenQuotation = !betweenQuotation;
-						
-					if( [parameterString characterAtIndex: i] == '&' && betweenQuotation)
-						[parsedParameterString appendString: @"__and__"];
-					else
-						[parsedParameterString appendFormat: @"%c", [parameterString characterAtIndex: i]];
-				}
-				
-				NSArray *paramArray = [NSArray array];
-				for( NSString *s in [parsedParameterString componentsSeparatedByString: @"&"])
-				{
-					paramArray = [paramArray arrayByAddingObject: [s stringByReplacingOccurrencesOfString:@"__and__" withString:@"&"]];
-				}
-				
-				for(NSString *param in paramArray)
-				{
-					NSRange separatorRange = [param rangeOfString: @"="];
-					
-					if( separatorRange.location != NSNotFound)
-					{
-						@try
-						{
-                            NSString* value = [param substringFromIndex:separatorRange.location+1];
-                            unichar c = [value characterAtIndex:0];
-                            if ((c == '"' || c == '\'') && [value characterAtIndex:value.length-1] == c)
-                                value = [value substringWithRange:NSMakeRange(1,value.length-2)];
-							[urlParameters setObject:value forKey:[param substringToIndex: separatorRange.location]];
-						}
-						@catch (NSException * e)
-						{
-							NSLog( @"**** exception in getUrl: %@", param);
-						}
-					}
-				}
-				
-				if( [urlParameters objectForKey: @"methodName"]) // XML-RPC message
-				{
-                    NSMutableDictionary* paramDict = [NSMutableDictionary dictionaryWithDictionary:urlParameters];
-                    [XMLRPCServer methodCall:[urlParameters objectForKey:@"methodName"] parameters:paramDict error:NULL];
-				}
-				
-				if( [urlParameters objectForKey: @"image"])
-				{
-					NSArray *components = [[urlParameters objectForKey: @"image"] componentsSeparatedByString:@"+"];
-					
-					if( [components count] == 2)
-					{
-						NSString *sopclassuid = [components objectAtIndex: 0];
-						NSString *sopinstanceuid = [components objectAtIndex: 1];
-//						int frame = [[urlParameters objectForKey: @"frames"] intValue];
-						
-						BOOL succeeded = NO;
+			NSString *sopclassuid = [components objectAtIndex: 0];
+			NSString *sopinstanceuid = [components objectAtIndex: 1];
+			BOOL succeeded = NO;
+						[BrowserController currentBrowser].lastStudyNotOpenedReason = nil;
 						
 						//First try to find it in the selected study
 						if( succeeded == NO)
@@ -2431,8 +2396,10 @@ void exceptionHandler(NSException *exception)
 								
 								if( [imagesArray count])
 								{
-									[[BrowserController currentBrowser] displayStudy: [[imagesArray lastObject] valueForKeyPath: @"series.study"] object: [imagesArray lastObject] command: @"Open"];
-									succeeded = YES;
+									// A refusal here used to be recorded as a success: the link
+									// was answered, no viewer appeared, and the second search
+									// below was skipped because of it.
+									succeeded = [[BrowserController currentBrowser] displayStudy: [[imagesArray lastObject] valueForKeyPath: @"series.study"] object: [imagesArray lastObject] command: @"Open"];
 								}
 							}
 							@catch (NSException * e)
@@ -2484,7 +2451,7 @@ void exceptionHandler(NSException *exception)
 								}
 								
 								if( searchUIDImage)
-									[[BrowserController currentBrowser] displayStudy: [searchUIDImage valueForKeyPath: @"series.study"] object: searchUIDImage command: @"Open"];
+									succeeded = [[BrowserController currentBrowser] displayStudy: [searchUIDImage valueForKeyPath: @"series.study"] object: searchUIDImage command: @"Open"];
 							}
 							@catch (NSException * e)
 							{
@@ -2495,15 +2462,24 @@ void exceptionHandler(NSException *exception)
 							
 							[context unlock];
 						}
+						
+						// Somebody clicked a link and is waiting on a viewer. Saying
+						// nothing at all is what made "the viewer never opened" a
+						// report with nothing in it.
+						if( succeeded == NO)
+						{
+							NSString *reason = [BrowserController currentBrowser].lastStudyNotOpenedReason;
+							if( reason.length == 0)
+								reason = [HorosStudyNotOpenedReason reasonForNoStudy];
+							
+							// One line that is complete on its own: nothing matched here,
+							// so the browser may never have been asked and may have logged
+							// nothing.
+							NSLog( @"%@%@ - the link asked for image %@", [HorosStudyNotOpenedReason logPrefix], reason, sopinstanceuid);
+							NSRunAlertPanel( NSLocalizedString( @"Open Image", nil), @"%@", NSLocalizedString( @"OK", nil), nil, nil, reason);
+						}
 					}
 				}
-			}
-		}
-        else if( [url.pathExtension isEqualToString: @"xml"])
-        {
-            [BrowserController asyncWADOXMLDownloadURL: url];
-		}
-	}
 }
 
 - (void)application:(NSApplication *)sender openFiles:(NSArray *)filenames
@@ -2595,12 +2571,12 @@ static BOOL firstCall = YES;
 	[[NSUserDefaults standardUserDefaults] setBool: YES forKey: @"hideListenerError"];
 	[[NSUserDefaults standardUserDefaults] synchronize];
 	
-	[[NSFileManager defaultManager] createFileAtPath: @"/tmp/kill_all_storescu" contents: [NSData data] attributes: nil];
+	HorosDICOMGlobalAbortBegin();
 	[[NSRunLoop currentRunLoop] runUntilDate: [NSDate dateWithTimeIntervalSinceNow: 3]];
 	
 	[wait close];
 	
-	unlink( "/tmp/kill_all_storescu");
+	HorosDICOMGlobalAbortEnd();
 	
 	[[NSUserDefaults standardUserDefaults] setBool: hideListenerError_copy forKey: @"hideListenerError"];
 	[[NSUserDefaults standardUserDefaults] removeObjectForKey: @"copyHideListenerError"];
@@ -2609,7 +2585,6 @@ static BOOL firstCall = YES;
 
 - (void) applicationWillTerminate: (NSNotification*) aNotification
 {
-	unlink( "/tmp/kill_all_storescu");
 	
 #ifndef OSIRIX_LIGHT
     [DICOMTLS eraseKeys];
@@ -2715,8 +2690,6 @@ static BOOL firstCall = YES;
     }
 
     [[NSFileManager defaultManager] confirmDirectoryAtPath: incomingDirectoryPath];
-    
-    [[NSUserDefaults standardUserDefaults] setBool: NO forKey: @"NSConstraintBasedLayoutVisualizeMutuallyExclusiveConstraints"];
 }
 
 - (void) terminate :(id) sender
@@ -2867,6 +2840,21 @@ static BOOL initialized = NO;
                 NSArray *components = [[[NSBundle mainBundle] pathForResource: @"Localizable" ofType: @"strings"] pathComponents];
                 if( components.count > 3)
                     NSLog(@"Localization: %@", [components objectAtIndex: components.count -2]);
+                // AppKit's constraint visualiser draws a purple window of its own over
+                // ours. Turning it on by writing the preference left it on in the
+                // person's own preference file whenever a run ended any way but its
+                // own quit - for every later run, of any build - and AppKit lists
+                // every domain carrying the key when asked why that window is there.
+                // A window nobody recognises is reported as ours, so the log says
+                // when this is what it is.
+                #ifdef NDEBUG
+                [HorosLayoutDebuggingDefaults adoptForThisProcessOnly: NO];
+                #else
+                [HorosLayoutDebuggingDefaults adoptForThisProcessOnly: YES];
+                #endif
+                NSString *layoutDebugging = [HorosLayoutDebuggingDefaults reportForCurrentProcess];
+                if( layoutDebugging)
+                    NSLog(@"%@", layoutDebugging);
 				#ifdef NDEBUG
 				#else
 				NSLog( @"**** DEBUG MODE ****");
@@ -2929,6 +2917,12 @@ static BOOL initialized = NO;
                         [[NSUserDefaults standardUserDefaults] setInteger:0 forKey:@"AutocleanSpaceMode"];
                 }
                 
+                NSString *alternateDatabaseDefault = nil;
+#ifdef MACAPPSTORE
+                alternateDatabaseDefault = [HorosDatabaseLocation baseDirectoryForPath: [NSFileManager.defaultManager userApplicationSupportFolderForApp]];
+#endif
+                [HorosDatabaseFirstUse prepareWithAlternateDefault: alternateDatabaseDefault];
+
 				[[NSUserDefaults standardUserDefaults] setInteger: [[NSUserDefaults standardUserDefaults] integerForKey: @"DEFAULT_DATABASELOCATION"] forKey: @"DATABASELOCATION"];
 				[[NSUserDefaults standardUserDefaults] setObject: [[NSUserDefaults standardUserDefaults] stringForKey: @"DEFAULT_DATABASELOCATIONURL"] forKey: @"DATABASELOCATIONURL"];
 				
@@ -2983,9 +2977,18 @@ static BOOL initialized = NO;
                 }
                 
                 if ([dataBasePath hasPrefix:@"/Volumes/"] || dataBasePath == nil) {
-                    NSString* volumePath = [[[dataBasePath componentsSeparatedByString:@"/"] subarrayWithRange:NSMakeRange(0,3)] componentsJoinedByString:@"/"];
-                    if (![[NSFileManager defaultManager] fileExistsAtPath:volumePath]) {
-                        NSPanel* dialog = [NSPanel alertWithTitle:@"Horos Data"
+                    // +baseDirPathForMode:path: answers nil for a database on a volume
+                    // that is not mounted, which is exactly the case this panel is for.
+                    // The volume to wait for then has to come from the preference
+                    // itself: asking about a path derived from nil could never say the
+                    // volume had appeared, so plugging the disk back in while the panel
+                    // was up did nothing and the launch waited the full ten minutes.
+                    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+                    NSString *configuredPath = [defaults integerForKey: @"DATABASELOCATION"] == 1 ? [defaults stringForKey: @"DATABASELOCATIONURL"] : nil;
+                    NSArray *pathComponents = [(dataBasePath.length ? dataBasePath : configuredPath) componentsSeparatedByString:@"/"];
+                    NSString* volumePath = pathComponents.count >= 3 ? [[pathComponents subarrayWithRange:NSMakeRange(0,3)] componentsJoinedByString:@"/"] : nil;
+                    if (volumePath.length && ![[NSFileManager defaultManager] fileExistsAtPath:volumePath]) {
+                        NSWindow* dialog = [NSPanel alertWithTitle:@"Horos Data"
                                                           message:[NSString stringWithFormat:NSLocalizedString(@"Horos is configured to use the database located at %@. This volume is currently not available, most likely because it hasn't yet been mounted by the system, or because it is not plugged in or is turned off, or because you don't have write permissions for this location. Horos will wait for a few minutes, then give up and switch to a database in the current user's home directory.", nil), [[NSUserDefaults standardUserDefaults] stringForKey: @"DATABASELOCATIONURL"]]
                                                     defaultButton:@"Quit"
                                                   alternateButton:@"Continue"
@@ -3027,7 +3030,7 @@ static BOOL initialized = NO;
                 if ([dataBaseDataPath hasPrefix:@"/Volumes/"]) {
                     NSString* volumePath = [[[dataBaseDataPath componentsSeparatedByString:@"/"] subarrayWithRange:NSMakeRange(0,3)] componentsJoinedByString:@"/"];
                     if (![[NSFileManager defaultManager] fileExistsAtPath:volumePath]) {
-                        NSPanel* dialog = [NSPanel alertWithTitle:@"Horos Data"
+                        NSWindow* dialog = [NSPanel alertWithTitle:@"Horos Data"
                                                           message:[NSString stringWithFormat:NSLocalizedString(@"Horos is configured to use the database with data located at %@. This volume is currently not available, most likely because it hasn't yet been mounted by the system, or because it is not plugged in or is turned off, or because you don't have write permissions for this location. Horos will wait for a few minutes, then give up and ignore this highly dangerous situation.", nil), dataBaseDataPath]
                                                     defaultButton:@"Quit"
                                                   alternateButton:@"Continue"
@@ -3170,11 +3173,15 @@ static BOOL initialized = NO;
                 
 				// CREATE A TEMPORATY FILE DURING STARTUP
 				
+                if (![HorosDatabaseFirstUse hasPendingChoice])
+                {
 				NSString* path = [[DicomDatabase defaultBaseDirPath] stringByAppendingPathComponent:@"Loading"];
+                BOOL pluginMarkerExists = [[NSFileManager defaultManager] fileExistsAtPath:[PluginManager crashMarkerPath]];
                 
                 if( [[NSUserDefaults standardUserDefaults] boolForKey: @"hideListenerError"] == NO)
                 {
-                    if( [[NSFileManager defaultManager] fileExistsAtPath: path])
+                    if( [[NSFileManager defaultManager] fileExistsAtPath: path] &&
+                        [HorosPluginUpdateRecovery shouldOfferDatabaseRebuildWithLoadingFileExists:YES pluginMarkerExists:pluginMarkerExists])
                     {
                         int result = NSRunInformationalAlertPanel(NSLocalizedString(@"Horos crashed during last startup", nil), NSLocalizedString(@"Previous crash is maybe related to a corrupt database or corrupted images.\r\rShould I run Horos in Protected Mode (recommended) (no images displayed)? To allow you to delete the crashing/corrupted images/studies.\r\rOr Should I rebuild the local database? All albums, comments and status will be lost.", nil), NSLocalizedString(@"Continue normally",nil), NSLocalizedString(@"Protected Mode",nil), NSLocalizedString(@"Rebuild Database",nil));
                         
@@ -3189,6 +3196,8 @@ static BOOL initialized = NO;
                 
                 [path writeToFile:path atomically:NO encoding: NSUTF8StringEncoding error: nil];
 				
+                }
+
 				Use_kdu_IfAvailable = [[NSUserDefaults standardUserDefaults] boolForKey:@"UseKDUForJPEG2000"];
 				
 				#ifndef OSIRIX_LIGHT
@@ -3361,7 +3370,11 @@ static BOOL initialized = NO;
 
 - (void) applicationDidFinishLaunching:(NSNotification*) aNotification
 {
-	unlink( "/tmp/kill_all_storescu");
+    
+    [ViewerController installROIInterchangeMenuItems];
+    [ViewerController installGSPSMenuItems];
+    [BrowserController installAutomaticCleanupPreviewMenu];
+    [BrowserController installSurgicalProcedureImportMenu];
 	
     [[[NSWorkspace sharedWorkspace] notificationCenter]
             addObserver:self
@@ -3601,12 +3614,6 @@ static BOOL initialized = NO;
     if( [[NSUserDefaults standardUserDefaults] boolForKey: @"SyncPreferencesFromURL"])
         [NSThread detachNewThreadSelector: @selector( addPreferencesFromURL:) toTarget: [OSIGeneralPreferencePanePref class] withObject: [NSURL URLWithString: [[NSUserDefaults standardUserDefaults] stringForKey: @"SyncPreferencesURL"]]];
 
-
-#ifdef NDEBUG
-    [[NSUserDefaults standardUserDefaults] setBool: NO forKey: @"NSConstraintBasedLayoutVisualizeMutuallyExclusiveConstraints"];
-#else
-    [[NSUserDefaults standardUserDefaults] setBool: YES forKey: @"NSConstraintBasedLayoutVisualizeMutuallyExclusiveConstraints"];
-#endif
 
 #ifndef OSIRIX_LIGHT
     if( [[NSUserDefaults standardUserDefaults] boolForKey: @"isQueryControllerVisible"])
@@ -3848,6 +3855,19 @@ static BOOL initialized = NO;
 
 - (void) applicationWillFinishLaunching: (NSNotification *) aNotification
 {
+    NSString *dictionary = HorosVendoredDicomDictionaryPath();
+    if (dictionary)
+        HorosLoadVendoredDicomDictionary(dictionary);
+
+    if ([HorosDatabaseFirstUse hasPendingChoice])
+    {
+        if (![HorosDatabaseFirstUse choosePreparedLocation])
+            exit(0);
+        [[NSUserDefaults standardUserDefaults] setInteger: [[NSUserDefaults standardUserDefaults] integerForKey: @"DEFAULT_DATABASELOCATION"] forKey: @"DATABASELOCATION"];
+        [[NSUserDefaults standardUserDefaults] setObject: [[NSUserDefaults standardUserDefaults] stringForKey: @"DEFAULT_DATABASELOCATIONURL"] forKey: @"DATABASELOCATIONURL"];
+        [[BrowserController currentBrowser] completeFirstUseDatabaseSetup];
+    }
+
     dispatch_async(dispatch_get_main_queue(), ^{
         [self setupCrashReporter];
     });
@@ -3856,19 +3876,15 @@ static BOOL initialized = NO;
     
     [AppController cleanOsiriXSubProcesses];
     
-    NSError *error = nil;
-    [NSWindow jr_swizzleMethod:@selector(showsFullScreenButton) withMethod:@selector(HOROS_showsFullScreenButton) error:&error];
-    if (error) {
-        NSLog(@"Unable to swizzle showsFullScreenButton: %@", error);
-    }
-    
     if( [NSDate timeIntervalSinceReferenceDate] - [[NSUserDefaults standardUserDefaults] doubleForKey: @"lastDate32bitPipelineCheck"] > 60L*60L*24L) // 1 days
 	{
 		[[NSUserDefaults standardUserDefaults] setDouble: [NSDate timeIntervalSinceReferenceDate] forKey: @"lastDate32bitPipelineCheck"];
 		[self verifyHardwareInterpolation];
 	}
     
-//    NSWindow.allowsAutomaticWindowTabbing = NO;
+    // Series are independent viewers; tabbing breaks tiling and active-viewer routing.
+    if (@available(macOS 10.12, *))
+        NSWindow.allowsAutomaticWindowTabbing = NO;
     
 	BOOL dialog = NO;
     
@@ -3876,17 +3892,18 @@ static BOOL initialized = NO;
 //		[[NSFileManager defaultManager] createDirectoryAtPath: @"/tmp/" attributes: nil];
 	
     
-    NSMutableArray *dbArray = [[[NSUserDefaults standardUserDefaults] arrayForKey: @"localDatabasePaths"] deepMutableCopy];
-    NSMutableArray *toBeRemoved = [NSMutableArray array];
-    for( NSMutableDictionary *d in dbArray)
-	{
-		if( [[d valueForKey:@"Path"] hasPrefix: @"/tmp/"] || [[d valueForKey:@"Path"] hasPrefix: @"/private/tmp/"] || [[d valueForKey:@"Path"] hasPrefix: @"/private/var/tmp/"])
-			[toBeRemoved addObject: d];
-	}
-    if( toBeRemoved.count)
+    // This used to list three temporary prefixes by hand and miss the one that
+    // matters: macOS puts the per-user temporary directory under
+    // /private/var/folders/.../T/, which is where a CD's database is copied and
+    // opened from. One rule, in HorosSourceLocation, so this and the browser's
+    // own pass cannot disagree.
+    NSArray *dbArray = [[NSUserDefaults standardUserDefaults] arrayForKey: @"localDatabasePaths"];
+    NSArray *permanent = [HorosSourceLocation permanentEntriesIn: dbArray pathKey: @"Path"];
+    if( permanent.count != dbArray.count)
     {
-        [dbArray removeObjectsInArray: toBeRemoved];
-        [[NSUserDefaults standardUserDefaults] setObject: dbArray forKey: @"localDatabasePaths"];
+        for( NSString *dropped in [HorosSourceLocation temporaryEntriesIn: dbArray pathKey: @"Path"])
+            NSLog( @"---- sources: forgetting %@; it is in a temporary location, not a database to come back to", dropped);
+        [[NSUserDefaults standardUserDefaults] setObject: permanent forKey: @"localDatabasePaths"];
     }
     
 	if( [[NSUserDefaults standardUserDefaults] valueForKey: @"timeZone"])
@@ -3963,7 +3980,20 @@ static BOOL initialized = NO;
 	#endif
 	*/
      
-	[PluginManager setMenus: filtersMenu :roisMenu :othersMenu :dbMenu];
+	// A plugin that raises here used to take the rest of this method with it,
+	// and the rest of this method is the DICOM stack: an exception escaping
+	// the notification observer left DCMTK, the store SCP, the database and
+	// browser classes, the Web Portal, Bonjour and the XML-RPC interface
+	// uninitialised, with the application still on screen and nothing but a
+	// log line to say so.
+	@try
+	{
+		[PluginManager setMenus: filtersMenu :roisMenu :othersMenu :dbMenu];
+	}
+	@catch (NSException *e)
+	{
+		N2LogExceptionWithStackTrace(e);
+	}
     
 	appController = self;
 	[self initDCMTK];
@@ -4310,55 +4340,41 @@ static BOOL initialized = NO;
 
 - (IBAction) checkForUpdates: (id) sender
 {
-	NSURL *url;
-	if( sender != self)
-        verboseUpdateCheck = YES;
-	else
-        verboseUpdateCheck = NO;
-	
-    BOOL verboseAfterCrash = NO;
-    
-    if( [sender isKindOfClass:[NSString class]] && [sender isEqualToString: @"crash"])
-        verboseAfterCrash = YES;
-    
-    url = [NSURL URLWithString:URL_HOROS_VERSION];
-	
-	if( url)
-	{
-		NSString *currVersionNumber = [[[NSBundle bundleForClass:[self class]] infoDictionary] objectForKey:@"CFBundleVersion"];
-		NSDictionary *productVersionDict = [NSDictionary dictionaryWithContentsOfURL: url];
-		NSString *latestVersionNumber = [productVersionDict valueForKey:@"Horos"];
-		
-		if (productVersionDict && currVersionNumber && latestVersionNumber)
-		{
-			if ([latestVersionNumber intValue] <= [currVersionNumber intValue])
-			{
-				if (verboseUpdateCheck && verboseAfterCrash == NO)
-				{
-					[self performSelectorOnMainThread:@selector(displayUpdateMessage:) withObject:@"UPTODATE" waitUntilDone: YES];
-				}
-			}
-			else
-			{
-				if( ([[NSUserDefaults standardUserDefaults] boolForKey: @"CheckHorosUpdates"] == YES && [[NSUserDefaults standardUserDefaults] boolForKey: @"hideListenerError"] == NO) || verboseUpdateCheck == YES)
-				{
-                    if( verboseAfterCrash)
-                        [self performSelectorOnMainThread:@selector(displayUpdateMessage:) withObject:@"UPDATECRASH" waitUntilDone: YES];
-                    else
-                        [self performSelectorOnMainThread:@selector(displayUpdateMessage:) withObject:@"UPDATE" waitUntilDone: YES];
-				}
-			}
-		}
-		else
-		{
-			if (verboseUpdateCheck)
-			{
-				[self performSelectorOnMainThread:@selector(displayUpdateMessage:) withObject:@"ERROR" waitUntilDone: YES];
-			}
-		}
-	}
-	
-    if (verboseUpdateCheck)
+    // Capture per-request intent: automatic checks must not overwrite a manual check.
+    BOOL manualCheck = sender != self;
+    BOOL afterCrash = [sender isKindOfClass:[NSString class]] && [sender isEqualToString:@"crash"];
+    NSURL *url = [NSURL URLWithString:URL_HOROS_VERSION];
+    NSBundle *bundle = [NSBundle bundleForClass:[self class]];
+    NSString *currentVersion = [bundle objectForInfoDictionaryKey:@"CFBundleVersion"];
+    NSString *displayVersion = [bundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: currentVersion;
+
+    [HorosUpdateFeedClient checkURL:url completion:^(NSString *latestVersion, NSError *error) {
+        // The Swift client delivers all outcomes on the main queue.
+        if (error) {
+            if (manualCheck && !afterCrash)
+                NSRunAlertPanel(NSLocalizedString(@"Unable to Check for Updates", nil), @"%@",
+                                NSLocalizedString(@"OK", nil), nil, nil,
+                                [HorosUpdateFeedClient messageForError:error]);
+        } else {
+            NSString *summary = [HorosUpdateFeedClient summaryForInstalledVersion:displayVersion
+                                                                           build:currentVersion
+                                                                   availableBuild:latestVersion];
+            if (latestVersion.longLongValue <= currentVersion.longLongValue) {
+                if (manualCheck && !afterCrash)
+                    NSRunAlertPanel(NSLocalizedString(@"Update Check Result", nil), @"%@",
+                                    NSLocalizedString(@"OK", nil), nil, nil, summary);
+            } else if (([[NSUserDefaults standardUserDefaults] boolForKey:@"CheckHorosUpdates"] &&
+                        ![[NSUserDefaults standardUserDefaults] boolForKey:@"hideListenerError"]) || manualCheck) {
+                int button = NSRunAlertPanel(NSLocalizedString(@"New Stable Build Available", nil), @"%@",
+                                            NSLocalizedString(@"View Fork Releases", nil),
+                                            NSLocalizedString(@"Continue", nil), nil, summary);
+                if (button == NSOKButton)
+                    [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:URL_HOROS_UPDATE]];
+            }
+        }
+    }];
+
+    if (manualCheck)
     {
         return;
     }
@@ -4762,6 +4778,58 @@ static BOOL initialized = NO;
 		[item setTarget: self];
 		[item setAction: @selector(setFixedTilingColumns:)];
 	}
+    
+    [self buildTilingAreaMenu];
+}
+
+// Built here rather than in a nib: there is one nib per language, and this is a
+// list that belongs to HorosTilingArea. It goes next to the Rows and Columns
+// submenus, because it answers the question they raise - how much of the screen.
+- (void) buildTilingAreaMenu
+{
+    NSMenu *parent = [windowsTilingMenuRows supermenu];
+    NSInteger at = [parent indexOfItemWithSubmenu: windowsTilingMenuRows];
+    if( parent == nil || at < 0) return;
+    
+    NSString *title = NSLocalizedString( @"Screen Area", nil);
+    if( [parent indexOfItemWithTitle: title] >= 0) return;      // built already
+    
+    NSMenuItem *areaItem = [[NSMenuItem alloc] initWithTitle: title action: nil keyEquivalent: @""];
+    NSMenu *areaMenu = [[NSMenu alloc] initWithTitle: title];
+    [areaMenu setAutoenablesItems: NO];
+    
+    for( NSString *name in [HorosTilingArea presetNames])
+    {
+        NSMenuItem *item = [[NSMenuItem alloc] initWithTitle: NSLocalizedString( name, nil)
+                                                      action: @selector(setTilingArea:)
+                                               keyEquivalent: @""];
+        [item setTarget: self];
+        [item setRepresentedObject: name];
+        [areaMenu addItem: item];
+    }
+    
+    [areaItem setSubmenu: areaMenu];
+    [parent insertItem: areaItem atIndex: at + 1];
+}
+
+- (IBAction) setTilingArea: (id) sender
+{
+    NSScreen *screen = [[NSApp keyWindow] screen];
+    if( screen == nil) screen = [NSScreen mainScreen];
+    
+    [HorosTilingArea setFractions: [HorosTilingArea fractionsForPresetNamed: [sender representedObject]]
+                        forScreen: screen];
+    
+    NSLog( @"Tiling area on \"%@\" is now %@; %@",
+          [HorosTilingArea identifierForScreen: screen], [sender representedObject],
+          NSStringFromRect( [AppController usefullRectForScreen: screen]));
+    
+    // The floating panels place themselves from the screen parameters, and each
+    // viewer has its own: without this only the front one would move, and the
+    // others would stay across the part that was just reserved.
+    [[NSNotificationCenter defaultCenter] postNotificationName: NSApplicationDidChangeScreenParametersNotification object: NSApp];
+    
+    [self tileWindows: nil];
 }
 
 - (IBAction) setFixedTilingRows: (id) sender
@@ -4776,6 +4844,17 @@ static BOOL initialized = NO;
 
 - (BOOL) validateMenuItem:(NSMenuItem *) item
 {
+    if( [item action] == @selector(setTilingArea:))
+    {
+        NSScreen *screen = [[NSApp keyWindow] screen];
+        if( screen == nil) screen = [NSScreen mainScreen];
+        
+        BOOL chosen = [[HorosTilingArea presetNameForScreen: screen] isEqualToString: [item representedObject]];
+        [item setState: chosen ? NSControlStateValueOn : NSControlStateValueOff];
+        [item setEnabled: YES];
+        return YES;
+    }
+    
     if( [item action] == @selector(loadRecentStudy:))
     {
         DicomDatabase *db = [[BrowserController currentBrowser] database];
@@ -4842,12 +4921,20 @@ static BOOL initialized = NO;
 
 + (NSRect) usefullRectForScreen: (NSScreen*) screen showFloatingWindows: (BOOL) showFloatingWindows
 {
-    NSRect screenFrame = screen.visibleFrame;
+    // The area this screen is allowed to hold Horos windows, which is the whole
+    // visible frame unless somebody reserved part of it for something else.
+    // Narrowing first means the floating panels are taken out of the chosen
+    // area, not out of the screen.
+    NSRect screenFrame = [HorosTilingArea rectForScreen: screen visibleFrame: screen.visibleFrame];
     
     if( showFloatingWindows)
     {
         if( [AppController USETOOLBARPANEL] || [[NSUserDefaults standardUserDefaults] boolForKey: @"USEALWAYSTOOLBARPANEL2"] == YES)
-            screenFrame.size.height -= 78;  //[[AppController toolbarForScreen: screen] exposedHeight];
+            // 78 was 100 minus a 22-point menu bar, frozen in place. Both halves
+            // move - the toolbar needs more than 100 now, and the menu bar is
+            // not 22 - so the room the tiling leaves has to come from the panel
+            // itself, or the windows are laid over the bottom of its labels.
+            screenFrame.size.height -= [ToolbarPanelController exposedHeight];
         
         if( [[NSUserDefaults standardUserDefaults] boolForKey: @"UseFloatingThumbnailsList"] && [[NSUserDefaults standardUserDefaults] boolForKey: @"SeriesListVisible"])
         {

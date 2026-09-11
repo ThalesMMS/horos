@@ -61,10 +61,28 @@ function onSubmitForm(form) {
 }
 
 function imageClick(ixid, sxid) {
+	// Built as elements rather than concatenated into innerHTML, and the
+	// identifiers encoded for the query strings they go into, so nothing that
+	// reaches here can become markup.
 	var div = document.createElement("div");
 	div.id = "overlay";
 	div.onclick = function() { document.body.removeChild(this); };
-	div.innerHTML = "<div><div><a href=\"/series?xid="+sxid+"\"><img src=\"/image.jpg?xid="+ixid+"\" /></a><div class=\"smaller\">Close</div></div></div>";
+
+	var outer = document.createElement("div");
+	var inner = document.createElement("div");
+	var link = document.createElement("a");
+	link.href = "/series?xid=" + encodeURIComponent(sxid);
+	var image = document.createElement("img");
+	image.src = "/image.jpg?xid=" + encodeURIComponent(ixid);
+	link.appendChild(image);
+	var close = document.createElement("div");
+	close.className = "smaller";
+	close.textContent = "Close";
+	inner.appendChild(link);
+	inner.appendChild(close);
+	outer.appendChild(inner);
+	div.appendChild(outer);
+
 	document.body.appendChild(div);
 }
 
@@ -171,7 +189,7 @@ function shareDestinationChange(select) {
                         %]IF:Info.proposeZipDownload%
                     
                         %[IF:Info.proposeWeasis%
-                            <a href="%Info.baseJnlpUrl%/weasis.jnlp?xid=%ComparativeStudy.XID%&sid=%Info.SID%"><img src="images/weasisSmall.png" style="vertical-align:middle"/></a>
+                            <a href="%Info.baseJnlpUrl%/weasis.jnlp?xid=%ComparativeStudy.XID%%[IF:User%&username=%U:User.name%&token=%U:Info.newToken%%]IF:User%"><img src="images/weasisSmall.png" style="vertical-align:middle"/></a>
                         %]IF:Info.proposeWeasis%
 					
                         %[IF:ComparativeStudy.studyInstanceUID==Study.studyInstanceUID%
@@ -273,7 +291,7 @@ function shareDestinationChange(select) {
 
 						%[IF:Info.proposeWeasis%
 						<td class="narrow middle">
-                            <a href="%Info.baseJnlpUrl%/weasis.jnlp?xid=%Series.XID%&sid=%Info.SID%"><img src="images/weasis.png"/></a>
+                            <a href="%Info.baseJnlpUrl%/weasis.jnlp?xid=%Series.XID%%[IF:User%&username=%U:User.name%&token=%U:Info.newToken%%]IF:User%"><img src="images/weasis.png"/></a>
 						</td>
 						%]IF:Info.proposeWeasis%
                         

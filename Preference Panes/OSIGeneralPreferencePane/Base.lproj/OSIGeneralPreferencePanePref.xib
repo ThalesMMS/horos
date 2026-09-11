@@ -352,17 +352,6 @@ If multiple languages are enabled, the used language will be chosen according to
                                         <binding destination="167" name="selectedTag" keyPath="values.TOOLKITPARSER4" id="394"/>
                                     </connections>
                                 </matrix>
-                                <button id="174">
-                                    <rect key="frame" x="26" y="11" width="416" height="18"/>
-                                    <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
-                                    <buttonCell key="cell" type="check" title="For CD/DVD Media, always use Papyrus Toolkit (faster reading)" bezelStyle="regularSquare" imagePosition="left" alignment="left" scrollable="YES" lineBreakMode="clipping" inset="2" id="182">
-                                        <behavior key="behavior" changeContents="YES" doesNotDimImage="YES" lightByContents="YES"/>
-                                        <font key="font" metaFont="system"/>
-                                    </buttonCell>
-                                    <connections>
-                                        <binding destination="167" name="value" keyPath="values.PREFERPAPYRUSFORCD" id="176"/>
-                                    </connections>
-                                </button>
                             </subviews>
                         </view>
                         <color key="borderColor" white="0.0" alpha="0.41999999999999998" colorSpace="calibratedWhite"/>

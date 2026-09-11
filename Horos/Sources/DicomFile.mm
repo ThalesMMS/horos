@@ -39,6 +39,9 @@
 
 #include "options.h"
 #include "url.h"
+#ifndef DECOMPRESS_APP
+#import "Horos-Swift.h"
+#endif
 #import "DCMUIDs.h"
 
 #ifndef OSIRIX_LIGHT
@@ -48,6 +51,7 @@
 #import "SRAnnotation.h"
 #import "SRAnnotation.h"
 #import "DicomFile.h"
+#import "HorosBoundedTask.h"
 #import "ViewerController.h"
 #import "PluginFileFormatDecoder.h"
 #import "DCMCalendarDate.h"
@@ -87,7 +91,6 @@ extern NSString * convertDICOM( NSString *inputfile);
 extern NSRecursiveLock *PapyrusLock;
 
 static BOOL DEFAULTSSET = NO;
-static int TOOLKITPARSER = 1, PREFERPAPYRUSFORCD = 1;
 static BOOL COMMENTSAUTOFILL = NO, COMMENTSFROMDICOMFILES = NO;
 static BOOL splitMultiEchoMR = NO;
 static BOOL useSeriesDescription = NO;
@@ -101,7 +104,6 @@ static BOOL gUsePatientIDForUID = YES, gUsePatientBirthDateForUID = YES, gUsePat
 static BOOL SEPARATECARDIAC4D = NO;
 //static BOOL SeparateCardiacMR = NO;
 //static int SeparateCardiacMRMode = 0;
-static BOOL filesAreFromCDMedia = NO;
 
 #define QUICKTIMETIMEFRAMELIMIT 1200
 
@@ -205,11 +207,6 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
         }
     }
     return NO;
-}
-
-+ (void) setFilesAreFromCDMedia: (BOOL) f;
-{
-    filesAreFromCDMedia = f;
 }
 
 -(long) NoOfSeries {return NoOfSeries;}
@@ -551,13 +548,6 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
             
             DEFAULTSSET = YES;
             
-            PREFERPAPYRUSFORCD = (int)[sd integerForKey: @"PREFERPAPYRUSFORCD"];
-            TOOLKITPARSER = 2; // Always and only DCMTK. Papyrus has been removed from the project.
-            
-#ifdef OSIRIX_LIGHT
-            TOOLKITPARSER = 2;
-#endif
-            
             COMMENTSFROMDICOMFILES = [sd boolForKey: @"CommentsFromDICOMFiles"];
             COMMENTSAUTOFILL = [sd boolForKey: @"COMMENTSAUTOFILL"];
             SEPARATECARDIAC4D = [sd boolForKey: @"SEPARATECARDIAC4D"];
@@ -594,11 +584,6 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
             
             DEFAULTSSET = YES;
             
-            PREFERPAPYRUSFORCD = [[dict objectForKey: @"PREFERPAPYRUSFORCD"] intValue];
-            TOOLKITPARSER = [[dict objectForKey: @"TOOLKITPARSER4"] intValue];
-            if( TOOLKITPARSER == 0)
-                TOOLKITPARSER = 2;
-            
             COMMENTSFROMDICOMFILES = [[dict objectForKey: @"CommentsFromDICOMFiles"] intValue];
             COMMENTSAUTOFILL = [[dict objectForKey: @"COMMENTSAUTOFILL"] intValue];
             SEPARATECARDIAC4D = [[dict objectForKey: @"SEPARATECARDIAC4D"] intValue];
@@ -631,6 +616,21 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
             //			CHECKFORLAVIM = NO;
         }
     }
+}
+
+// The extensions -getImageFile reads. The incoming folder used to let only
+// DICOM, FV-TIFF, TIFF and NRRD through, so a PNG, a JPEG or a PDF was refused at
+// the door although the reader behind it handles all three - measured on a folder
+// of six raster files, where only the TIFF got as far as the indexer.
++ (BOOL) isImageFile:(NSString *) file
+{
+    static NSSet *extensions = nil;
+    static dispatch_once_t once;
+    dispatch_once( &once, ^{
+        extensions = [[NSSet setWithObjects: @"tiff", @"tif", @"stk", @"png", @"jpg",
+                       @"jpeg", @"jp2", @"pdf", @"pct", @"gif", @"bmp", nil] retain];
+    });
+    return [extensions containsObject: file.pathExtension.lowercaseString];
 }
 
 + (BOOL) isTiffFile:(NSString *) file
@@ -697,21 +697,21 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
     if( [extension isEqualToString:@"hdr"] ||
        [extension isEqualToString:@"nii"])
     {
-        NIfTI = (nifti_1_header *) nifti_read_header([file UTF8String], nil, 0);
+        // nifti_read_header answers NULL for a file it cannot read - a truncated
+        // or empty .nii among the incoming files - and this read through it. It
+        // also returns memory the caller owns, which was dropped rather than
+        // freed, once per candidate file.
+        NIfTI = (nifti_1_header *) nifti_read_header([file fileSystemRepresentation], nil, 0);
         
-        if( (NIfTI->magic[0] != 'n')                           ||
-           (NIfTI->magic[1] != 'i' && NIfTI->magic[1] != '+')   ||
-           (NIfTI->magic[2] != '1')                           ||
-           (NIfTI->magic[3] != '\0'))
+        if( NIfTI != NULL)
         {
-            success = NO;
+            success = (NIfTI->magic[0] == 'n') &&
+                      (NIfTI->magic[1] == 'i' || NIfTI->magic[1] == '+') &&
+                      (NIfTI->magic[2] == '1') &&
+                      (NIfTI->magic[3] == '\0');
+            free( NIfTI);
+            NIfTI = NULL;
         }
-        else
-        {
-            success = YES;
-        }
-        
-        NIfTI = nil;
     }
     return success;
 }
@@ -726,6 +726,19 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
     if (image)
         *image = YES; // Assume it has pixel data
     
+    // -UTF8String returns NULL for a nil path, and for a name holding characters
+    // it cannot encode. std::string(NULL) reads until it finds a zero byte,
+    // which is the strlen inside this method that the crash reports all end in -
+    // and no @try around it can catch that. Nothing that is not a usable path
+    // can be a DICOM file, so say so.
+    const char *filePathC = [filePath UTF8String];
+    if (filePathC == NULL || *filePathC == 0)
+    {
+        if (filePath)
+            NSLog( @"---- isDICOMFile: a path that cannot be used: %@", filePath);
+        return NO;
+    }
+    
     //////////////////////////////////////////////////////////
     
     try
@@ -733,7 +746,7 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
         gdcm::Scanner theScanner;
         
         gdcm::Directory::FilenamesType filenames;
-        filenames.push_back( std::string([filePath UTF8String]) );
+        filenames.push_back( std::string( filePathC) );
         
         theScanner.AddTag(gdcm::Tag(0x0020, 0x000e));//Series UID
         if( !theScanner.Scan( filenames ) )
@@ -762,7 +775,7 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
                 gdcm::Scanner theScanner;
                 
                 gdcm::Directory::FilenamesType filenames;
-                filenames.push_back( std::string([filePath UTF8String]) );
+                filenames.push_back( std::string( filePathC) );
                 
                 theScanner.AddTag(gdcm::Tag(0x7FE0, 0x0010));//Series UID
                 if( !theScanner.Scan( filenames ) )
@@ -1038,6 +1051,9 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
     NoOfFrames = 1;
     
     
+    // bmp reads through NSImage like the rest of these; it was the one common
+    // raster format missing from the list, so a bitmap could not be imported at
+    // all while a GIF could.
     if( [extension isEqualToString:@"tiff"] ||
        [extension isEqualToString:@"tif"] ||
        [extension isEqualToString:@"stk"] ||
@@ -1047,6 +1063,7 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
        [extension isEqualToString:@"jp2"] ||
        [extension isEqualToString:@"pdf"] ||
        [extension isEqualToString:@"pct"] ||
+       [extension isEqualToString:@"bmp"] ||
        [extension isEqualToString:@"gif"])
     {
         NSImage		*otherImage = [[NSImage alloc] initWithContentsOfFile:filePath];
@@ -1054,7 +1071,19 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
         {
             // Try to identify a 2 digit number in the last part of the file.
             char				strNo[ 5];
-            NSString			*tempString = [[filePath lastPathComponent] stringByDeletingPathExtension];
+            // The name the file arrived with, when the database copied it in
+            // under a number of its own. Everything below makes the object's
+            // identity out of this name - and a trailing number is what turns
+            // scan001.jpg, scan002.jpg, ... into one series - so reading the
+            // stored number instead put every raster file in one series.
+            NSString			*importedName = nil;
+#ifndef DECOMPRESS_APP
+            importedName = [HorosImportedFileNames nameForPath: filePath];
+#endif
+            if( importedName.length == 0)
+                importedName = [filePath lastPathComponent];
+            
+            NSString			*tempString = [importedName stringByDeletingPathExtension];
             
 #ifndef STATIC_DICOM_LIB
 #ifndef OSIRIX_LIGHT
@@ -1160,23 +1189,23 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
             }
             else
             {
-                imageID = [[NSString alloc] initWithString:[filePath lastPathComponent]];
-                SOPUID = [[NSString alloc] initWithString:[filePath lastPathComponent]];
-                self.serieID = [filePath lastPathComponent];
-                studyID = [[NSString alloc] initWithString:[filePath lastPathComponent]];
+                imageID = [[NSString alloc] initWithString:importedName];
+                SOPUID = [[NSString alloc] initWithString:importedName];
+                self.serieID = importedName;
+                studyID = [[NSString alloc] initWithString:importedName];
             }
             
-            name = [[NSString alloc] initWithString:[filePath lastPathComponent]];
+            name = [[NSString alloc] initWithString:importedName];
             patientID = [[NSString alloc] initWithString:name];
-            study = [[NSString alloc] initWithString:[filePath lastPathComponent]];
+            study = [[NSString alloc] initWithString:importedName];
             Modality = [[NSString alloc] initWithString:extension];
             date = [[[[NSFileManager defaultManager] attributesOfItemAtPath: filePath error: nil] fileCreationDate] retain];
             if( date == nil) date = [[NSDate date] retain];
-            serie = [[NSString alloc] initWithString:[filePath lastPathComponent]];
+            serie = [[NSString alloc] initWithString:importedName];
             fileType = [@"IMAGE" retain];
             
             if( NoOfFrames > 1) // SERIES ID MUST BE UNIQUE!!!!!
-                self.serieID = [NSString stringWithFormat:@"%@-%@-%@", self.serieID, imageID, [filePath lastPathComponent]];
+                self.serieID = [NSString stringWithFormat:@"%@-%@-%@", self.serieID, imageID, importedName];
             
             NoOfSeries = 1;
             
@@ -2048,12 +2077,10 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
         [aTask setEnvironment:[NSDictionary dictionaryWithObject:[[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"/dicom.dic"] forKey:@"DCMDICTPATH"]];
         [aTask setLaunchPath: [[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent: @"/dsr2html"]];
         [aTask setArguments: [NSArray arrayWithObjects: @"+X1", @"--unknown-relationship", @"--ignore-constraints", @"--ignore-item-errors", @"--skip-invalid-items", filePath, htmlpath, nil]];
-        [aTask launch];
-        while( [aTask isRunning])
-            [NSThread sleepForTimeInterval: 0.1];
         
-        //[aTask waitUntilExit];		// <- This is VERY DANGEROUS : the main runloop is continuing...
-        [aTask interrupt];
+        NSError *taskError = nil;
+        if( HorosRunTaskUntilExit( aTask, 60, &taskError) == NO)
+            NSLog( @"****** dsr2html failed: %@", taskError.localizedDescription);
     }
     
     if( [[NSFileManager defaultManager] fileExistsAtPath: [htmlpath stringByAppendingPathExtension: @"pdf"]] == NO)
@@ -2063,13 +2090,10 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
             NSTask *aTask = [[[NSTask alloc] init] autorelease];
             [aTask setLaunchPath: [[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"/Decompress"]];
             [aTask setArguments: [NSArray arrayWithObjects: htmlpath, @"pdfFromURL", nil]];
-            [aTask launch];
-            NSTimeInterval start = [NSDate timeIntervalSinceReferenceDate];
-            while( [aTask isRunning] && [NSDate timeIntervalSinceReferenceDate] - start < 10)
-                [NSThread sleepForTimeInterval: 0.1];
             
-            //[aTask waitUntilExit];		// <- This is VERY DANGEROUS : the main runloop is continuing...
-            [aTask interrupt];
+            NSError *taskError = nil;
+            if( HorosRunTaskUntilExit( aTask, 10, &taskError) == NO)
+                NSLog( @"****** Decompress pdfFromURL failed: %@", taskError.localizedDescription);
         }
     }
     
@@ -2080,24 +2104,16 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
     return nil;
 }
 
--(short) getDicomFilePapyrus :(BOOL) forceConverted
-{
-    return -1;
-}
-
 -(short) getDicomFile
 {
-    BOOL isCD = NO;
-    
-    if( PREFERPAPYRUSFORCD)
-        isCD = filesAreFromCDMedia;
-    
-    if( TOOLKITPARSER == 1 || isCD == YES) return [self getDicomFilePapyrus: NO];
-    
-    if( TOOLKITPARSER == 0) return [self getDicomFilePapyrus: NO];
-    
-    if( TOOLKITPARSER == 2) return [self getDicomFileDCMTK];
-    
+    // Papyrus was taken out of the project and -getDicomFilePapyrus: was left behind
+    // as a stub returning -1, which -init: reads as "I cannot read this file". The
+    // PREFERPAPYRUSFORCD preference was registered as 1 and sent every file read
+    // from a mounted CD or DVD down that route, so scanning a disc added nothing to
+    // the database and said nothing about why. Nobody could turn it off either: the
+    // checkbox bound to it sat in the General preference pane's hidden "DICOM
+    // Toolkits" box.
+    // DCMTK is the only parser left; it reads discs as it reads everything else.
     return [self getDicomFileDCMTK];
 }
 
@@ -2284,11 +2300,23 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
     }
     
     if( gUsePatientBirthDateForUID)
-        patientBirthDate = [Horos:[NSDate dateWithTimeIntervalSinceReferenceDate:[[src valueForKey:@"patientBirthDate"] timeIntervalSinceReferenceDate]] descriptionWithCalendarFormat:@"%Y%m%d"];
+    {
+        // A patient with no date of birth used to be given one: the nil date
+        // became 2001-01-01, and, formatted in local time, 2000-12-31 anywhere
+        // west of UTC. So a study split in two the moment one instance carried
+        // the date and another did not, and two machines in different time
+        // zones disagreed about which patient an instance belonged to. An
+        // unknown component is empty.
+        NSDate *birthDate = [src valueForKey:@"patientBirthDate"];
+        if( [birthDate isKindOfClass: [NSDate class]])
+            patientBirthDate = [Horos:[NSDate dateWithTimeIntervalSinceReferenceDate:[birthDate timeIntervalSinceReferenceDate]] descriptionWithCalendarFormat:@"%Y%m%d"];
+    }
 
     if( gUsePatientIDForUID)
         patientID = [src valueForKey:@"patientID"];
     
+    // Kept as a format string rather than a call into HorosPatientIdentity:
+    // this file is compiled into the Decompress helper too, which has no Swift.
     NSString *string = [NSString stringWithFormat:@"%@-%@-%@", patientName, patientID, patientBirthDate];
     
     return [[DicomFile NSreplaceBadCharacter: string] uppercaseString];

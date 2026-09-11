@@ -851,6 +851,7 @@ static NSHost *currentHost = nil;
 	[defaultValues setObject:@"6" forKey:@"PETWLWWTOSUV"];
 	[defaultValues setObject:@"0" forKey:@"EXPORTMATRIXFOR3D"];
 	[defaultValues setObject:@"0" forKey:@"ROITEXTNAMEONLY"];
+    [defaultValues setObject:@NO forKey:@"ROIPRIMARYMEASUREMENTONLY"];
 	[defaultValues setObject:@"0" forKey:@"DEFAULTLEFTTOOL"];	// WL TOOL
 	[defaultValues setObject:@"2" forKey:@"DEFAULTRIGHTTOOL"];	// ZOOM TOOL
 	[defaultValues setObject:@"1" forKey:@"AUTOCLEANINGSPACE"];
@@ -983,6 +984,9 @@ static NSHost *currentHost = nil;
 	[defaultValues setObject:@"0" forKey:@"AUTOROUTINGACTIVATED"];
 	[defaultValues setObject:@"0" forKey:@"httpXMLRPCServer"];
 	[defaultValues setObject:@"8080" forKey:@"httpXMLRPCServerPort"];
+	// Off: the XML-RPC socket is bound to loopback. Turning it on only takes
+	// effect once a password exists, and then every request is authenticated.
+	[defaultValues setObject:@"0" forKey:@"httpXMLRPCServerAllowRemote"];
 	[defaultValues setObject:@"0" forKey:OsirixWebPortalEnabledDefaultsKey];
 	[defaultValues setObject:@"3333" forKey:OsirixWebPortalPortNumberDefaultsKey];
 	[defaultValues setObject:@"1" forKey:@"StrechWindows"];
@@ -993,7 +997,6 @@ static NSHost *currentHost = nil;
 	[defaultValues setObject: @"1" forKey: @"KeepStudiesOfSamePatientTogetherAndGrouped"];
 	[defaultValues setObject: @"1" forKey: @"USEPAPYRUSDCMPIX4"];
 	[defaultValues setObject: @"2" forKey: @"TOOLKITPARSER4"];	// 0:DCM Framework 1:Papyrus 2:DCMTK
-	[defaultValues setObject: @"1" forKey: @"PREFERPAPYRUSFORCD"];
     [defaultValues setObject: @"20" forKey: @"maximumNumberOfConcurrentDICOMAssociations"];
     [defaultValues setObject: @"10000" forKey: @"maximumNumberOfCFindObjects"];
     [defaultValues setObject: @"0" forKey: @"TryIMAGELevelDICOMRetrieveIfLocalImages"];
@@ -1112,6 +1115,16 @@ static NSHost *currentHost = nil;
 	[defaultValues setObject:@"10" forKey:@"quicktimeExportRateValue"];
     [defaultValues setObject:AVVideoCodecJPEG forKey:@"selectedMenuAVFoundationExport"];
 	[defaultValues setObject:@"0" forKey:@"32bitDICOMAreAlwaysIntegers"];
+
+	// Empty means the standard's default, which is what this always did. A DICOM
+	// term or a code page name here is what a file that states no Specific
+	// Character Set is read as; a file that states one is unaffected.
+	[defaultValues setObject:@"" forKey:@"DefaultCharacterSetWhenAbsent"];
+
+	// A DICOMDIR is supposed to name every instance on the medium; some name
+	// fewer, and what it leaves out is on the disc all the same. Reading the disc
+	// as well costs time and is the only way to be sure nothing is left behind.
+	[defaultValues setObject:@"YES" forKey:@"ScanDiskBeyondDICOMDIR"];
 	[defaultValues setObject:@"1" forKey:@"archiveReportsAndAnnotationsAsDICOMSR"];
 	[defaultValues setObject:@"1" forKey:@"SelectWindowScrollWheel"];
 	[defaultValues setObject:@"1" forKey:@"useDCMTKForJP2K"];
@@ -1119,6 +1132,9 @@ static NSHost *currentHost = nil;
 	[defaultValues setObject:@"1" forKey:@"exportOrientationIn3DExport"];
 	[defaultValues setObject:@"600" forKey:@"WADOTimeout"];
 	[defaultValues setObject:@"10" forKey:@"WADOMaximumConcurrentDownloads"];
+	// How many times a WADO retrieval asks again for the instances that did not
+	// arrive, when the reason was transient. 0 turns it off.
+	[defaultValues setObject:@"1" forKey:@"WADORetryAttempts"];
 	[defaultValues setObject:@"1" forKey:@"autoSelectSourceCDDVD"];
 	[defaultValues setObject:@"1" forKey:@"ScanDiskIfDICOMDIRZero"];
 	[defaultValues setObject:@"1" forKey:@"WebServerTagUploadedStudiesWithUsername"];

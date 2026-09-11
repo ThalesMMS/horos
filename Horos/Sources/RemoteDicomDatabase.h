@@ -50,6 +50,8 @@
 	NSTimeInterval _timestamp;
     dispatch_semaphore_t _connectionsSemaphoreId;
     NSString *password;
+    BOOL _requiresAuthenticatedRequests;
+    BOOL _authenticationKnown;
 }
 
 @property(readonly,retain) NSString* address;
@@ -64,6 +66,8 @@
 -(NSThread*)initiateUpdate;
 
 -(NSString*)cacheDataForImage:(DicomImage*)image maxFiles:(NSInteger)maxFiles;
+// Fetch fresh bytes without deleting the existing cache on failure.
+- (NSString *)refreshCacheDataForImage:(DicomImage *)image;
 -(NSString*)localPathForImage:(DicomImage*)image;
 
 -(void)uploadFilesAtPaths:(NSArray*)paths imageObjects:(NSArray*)images;

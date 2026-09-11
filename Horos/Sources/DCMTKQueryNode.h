@@ -39,7 +39,7 @@
 #import <Cocoa/Cocoa.h>
 #import "DCMTKServiceClassUser.h"
 
-@class DCMCalendarDate;
+@class DCMCalendarDate, HorosRetrieveInventory;
 /** \brief Base class for query nodes */
 @interface DCMTKQueryNode : DCMTKServiceClassUser
 {
@@ -64,8 +64,15 @@
 	BOOL showErrorMessage, firstWadoErrorDisplayed, _dontCatchExceptions, _isAutoRetrieve, _noSmartMode;
 	OFCondition globalCondition;
     NSUInteger _countOfSuboperations, _countOfSuccessfulSuboperations;
+    BOOL _lastQuerySucceeded, _imageInventoryConfirmed;
+    HorosRetrieveInventory *_retrieveInventory;
 }
 
++ (BOOL)verifyDICOMServer:(NSDictionary*)server;
+
+@property(readonly) BOOL lastQuerySucceeded, imageInventoryConfirmed;
+@property(readonly) HorosRetrieveInventory *retrieveInventory;
+- (void)refreshRetrieveInventory;
 @property BOOL dontCatchExceptions;
 @property BOOL isAutoRetrieve;
 @property BOOL noSmartMode;

@@ -39,6 +39,7 @@
 #import "DicomStudy.h"
 #import "DicomImage.h"
 #import "DicomDatabase.h"
+#import "Horos-Swift.h"
 #import "DCMAbstractSyntaxUID.h"
 #import "DCM.h"
 #import "NSImage+OsiriX.h"
@@ -141,16 +142,15 @@
         if( [dict objectForKey: @"value"] == nil || [(NSString*)[dict objectForKey: @"value"] length] == 0)
         {
             
-            [tagAndValues addObjectsFromArray:
-             [NSArray  arrayWithObjects:[DCMAttributeTag tagWithTagString:[dict objectForKey: @"field"]],
-              @"",nil]
+            [tagAndValues addObject:
+             [NSArray  arrayWithObjects:[DCMAttributeTag tagWithTagString:[dict objectForKey: @"field"]], nil]
              ];
             
             //[params addObjectsFromArray: [NSArray arrayWithObjects: @"-e", [dict objectForKey: @"field"], nil]];
         }
         else
         {
-            [tagAndValues addObjectsFromArray:
+            [tagAndValues addObject:
              [NSArray  arrayWithObjects:[DCMAttributeTag tagWithTagString:[dict objectForKey: @"field"]],
               [dict objectForKey: @"value"],nil]
              ];
@@ -439,6 +439,23 @@
                         }
                         else if( [DCMAbstractSyntaxUID isImageStorage: seriesSOPClassUID] || [DCMAbstractSyntaxUID isRadiotherapy: seriesSOPClassUID] || [seriesSOPClassUID length] == 0)
                         {
+                            // A Volcano-shaped IVUS that the pixel stack cannot
+                            // load used to die here on every launch (series icon
+                            // -> loadDICOMDCMFramework). Ask before CheckLoad and
+                            // persist a placeholder so the next database open
+                            // does not retry the crash.
+                            HorosIVUSImportAssessment *ivus = [HorosIVUSImportTriage assessPath: image.completePath];
+                            if (ivus.appliesToFile && ivus.thumbnailCompatible == NO)
+                            {
+                                NSLog( @"---- thumbnail: %@ not loaded (%@)",
+                                      [[image completePath] lastPathComponent],
+                                      ivus.recordedError.length ? ivus.recordedError
+                                          : @"IVUS/US object the thumbnail stack cannot load");
+                                thumbnail = [NSImage imageNamed: @"FileNotFound.tif"];
+                                thumbnailData = [[thumbnail TIFFRepresentation] retain];
+                            }
+                            else
+                            {
                             DCMPix* dcmPix = [[DCMPix alloc] initWithPath: image.completePath :0 :1 :nil :frame :self.id.intValue isBonjour: ![[DicomDatabase databaseForContext:self.managedObjectContext] isLocal] imageObj:image];
                             [dcmPix CheckLoad];
                             
@@ -455,10 +472,16 @@
                             
                             thumbnail = [dcmPix generateThumbnailImageWithWW: [image.series.windowWidth floatValue] WL: [image.series.windowLevel floatValue]];
                             
-                            if (!(dcmPix.notAbleToLoadImage))
+                            if (thumbnail && !(dcmPix.notAbleToLoadImage))
                                 thumbnailData = [[thumbnail JPEGRepresentationWithQuality:0.3] retain]; // autoreleased when returning
+                            else if (thumbnail == nil)
+                            {
+                                thumbnail = [NSImage imageNamed: @"FileNotFound.tif"];
+                                thumbnailData = [[thumbnail TIFFRepresentation] retain];
+                            }
                             
                             [dcmPix release];
+                            }
                         }
                         else
                         {
@@ -789,8 +812,11 @@
         {
 #ifndef OSIRIX_LIGHT
             NSString *vrFile = [VRController getUniqueFilenameScissorStateFor: self];
-            if( vrFile && [[NSFileManager defaultManager] fileExistsAtPath: vrFile])
-                [[NSFileManager defaultManager] removeItemAtPath: vrFile error:NULL];
+            N2ManagedObjectContext *context = (N2ManagedObjectContext *)self.managedObjectContext;
+            if (vrFile && [context respondsToSelector:@selector(performAfterSuccessfulSave:)])
+                [context performAfterSuccessfulSave:^{
+                    [[NSFileManager defaultManager] removeItemAtPath:vrFile error:NULL];
+                }];
 #endif
 
         }

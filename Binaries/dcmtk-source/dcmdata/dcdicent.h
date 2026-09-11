@@ -325,11 +325,16 @@ public:
     }
 
     /** checks if this entry contains the given name
-     *  @param name attribute name, must not be NULL
+     *  @param name attribute name
      *  @return true if tagName matches the given string
      */
     int contains(const char *name) const /* this contains named key */
     {
+        /* An entry built without a name, and a lookup for none, are both
+         * answers of "no", not reasons to walk off the end of memory. Looking a
+         * name up that is not in the dictionary used to segfault here, which a
+         * C-FIND naming an attribute that does not exist could reach. */
+        if (tagName == NULL || name == NULL) return 0;
         return !strcmp( tagName, name );
     }
 

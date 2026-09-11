@@ -1,0 +1,20 @@
+# Run on the main thread of an isolated Horos development process with a 2D viewer open.
+# Samples one point; this is not proof of the entire image or of compositor presentation.
+expr -l objc++ -- @import Cocoa
+expr -l objc++ -- @import OpenGL
+expr -l objc++ -- id $horosViewer = (id)[NSClassFromString(@"ViewerController") frontMostDisplayed2DViewer]
+expr -l objc++ -- id $horosImageView = (id)[$horosViewer imageView]
+expr -l objc++ -- (unsigned long)[(NSWindow*)[$horosViewer window] occlusionState]
+expr -l objc++ -- NSRect $horosBounds = [(NSView*)$horosImageView convertRectToBacking:[(NSView*)$horosImageView bounds]]
+expr -l objc++ -- NSOpenGLContext *$horosPreviousContext = [NSOpenGLContext currentContext]
+expr -l objc++ -- [(NSOpenGLContext*)[$horosImageView openGLContext] makeCurrentContext]
+expr -l objc++ -- int $horosReadBuffer=0; (void)glGetIntegerv(0x0C02,&$horosReadBuffer)
+# Center plus a small offset avoids the crosshair for the synthetic ROI fixture.
+expr -l objc++ -- int $horosX=(int)($horosBounds.size.width*0.53125), $horosY=(int)($horosBounds.size.height*0.55556)
+expr -l objc++ -- unsigned char $horosRGBA[4]={0}; (void)glReadBuffer(0x0404); (void)glReadPixels($horosX,$horosY,1,1,0x1908,0x1401,$horosRGBA); $horosRGBA
+expr -l objc++ -- (void)glReadBuffer(0x0405); (void)glReadPixels($horosX,$horosY,1,1,0x1908,0x1401,$horosRGBA); $horosRGBA
+expr -l objc++ -- (void)glReadBuffer($horosReadBuffer)
+expr -l objc++ -- (unsigned int)glGetError()
+expr -l objc++ -- if ($horosPreviousContext) [$horosPreviousContext makeCurrentContext]; else [NSOpenGLContext clearCurrentContext]
+detach
+quit

@@ -1,3 +1,5 @@
+#include <dcmtk/dcmdata/dcfilefo.h>
+#include <dcmtk/dcmdata/dcdatset.h>
 /*=========================================================================
  This file is part of the Horos Project (www.horosproject.org)
  
@@ -37,6 +39,7 @@
 
 #import "AppController.h"
 #import "SRAnnotation.h"
+#import "HorosAtomicFileWriter.h"
 #import "DCMView.h"
 #import "DCMPix.h"
 #import "BrowserController.h"
@@ -47,8 +50,9 @@
 #import "N2Debug.h"
 #import "DICOMToNSString.h"
 
-#include "osconfig.h"   /* make sure OS specific configuration is included first */
-#include "dsrtypes.h"
+#include "HorosDCMTKCompatibility.h"
+#include <dcmtk/config/osconfig.h>   /* make sure OS specific configuration is included first */
+#include <dcmtk/dcmsr/dsrtypes.h>
 
 @implementation SRAnnotation
 
@@ -63,7 +67,7 @@
 	
 	OFString name;
 	const Uint8 *buffer = nil;
-	unsigned int length;
+	unsigned long length;
 	
 	if (fileformat.getDataset()->findAndGetUint8Array(DCM_EncapsulatedDocument, buffer, &length, OFFalse).good()) //DCM_EncapsulatedDocument
 	{
@@ -98,7 +102,7 @@
 + (NSString*) getImageRefSOPInstanceUID:(NSString*) path;
 {
 	NSString	*result = nil;
-	DSRDocument	*document = new DSRDocument();
+	HorosSRDocument	*document = new HorosSRDocument();
 	
 	OFCondition status = EC_Normal;
 	
@@ -115,7 +119,7 @@
 			DSRCodedEntryValue codedEntryValue = DSRCodedEntryValue("IHE.10", "99HUG", "Image Reference");
 			if (document->getTree().gotoNamedNode (codedEntryValue, OFTrue, OFTrue) > 0 )
 			{
-				DSRImageReferenceValue imageRef = document->getTree().getCurrentContentItem().getImageReference();
+				HorosSRImageReference imageRef = document->getTree().getCurrentContentItem().getImageReference();
 				result = [NSString stringWithFormat:@"%s", imageRef.getSOPInstanceUID().c_str()];
 				
 				if( [result length] > 0)
@@ -133,7 +137,7 @@
 + (NSString*) getReportFilenameFromSR:(NSString*) path;
 {
 	NSString	*result = nil;
-	DSRDocument	*document = new DSRDocument();
+	HorosSRDocument	*document = new HorosSRDocument();
 	
 	OFCondition status = EC_Normal;
 	
@@ -185,7 +189,7 @@
 {
 	self = [super init];
 
-	document = new DSRDocument();
+	document = new HorosSRDocument();
 	document->createNewDocument(DSRTypes::DT_ComprehensiveSR);
 				
 	document->getTree().addContentItem(DSRTypes::RT_isRoot, DSRTypes::VT_Container);
@@ -207,7 +211,7 @@
 		[_DICOMSRDescription retain];
 		[_DICOMSeriesNumber retain];
 		
-		document = new DSRDocument();
+		document = new HorosSRDocument();
 		_newSR = NO;
 		OFCondition status = EC_Normal;
 		
@@ -257,7 +261,7 @@
 		[_DICOMSRDescription retain];
 		[_DICOMSeriesNumber retain];
 		
-		document = new DSRDocument();
+		document = new HorosSRDocument();
 		_newSR = NO;
 		OFCondition status = EC_Normal;
 		
@@ -312,7 +316,7 @@
 		[_DICOMSRDescription retain];
 		[_DICOMSeriesNumber retain];
 		
-		document = new DSRDocument();
+		document = new HorosSRDocument();
 		_newSR = NO;
 		OFCondition status = EC_Normal;
 		
@@ -356,7 +360,7 @@
 		[_DICOMSRDescription retain];
 		[_DICOMSeriesNumber retain];
 		
-		document = new DSRDocument();
+		document = new HorosSRDocument();
 		_newSR = NO;
 		OFCondition status = EC_Normal;
 		
@@ -400,7 +404,7 @@
     
 	if (self = [super init])
 	{
-		document = new DSRDocument();
+		document = new HorosSRDocument();
 		OFCondition status = EC_Normal;
 		
 		// load data
@@ -412,7 +416,7 @@
 				status = document->read(*fileformat.getDataset());
 				
 			const Uint8 *buffer;
-			unsigned int length;
+			unsigned long length;
 			if (fileformat.getDataset()->findAndGetUint8Array(DCM_EncapsulatedDocument, buffer, &length, OFFalse).good())
 			{
 				@try
@@ -476,7 +480,7 @@
 		
 		_contentDate = [[NSDate date] retain];
 		
-		document = new DSRDocument();
+		document = new HorosSRDocument();
 		_newSR = NO;
 		OFCondition status = EC_Normal;
 		
@@ -703,13 +707,14 @@
 	document->getTree().addContentItem(DSRTypes::RT_contains, DSRTypes::VT_Image, DSRTypes::AM_belowCurrent);
 	document->getTree().getCurrentContentItem().setConceptName(DSRCodedEntryValue("IHE.10", "99HUG", "Image Reference"));
 
-	DSRImageReferenceValue imageRef( refsopClassUID, refsopInstanceUID);
+	HorosSRImageReference imageRef( refsopClassUID, refsopInstanceUID);
 	
 	// add frame reference
 	imageRef.getFrameList().putString([[[image valueForKey: @"frameID"] stringValue] UTF8String]);
 	document->getTree().getCurrentContentItem().setImageReference( imageRef);
 	document->getTree().goUp(); // go up to the root element
 	
+    BOOL written = NO;
 	OFCondition status = EC_Normal;
 	DcmFileFormat *fileformat = new DcmFileFormat();
 	DcmDataset *dataset = NULL;
@@ -729,25 +734,25 @@
 		}
 		
 		document->getCodingSchemeIdentification().addPrivateDcmtkCodingScheme();
-		if (document->write(*dataset).good())
+		if (status.good() && document->write(*dataset).good())
 		{
 			if( _seriesInstanceUID)
 				status = dataset->putAndInsertString(DCM_SeriesInstanceUID, [_seriesInstanceUID UTF8String], OFTrue);
 				
-			OFCondition cond = fileformat->saveFile( path.fileSystemRepresentation, EXS_LittleEndianExplicit);
-            if( cond.good())
-            {
-                
+            if (status.good()) {
+                written = HorosWriteFileAtomically(path, ^BOOL(NSString *prepared) {
+                    OFCondition result = fileformat->saveFile(prepared.fileSystemRepresentation, EXS_LittleEndianExplicit);
+                    if (result.bad()) NSLog(@"Failed to serialize DICOM SR: %s", result.text());
+                    return result.good();
+                });
             }
-            else
-                NSLog( @"failed to write file : %@ : %s", path, cond.text());
 		}
 	}
 	
 	if( fileformat)
 		delete fileformat;
 	
-	return YES;
+	return written;
 }
 
 - (NSString *)seriesInstanceUID

@@ -50,6 +50,10 @@
 
 - (void) drawRect:(NSRect)aRect
 {
+	// The selection frame follows the view, not the area needing redraw: a
+	// partial redraw drew it in the wrong place, and since macOS 14 NSView no
+	// longer clips drawing to its bounds, an oversized one drew it outside.
+	aRect = self.bounds;
 	NSRect insideRect = NSMakeRect(aRect.origin.x+1,aRect.origin.y+1,aRect.size.width-2,aRect.size.height-2);
 	NSBezierPath *outsidePath = [NSBezierPath bezierPathWithRect:aRect];
 	NSBezierPath *insidePath = [NSBezierPath bezierPathWithRect:insideRect];

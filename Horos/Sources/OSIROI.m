@@ -67,10 +67,10 @@
     NSColor *color = nil;
     
     for (ROI *roi in osiriXROIs) {
+        // Match the setter's ROI types throughout aggregation, regardless of set order.
+        if ([roi type] != tPlain) continue;
         if (color == nil) {
-            if ([roi type] == tPlain) {
-                color = [[roi NSColor] colorWithAlphaComponent:[roi opacity]];
-            }
+            color = [[roi NSColor] colorWithAlphaComponent:[roi opacity]];
         } else if ([color isEqual:[roi NSColor]] == NO) {
             return nil;
         }
@@ -98,10 +98,10 @@
     NSColor *color = nil;
     
     for (ROI *roi in osiriXROIs) {
+        // Match the setter's ROI types throughout aggregation, regardless of set order.
+        if ([roi type] == tPlain) continue;
         if (color == nil) {
-            if ([roi type] != tPlain) {
-                color = [[roi NSColor] colorWithAlphaComponent:[roi opacity]];
-            }
+            color = [[roi NSColor] colorWithAlphaComponent:[roi opacity]];
         } else if ([color isEqual:[roi NSColor]] == NO) {
             return nil;
         }

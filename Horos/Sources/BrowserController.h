@@ -77,12 +77,13 @@ extern NSString * const O2PasteboardTypeDatabaseObjectXIDs;
 <NSTableViewDelegate, NSDrawerDelegate, NSMatrixDelegate, NSToolbarDelegate, NSMenuDelegate,NSSplitViewDelegate>   //NSObject
 #endif
 {
+    NSRect _databaseWindowedFrame;
+
     DicomDatabase*					_database;
     NSMutableDictionary				*databaseIndexDictionary;
     
     NSDateFormatter			*TimeFormat, *TimeWithSecondsFormat, *DateTimeWithSecondsFormat;
     
-    NSRect					visibleScreenRect[ 40];
     NSString				*transferSyntax;
     NSArray                 *dirArray;
     NSToolbar               *toolbar;
@@ -199,6 +200,7 @@ extern NSString * const O2PasteboardTypeDatabaseObjectXIDs;
     NSPredicate						*testPredicate;
     
     BOOL							showAllImages, DatabaseIsEdited, isNetworkLogsActive;
+    BOOL                            _refreshDeferredWhileEditing;
     NSConditionLock					*queueLock;
     
     IBOutlet NSScrollView			*thumbnailsScrollView;
@@ -293,6 +295,9 @@ extern NSString * const O2PasteboardTypeDatabaseObjectXIDs;
 }
 
 @property(retain,nonatomic) DicomDatabase* database;
+/// Why the last study asked for did not open, for the caller that is waiting
+/// on it to say so. Cleared as soon as one is selected.
+@property(copy) NSString *lastStudyNotOpenedReason;
 @property(readonly) NSArrayController* sources;
 
 @property(readonly) NSDateFormatter *DateTimeFormat __deprecated, *DateOfBirthFormat __deprecated, *TimeFormat, *TimeWithSecondsFormat, *DateTimeWithSecondsFormat;
@@ -326,6 +331,7 @@ extern NSString * const O2PasteboardTypeDatabaseObjectXIDs;
 + (int) compressionForModality: (NSString*) mod quality:(int*) quality resolution: (int) resolution;
 + (BrowserController*) currentBrowser;
 + (NSMutableString*) replaceNotAdmitted: (NSString*)name;
++ (NSMutableString*) replaceNotAdmitted:(NSString*)name preserveHyphens:(BOOL)preserveHyphens;
 + (NSArray*) statesArray;
 + (void) updateActivity;
 + (BOOL) horizontalHistory;
@@ -336,6 +342,8 @@ extern NSString * const O2PasteboardTypeDatabaseObjectXIDs;
 + (void) encryptFileOrFolder: (NSString*) srcFolder inZIPFile: (NSString*) destFile password: (NSString*) password;
 + (void) encryptFileOrFolder: (NSString*) srcFolder inZIPFile: (NSString*) destFile password: (NSString*) password deleteSource: (BOOL) deleteSource;
 + (void) encryptFileOrFolder: (NSString*) srcFolder inZIPFile: (NSString*) destFile password: (NSString*) password deleteSource: (BOOL) deleteSource showGUI: (BOOL) showGUI;
++ (BOOL) prepareProtectedEmailAttachment:(NSString*)source destination:(NSString*)destination password:(NSString*)password error:(NSError**)error;
++ (BOOL) encryptFileOrFolder:(NSString*)srcFolder inZIPFile:(NSString*)destFile password:(NSString*)password deleteSource:(BOOL)deleteSource showGUI:(BOOL)showGUI error:(NSError**)error;
 + (void) encryptFiles: (NSArray*) srcFiles inZIPFile: (NSString*) destFile password: (NSString*) password;
 - (IBAction) createDatabaseFolder:(id) sender;
 - (IBAction) addAlbum:(id)sender;
@@ -403,7 +411,9 @@ extern NSString * const O2PasteboardTypeDatabaseObjectXIDs;
 - (IBAction) matrixDoublePressed:(id)sender;
 - (void) addURLToDatabaseEnd:(id) sender;
 - (void) addURLToDatabase:(id) sender;
+- (NSThread*)importURLs:(NSArray*)URLs completion:(void (^)(NSArray*, NSString*, BOOL))completion;
 - (NSArray*) addURLToDatabaseFiles:(NSArray*) URLs;
+- (NSArray*) addURLToDatabaseFiles:(NSArray*) URLs report: (NSString**) report;
 - (BOOL) findAndSelectFile: (NSString*) path image: (DicomImage*) curImage shouldExpand: (BOOL) expand;
 - (BOOL) findAndSelectFile: (NSString*) path image: (DicomImage*) curImage shouldExpand: (BOOL) expand extendingSelection: (BOOL) extendingSelection;
 - (void) selectServer: (NSArray*) files;
@@ -427,6 +437,8 @@ extern NSString * const O2PasteboardTypeDatabaseObjectXIDs;
 - (void) delObjects:(NSMutableArray*) objectsToDelete;
 - (IBAction) selectFilesAndFoldersToAdd:(id) sender;
 - (IBAction) showDatabase:(id)sender;
+- (IBAction)fullScreenMenu:(id)sender;
+- (void)recoverWindowsAfterScreenChange;
 - (BOOL) displayStudy: (DicomStudy*) study object:(NSManagedObject*) element command:(NSString*) execute;
 - (IBAction) matrixPressed:(id)sender;
 - (void) loadDatabase:(NSString*) path __deprecated;
@@ -464,6 +476,11 @@ extern NSString * const O2PasteboardTypeDatabaseObjectXIDs;
 - (IBAction)search: (id)sender;
 - (IBAction)setSearchType: (id)sender;
 - (IBAction) saveDBListAs:(id) sender;
+- (void) buildMetadataExportMenuItem;
+- (IBAction) exportStudyMetadataAsCSV: (id) sender;
+- (IBAction) exportStudiesByIdentifierList: (id) sender;
+- (NSString*) exportStudiesForIdentifiers: (NSArray*) identifiers toDirectory: (NSString*) directory dryRun: (BOOL) dryRun;
+- (NSString*) metadataCSVForColumns: (NSArray*) columns onlySelected: (BOOL) onlySelected;
 - (IBAction) openDatabase:(id) sender;
 - (void) checkReportsDICOMSRConsistency __deprecated;
 - (void) openDatabaseIn:(NSString*) a Bonjour:(BOOL) isBonjour __deprecated;
@@ -537,6 +554,7 @@ extern NSString * const O2PasteboardTypeDatabaseObjectXIDs;
 - (void) displayBonjourServices;
 - (NSString*) askPassword;
 - (void) resetToLocalDatabase;
+- (void) completeFirstUseDatabaseSetup;
 - (void) switchToDefaultDBIfNeeded __deprecated;
 - (void) checkIncomingThread:(id) sender __deprecated;
 - (void) checkIncoming:(id) sender __deprecated;
@@ -561,16 +579,27 @@ extern NSString * const O2PasteboardTypeDatabaseObjectXIDs;
 - (void)setFilterPredicate:(NSPredicate *)predicate description:(NSString*) desc;
 - (NSPredicate *)createFilterPredicate;
 - (NSString *)createFilterDescription;
++ (NSArray *)federatedStudiesMatchingPredicate:(NSPredicate *)predicate excludingDatabasePath:(NSString *)path applyingUser:(id)user;
++ (NSArray *)federatedSourceCatalog;
 - (void) willChangeContext;
 
 - (IBAction) deleteReport: (id) sender;
 - (IBAction) convertReportToPDF: (id)sender;
 - (IBAction) convertReportToDICOMSR: (id)sender;
 
++ (void)installAutomaticCleanupPreviewMenu;
++ (void)installSurgicalProcedureImportMenu;
+- (IBAction)importSurgicalProcedureLog:(id)sender;
+- (NSArray *)surgicalProcedureTimelineEvents;
+- (IBAction)showSurgicalProcedureTimeline:(id)sender;
+- (IBAction)previewAutomaticCleanup:(id)sender;
+
 - (IBAction) rebuildThumbnails:(id) sender;
 - (IBAction)selectNoAlbums:(id)sender;
 - (void) selectAlbumWithName: (NSString*) name;
 - (NSArray *)databaseSelection;
+- (void)printDatabaseSelection:(id)sender;
+- (void)printDatabaseSpool:(id)spool;
 
 + (void) asyncWADOXMLDownloadURL:(NSURL*) url;
 
@@ -586,6 +615,9 @@ extern NSString * const O2PasteboardTypeDatabaseObjectXIDs;
 - (IBAction) compressSelectedFiles:(id) sender;
 - (IBAction) decompressSelectedFiles:(id) sender;
 - (void) importReport:(NSString*) path UID: (NSString*) uid;
+- (BOOL) importReport:(NSString*) path UID:(NSString*) uid error:(NSError**) error;
+- (IBAction)attachExistingReport:(id)sender;
+- (IBAction)insertSelectedImagesIntoReport:(id)sender;
 - (IBAction) generateReport: (id) sender;
 - (IBAction)importRawData:(id)sender;
 - (void) pdfPreview:(id)sender;

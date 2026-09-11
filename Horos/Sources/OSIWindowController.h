@@ -70,6 +70,7 @@ enum OsiriXBlendingTypes {BlendingPlugin = -1, BlendingFusion = 1, BlendingSubtr
 
 + (BOOL) dontWindowDidChangeScreen;
 + (void) setDontEnterWindowDidChangeScreen:(BOOL) a;
++ (BOOL) dontEnterMagneticFunctions;
 + (void) setDontEnterMagneticFunctions:(BOOL) a;
 - (void) setMagnetic:(BOOL) a;
 - (BOOL) magnetic;

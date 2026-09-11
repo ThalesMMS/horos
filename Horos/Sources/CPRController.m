@@ -35,6 +35,7 @@
      PURPOSE.
  ============================================================================*/
 
+#import "Horos-Swift.h"
 #import "options.h"
 
 #import "CPRController.h"
@@ -158,8 +159,7 @@ static float deg2rad = M_PI / 180.0;
             
             if( succeed == NO)
             {
-                if( NSRunAlertPanel( NSLocalizedString(@"32-bit",nil), NSLocalizedString( @"Cannot compute the high resolution data.\r\rUpgrade to Horos 64-bit or Horos MD to solve this issue.",nil), NSLocalizedString(@"OK", nil), NSLocalizedString(@"Horos 64-bit", nil), nil) == NSAlertAlternateReturn)
-                    [[AppController sharedAppController] osirix64bit: self];
+                NSRunAlertPanel( NSLocalizedString( @"Not enough memory", nil), NSLocalizedString( @"Cannot compute the high resolution data.\r\rClose other studies, or increase the resample voxel size in the settings. Nothing was reduced silently.", nil), NSLocalizedString( @"OK", nil), nil, nil);
                 
                 [HR_PixList release];
                 HR_PixList = nil;
@@ -490,7 +490,7 @@ static float deg2rad = M_PI / 180.0;
 		undoQueue = [[NSMutableArray alloc] initWithCapacity: 0];
 		redoQueue = [[NSMutableArray alloc] initWithCapacity: 0];
 		
-		[self setToolIndex: tWL];
+		[self selectCurvedPathDrawingTool];
         
         self.cprType = [[NSUserDefaults standardUserDefaults] integerForKey: @"SavedCPRType"];
         
@@ -559,6 +559,8 @@ static float deg2rad = M_PI / 180.0;
 
 - (void) showWindow:(id) sender
 {
+	[HorosCPRRenderLifecycle reset];
+	[HorosCPRRenderLifecycle beginOpeningResampled: HR_PixList != nil];
 	mprView1.dontUseAutoLOD = YES;
 	mprView2.dontUseAutoLOD = YES;
 	mprView3.dontUseAutoLOD = YES;
@@ -608,8 +610,10 @@ static float deg2rad = M_PI / 180.0;
 	[mprView3 updateViewMPROnLoading:isInitializing];
 	
 	[super showWindow: sender];
+	[HorosCPRRenderLifecycle markOpen];
 	
 	[self setTool: toolsMatrix];
+	[self selectCurvedPathDrawingTool];
 	
 	if( c == NO)
 		[[NSUserDefaults standardUserDefaults] setBool: c forKey: @"syncZoomLevelMPR"];
@@ -817,6 +821,12 @@ static float deg2rad = M_PI / 180.0;
 - (NSArray*) pixList
 {
 	return pixList[ curMovieIndex];
+}
+
+- (void)selectCurvedPathDrawingTool
+{
+	[toolsMatrix selectCellWithTag: tCurvedROI];
+	[self setToolIndex: tCurvedROI];
 }
 
 - (void) setToolIndex: (ToolMode) toolIndex
@@ -1136,6 +1146,8 @@ static float deg2rad = M_PI / 180.0;
 	}
 	else if(c == 27) // 27 : escape
 	{
+		if ([cprView cancelStraightenedGeneration])
+			return;
 		if( FullScreenOn)
 			[self fullScreenMenu:self];
 		else
@@ -1214,7 +1226,7 @@ static float deg2rad = M_PI / 180.0;
             }
             else if(err == ERROR_NOENOUGHMEM)
             {
-                NSRunAlertPanel(NSLocalizedString(@"32-bit", nil), NSLocalizedString(@"Path Assistant can not allocate enough memory, try to increase the resample voxel size in the settings.", nil), NSLocalizedString(@"OK", nil), nil, nil);
+                NSRunAlertPanel(NSLocalizedString(@"Not enough memory", nil), NSLocalizedString(@"Path Assistant can not allocate enough memory, try to increase the resample voxel size in the settings.", nil), NSLocalizedString(@"OK", nil), nil, nil);
             }
             else if(err == ERROR_CANNOTFINDPATH)
             {
@@ -3597,7 +3609,7 @@ static float deg2rad = M_PI / 180.0;
 - (IBAction) loadBezierPath: (id) sender;
 {
     NSOpenPanel *oPanel = [NSOpenPanel openPanel];
-    [oPanel setAllowedFileTypes:@[@"curvedPath"]];
+    [oPanel setAllowedFileTypes:@[@"curvedPath", @"txt", @"xyz", @"csv"]];
     
     [oPanel beginWithCompletionHandler:^(NSInteger result) {
         if (result != NSFileHandlingPanelOKButton)
@@ -3619,7 +3631,14 @@ static float deg2rad = M_PI / 180.0;
     NSData *data = [NSData dataWithContentsOfFile: path];
     if( data)
     {
-        CPRCurvedPath *newCurvedPath = [NSKeyedUnarchiver unarchiveObjectWithData: data];
+        CPRCurvedPath *newCurvedPath = nil;
+        @try {
+            id object = [NSKeyedUnarchiver unarchiveObjectWithData: data];
+            if ([object isKindOfClass:[CPRCurvedPath class]])
+                newCurvedPath = object;
+        } @catch (NSException *exception) {
+            newCurvedPath = nil;
+        }
         
         if( newCurvedPath)
         {
@@ -3634,8 +3653,51 @@ static float deg2rad = M_PI / 180.0;
 			bottomTransverseView.curvedPath = curvedPath;
             
             self.clippingRangeThicknessInMm = curvedPath.thickness;
+            return;
         }
     }
+    [self importPatientSpaceCenterlineFromFile: path];
+}
+
+- (BOOL)importPatientSpaceCenterlineFromFile:(NSString*)path
+{
+    NSString *text = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:NULL];
+    if (text == nil)
+        text = [NSString stringWithContentsOfFile:path encoding:NSISOLatin1StringEncoding error:NULL];
+    if (text == nil)
+        return NO;
+
+    HorosCPRCenterlineImportResult *result = [HorosCPRCenterlineImport importPatientSpaceText:text];
+    if (result.accepted == NO)
+    {
+        NSLog(@"CPR centerline import refused: %@", result.diagnosis);
+        return NO;
+    }
+
+    CPRCurvedPath *newCP = [[[CPRCurvedPath alloc] init] autorelease];
+    NSArray *packed = result.packedNodes;
+    NSUInteger count = [packed count];
+    for (NSUInteger i = 0; i + 2 < count; i += 3)
+    {
+        N3Vector node = N3VectorMake([[packed objectAtIndex:i] doubleValue],
+                                    [[packed objectAtIndex:i + 1] doubleValue],
+                                    [[packed objectAtIndex:i + 2] doubleValue]);
+        [newCP addPatientNode:node];
+    }
+    if ([newCP.nodes count] < 3)
+        return NO;
+
+    self.curvedPath = newCP;
+    self.curvedPathCreationMode = NO;
+    mprView1.curvedPath = curvedPath;
+    mprView2.curvedPath = curvedPath;
+    mprView3.curvedPath = curvedPath;
+    cprView.curvedPath = curvedPath;
+    topTransverseView.curvedPath = curvedPath;
+    middleTransverseView.curvedPath = curvedPath;
+    bottomTransverseView.curvedPath = curvedPath;
+    self.clippingRangeThicknessInMm = curvedPath.thickness;
+    return YES;
 }
 
 #pragma mark NSWindow Notifications action
@@ -3667,6 +3729,7 @@ static float deg2rad = M_PI / 180.0;
 		[[self window] setAcceptsMouseMovedEvents: NO];
 		
 		windowWillClose = YES;
+		[HorosCPRRenderLifecycle beginClosing];
 		
 		[[NSUserDefaults standardUserDefaults] setBool: self.displayMousePosition forKey: @"MPRDisplayMousePosition"];
         [[NSUserDefaults standardUserDefaults] setInteger: self.cprType forKey: @"SavedCPRType"];
@@ -3689,6 +3752,7 @@ static float deg2rad = M_PI / 180.0;
 		[hiddenVRController release];
 		
 		[ob setContent: nil];	// To allow the dealloc of CPRController ! otherwise memory leak
+		[HorosCPRRenderLifecycle markClosed];
 		
 		[self autorelease];
 	}
@@ -4072,6 +4136,10 @@ static float deg2rad = M_PI / 180.0;
         }
     }
     
+    // Plugins supply their own items, so normalize after they had their turn.
+    if( toolbarItem)
+        [HorosToolbarPolicy prepareItem: toolbarItem];
+    
 	return toolbarItem;
 }
 
@@ -4450,10 +4518,13 @@ static float deg2rad = M_PI / 180.0;
 	[curvedPathColor release];
 	
 	if( curvedPathCreationMode)
+	{
 		curvedPathColor = [NSColor colorWithDeviceRed: 1.0
                                                  green: 0.1
                                                   blue: 0
                                                  alpha:1];
+		[self selectCurvedPathDrawingTool];
+	}
 	else
 		curvedPathColor = [NSColor colorWithDeviceRed:[[NSUserDefaults standardUserDefaults] floatForKey: @"CPRColorR"]
                                                  green:[[NSUserDefaults standardUserDefaults] floatForKey: @"CPRColorG"]

@@ -42,6 +42,7 @@
 {
 }
 
++ (BOOL) dontConstrainWindow;
 + (void) setDontConstrainWindow: (BOOL) v;
 
 @end

@@ -39,8 +39,8 @@
 #import "DCM.h"
 
 #undef verify
-#include "dcdatset.h"
-#include "ofcond.h"
+#include <dcmtk/dcmdata/dcdatset.h>
+#include <dcmtk/ofstd/ofcond.h>
 
 //NSString * const OsiriXFileReceivedNotification;
 
@@ -90,5 +90,6 @@
 - (int)moveMatchFound;
 
 - (OFCondition)nextFindObject:(DcmDataset *)dataset  isComplete:(BOOL *)isComplete;
+- (void)cancelMove;
 - (OFCondition)nextMoveObject:(char *)imageFileName;
 @end

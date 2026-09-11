@@ -36,8 +36,7 @@
  ============================================================================*/
 
 #import "WebPortalSession.h"
-#import "DDData.h"
-#import "NSData+N2.h"
+#import "Horos-Swift.h"
 
 
 NSString* const SessionCookieName = @"OSID";
@@ -97,11 +96,15 @@ NSString* const SessionLastActivityDateKey = @"LastActivityDate"; // NSDate
 	NSMutableDictionary* tokensDictionary = [self tokensDictionary];
 	[dictLock lock];
 	
+	// A token authorises a Weasis launch on this session's behalf. It used to be
+	// the MD5 of the instant it was created, so guessing it meant guessing when it
+	// was made rather than searching the 128 bits its length suggests. The loop
+	// stays as the invariant it always was - two live tokens are never equal - and
+	// with random bytes it ends on the first pass.
 	NSString* token;
-	double tokend;
-	do { // is this a dumb way to generate tokens?
-		tokend = [NSDate timeIntervalSinceReferenceDate];
-	} while ([[tokensDictionary allKeys] containsObject: token = [[[NSData dataWithBytes:&tokend length:sizeof(double)] md5Digest] hex]]);
+	do {
+		token = [HorosWebPortalIdentifier unguessable];
+	} while ([tokensDictionary objectForKey: token] != nil);
 	
 	[tokensDictionary setObject:[NSDate date] forKey:token];
 	
@@ -146,8 +149,8 @@ NSString* const SessionLastActivityDateKey = @"LastActivityDate"; // NSDate
 }
 
 -(NSString*)newChallenge {
-	double challenged = [NSDate timeIntervalSinceReferenceDate];
-	NSString* challenge = [[[NSData dataWithBytes:&challenged length:sizeof(double)] md5Digest] hex];
+	// Built the same way as the token was, and replaced for the same reason.
+	NSString* challenge = [HorosWebPortalIdentifier unguessable];
 	[dict setObject:challenge forKey:SessionChallengeKey];
 	return challenge;
 }

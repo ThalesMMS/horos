@@ -116,6 +116,7 @@ enum
 	QueryArrayController					*queryManager;
 	
 	BOOL									autoQuery, queryButtonPressed, performingCFind, avoidQueryControllerDeallocReentry;
+	NSSize									designedMinimumSize;
 	
 	NSInteger								autoRefreshQueryResults;
 	NSRecursiveLock							*autoQueryLock;
@@ -202,6 +203,7 @@ enum
 - (NSArray*) localStudy:(id) item context: (NSManagedObjectContext*) context;
 - (IBAction) endAddPreset:(id) sender;
 - (void) buildPresetsMenu;
+- (IBAction) fullScreenMenu:(id) sender;
 - (IBAction) autoQueryTimer:(id) sender;
 - (IBAction) switchAutoRetrieving: (id) sender;
 - (IBAction) selectModality: (id) sender;

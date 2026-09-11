@@ -90,14 +90,25 @@
 	
 	if( [command isEqualToString:@"DownloadURLFile"])
 	{
-		NSString	*url = [[self arguments] objectForKey:@"URL"];
-		
-		NSArray	*files = [[BrowserController currentBrowser] addURLToDatabaseFiles: [NSArray arrayWithObject: [NSURL URLWithString:url]]];
-		
-		if( [[BrowserController currentBrowser] findAndSelectFile: [[files objectAtIndex:0] valueForKey:@"completePath"] image: nil shouldExpand: NO])
-		{
-			NSLog(@"done!");
-		}
+        NSURL *url = [NSURL URLWithString: [[self arguments] objectForKey:@"URL"]];
+        if( !url)
+        {
+            [self setScriptErrorNumber: errOSAGeneralError];
+            [self setScriptErrorString: @"Invalid URL."];
+            return nil;
+        }
+        [self suspendExecution];
+        [[BrowserController currentBrowser] importURLs: @[url] completion: ^(NSArray *files, NSString *report, BOOL succeeded) {
+            if( files.count == 0 || !succeeded)
+            {
+                [self setScriptErrorNumber: errOSAGeneralError];
+                [self setScriptErrorString: report ?: NSLocalizedString(@"Nothing could be downloaded from that URL.", nil)];
+            }
+            else
+                [[BrowserController currentBrowser] findAndSelectFile: [files objectAtIndex: 0] image: nil shouldExpand: NO];
+            [self resumeExecutionWithResult: files];
+        }];
+        return nil;
 	}
 	
 	if( [command isEqualToString:@"OpenViewerForSelected"]) [[BrowserController currentBrowser] viewerDICOM: self];

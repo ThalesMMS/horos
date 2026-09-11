@@ -36,16 +36,25 @@
  ============================================================================*/
 
 #import "DicomDir.h"
+#import "Horos-Swift.h"
 #import "N2Debug.h"
-#include "dcddirif.h"
-#include "ofstd.h"
+#include <dcmtk/dcmdata/dcddirif.h>
+#include "HorosDicomDirIcons.h"
+#include <dcmtk/ofstd/ofstd.h>
 
-#include "ddpiimpl.h"     /* for class DicomDirImageImplementation */
+#include <dcmtk/dcmjpeg/ddpiimpl.h>     /* for class DicomDirImageImplementation */
 
 
 @implementation DicomDir
 
 +(void)createDicomDirAtDir:(NSString*)path {
+    [self createDicomDirAtDir:path error:NULL];
+}
+
++(BOOL)createDicomDirAtDir:(NSString*)path error:(NSError**)error {
+    if (error) *error = nil;
+    HorosExportArchive *replacement = nil;
+
     
     try {
         @try {
@@ -56,7 +65,7 @@
             ddir.enableInventMode(OFTrue); // +I
             
         //  ddir.enableIconImageMode(); // +X
-            ddir.enableOneIconPerSeriesMode(); // OsiriX addition
+            // One icon per series is added below through public directory records.
             ddir.setIconSize(128); // we let DicomDirInterface pick the icon size.. which, depending on the modality, will be either 128 or 64
 
             DicomDirImageImplementation imagePlugin;
@@ -66,30 +75,56 @@
             OFStandard::searchDirectoryRecursively("", fileNames, NULL, path.fileSystemRepresentation); // +r +id burnFolder
             
             NSString* dicomdirPath = [path stringByAppendingPathComponent:[NSString stringWithUTF8String:DEFAULT_DICOMDIR_NAME]];
-            OFCondition result = ddir.createNewDicomDir(DicomDirInterface::AP_USBandFlash, [dicomdirPath fileSystemRepresentation], DEFAULT_FILESETID); // -Pfl
+            replacement = [[HorosExportArchive alloc] initWithDestinationPath:dicomdirPath error:error];
+            if (!replacement) return NO;
+            OFCondition result = ddir.createNewDicomDir(DicomDirInterface::AP_USBandFlashJPEG, [replacement.archivePath fileSystemRepresentation], DEFAULT_FILESETID); // -Pfl
             if (!result.good())
                 [NSException raise:NSGenericException format:@"Couldn't create new DICOMDIR file: %s", result.text()];
                 
             ddir.setFilesetDescriptor(NULL, DEFAULT_DESCRIPTOR_CHARSET); // UTF-8 ?
             
             for (OFListIterator(OFString) iter = fileNames.begin(); iter != fileNames.end(); ++iter) {
+                NSString *relativePath = [NSString stringWithUTF8String:(*iter).c_str()];
+                NSString *name = relativePath.lastPathComponent;
+                // Index files and macOS metadata are not source DICOM instances.
+                if ([relativePath isEqualToString:@"DICOMDIR"] || [relativePath isEqualToString:@"DICOMDIR.BAK"] ||
+                    [name isEqualToString:@".DS_Store"] || [name hasPrefix:@"._"] ||
+                    [[relativePath.pathComponents firstObject] hasPrefix:@".horos-zip-"])
+                    continue;
                 result = ddir.addDicomFile((*iter).c_str(), path.fileSystemRepresentation);
                 if (result.bad())
-                    NSLog(@"Warning: couldn't add %s to DICOMDIR: %s", (*iter).c_str(), result.text());
+                    [NSException raise:NSGenericException format:@"Couldn't add %s to DICOMDIR: %s", (*iter).c_str(), result.text()];
             }
             
             result = ddir.writeDicomDir(EET_ExplicitLength, EGL_withoutGL);
             if (!result.good())
                 [NSException raise:NSGenericException format:@"Couldn't write DICOMDIR file: %s", result.text()];
             
-            chmod([dicomdirPath fileSystemRepresentation], 0755);
+            HorosDicomDirIcons icons;
+            result = icons.addSeriesIcons(replacement.archivePath.fileSystemRepresentation, path.fileSystemRepresentation);
+            if (result.bad())
+                [NSException raise:NSGenericException format:@"Could not write DICOMDIR series icons: %s", result.text()];
+            chmod([replacement.archivePath fileSystemRepresentation], 0755);
+            return [replacement commitWithError:error];
         }
         @catch (NSException *exception) {
             N2LogException( exception);
+            if (error) *error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSFileWriteUnknownError userInfo:
+                @{NSLocalizedDescriptionKey: NSLocalizedString(@"DICOMDIR export could not be completed.", nil),
+                  NSLocalizedFailureReasonErrorKey: exception.reason ?: @"",
+                  NSFilePathErrorKey: path ?: @""}];
+        }
+        @finally {
+            [replacement release];
         }
     } catch (std::exception &e) {
         std::cout << e.what() << std::endl;
+        if (error) *error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSFileWriteUnknownError userInfo:
+            @{NSLocalizedDescriptionKey: NSLocalizedString(@"DICOMDIR export could not be completed.", nil),
+              NSLocalizedFailureReasonErrorKey: [NSString stringWithUTF8String:e.what()] ?: @"",
+              NSFilePathErrorKey: path ?: @""}];
     }
+    return NO;
 }
 
 @end

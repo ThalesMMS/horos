@@ -251,7 +251,7 @@
             </constraints>
         </customView>
         <window title="Viewer" allowsToolTipsWhenApplicationIsInactive="NO" autorecalculatesKeyViewLoop="NO" oneShot="NO" visibleAtLaunch="NO" animationBehavior="default" id="5" userLabel="Window" customClass="OSIWindow">
-            <windowStyleMask key="styleMask" titled="YES" closable="YES" miniaturizable="YES" resizable="YES" texturedBackground="YES"/>
+            <windowStyleMask key="styleMask" titled="YES" closable="YES" miniaturizable="YES" resizable="YES"/>
             <windowPositionMask key="initialPositionMask" leftStrut="YES" bottomStrut="YES"/>
             <rect key="contentRect" x="312" y="231" width="725" height="442"/>
             <rect key="screenRect" x="0.0" y="0.0" width="2560" height="1417"/>
@@ -277,9 +277,9 @@
                                     <customView translatesAutoresizingMaskIntoConstraints="NO" id="2604">
                                         <rect key="frame" x="0.0" y="427" width="608" height="15"/>
                                         <subviews>
-                                            <slider verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="11">
+                                            <slider customClass="HorosCellSlider" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="11">
                                                 <rect key="frame" x="0.0" y="0.0" width="606" height="16"/>
-                                                <sliderCell key="cell" controlSize="mini" continuous="YES" alignment="left" maxValue="100" doubleValue="45.45454545454546" tickMarkPosition="below" numberOfTickMarks="100" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2109"/>
+                                                <sliderCell key="cell" customClass="HorosCellSliderCell" controlSize="mini" continuous="YES" alignment="left" maxValue="100" doubleValue="45.45454545454546" tickMarkPosition="below" numberOfTickMarks="100" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2109"/>
                                                 <connections>
                                                     <action selector="sliderAction:" target="-1" id="931"/>
                                                 </connections>
@@ -333,9 +333,9 @@
                         <font key="font" metaFont="smallSystem"/>
                     </buttonCell>
                 </button>
-                <slider verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="15">
+                <slider customClass="HorosCellSlider" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="15">
                     <rect key="frame" x="0.0" y="3" width="132" height="15"/>
-                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" maxValue="60" doubleValue="10" tickMarkPosition="above" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2110">
+                    <sliderCell key="cell" customClass="HorosCellSliderCell" controlSize="small" continuous="YES" alignment="left" maxValue="60" doubleValue="10" tickMarkPosition="above" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2110">
                         <font key="font" size="12" name="Helvetica"/>
                     </sliderCell>
                     <connections>
@@ -1271,12 +1271,12 @@ Gw
                         <action selector="popFusionAction:" target="-2" id="405"/>
                     </connections>
                 </popUpButton>
-                <slider verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="373">
+                <slider customClass="HorosCellSlider" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="373">
                     <rect key="frame" x="26" y="5" width="151" height="16"/>
                     <constraints>
                         <constraint firstAttribute="width" relation="greaterThanOrEqual" constant="129" id="1xK-Nd-zOX"/>
                     </constraints>
-                    <sliderCell key="cell" controlSize="mini" continuous="YES" enabled="NO" alignment="left" minValue="2" maxValue="128" doubleValue="20" tickMarkPosition="below" numberOfTickMarks="45" sliderType="linear" id="2140">
+                    <sliderCell key="cell" customClass="HorosCellSliderCell" controlSize="mini" continuous="YES" enabled="NO" alignment="left" minValue="2" maxValue="128" doubleValue="20" tickMarkPosition="below" numberOfTickMarks="45" sliderType="linear" id="2140">
                         <font key="font" size="12" name="Helvetica"/>
                     </sliderCell>
                     <connections>
@@ -1548,9 +1548,9 @@ To edit a Color Look Up Table from the menu: select it while holding down the al
                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
                     </textFieldCell>
                 </textField>
-                <slider verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="482">
+                <slider customClass="HorosCellSlider" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="482">
                     <rect key="frame" x="0.0" y="0.0" width="87" height="15"/>
-                    <sliderCell key="cell" controlSize="small" continuous="YES" enabled="NO" alignment="left" minValue="-256" maxValue="256" doubleValue="1.421085e-14" tickMarkPosition="below" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2155">
+                    <sliderCell key="cell" customClass="HorosCellSliderCell" controlSize="small" continuous="YES" enabled="NO" alignment="left" minValue="-256" maxValue="256" doubleValue="1.421085e-14" tickMarkPosition="below" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2155">
                         <font key="font" size="12" name="Helvetica"/>
                     </sliderCell>
                     <connections>
@@ -1617,12 +1617,12 @@ To edit a Color Look Up Table from the menu: select it while holding down the al
                         <action selector="MoviePlayStop:" target="-2" id="520"/>
                     </connections>
                 </button>
-                <slider verticalHuggingPriority="750" ambiguous="YES" misplaced="YES" translatesAutoresizingMaskIntoConstraints="NO" id="508">
+                <slider customClass="HorosCellSlider" verticalHuggingPriority="750" ambiguous="YES" misplaced="YES" translatesAutoresizingMaskIntoConstraints="NO" id="508">
                     <rect key="frame" x="30" y="4" width="95" height="15"/>
                     <constraints>
                         <constraint firstAttribute="width" relation="greaterThanOrEqual" constant="95" id="Uz8-dg-jIj"/>
                     </constraints>
-                    <sliderCell key="cell" controlSize="mini" continuous="YES" alignment="left" tickMarkPosition="above" numberOfTickMarks="1" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2160">
+                    <sliderCell key="cell" customClass="HorosCellSliderCell" controlSize="mini" continuous="YES" alignment="left" tickMarkPosition="above" numberOfTickMarks="1" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2160">
                         <font key="font" size="12" name="Helvetica"/>
                     </sliderCell>
                     <connections>
@@ -1640,12 +1640,12 @@ To edit a Color Look Up Table from the menu: select it while holding down the al
                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
                     </textFieldCell>
                 </textField>
-                <slider verticalHuggingPriority="750" ambiguous="YES" translatesAutoresizingMaskIntoConstraints="NO" id="506">
+                <slider customClass="HorosCellSlider" verticalHuggingPriority="750" ambiguous="YES" translatesAutoresizingMaskIntoConstraints="NO" id="506">
                     <rect key="frame" x="30" y="20" width="95" height="12"/>
                     <constraints>
                         <constraint firstAttribute="width" relation="greaterThanOrEqual" constant="95" id="asA-Rt-TAa"/>
                     </constraints>
-                    <sliderCell key="cell" controlSize="mini" continuous="YES" alignment="left" maxValue="60" doubleValue="10" tickMarkPosition="above" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2158">
+                    <sliderCell key="cell" customClass="HorosCellSliderCell" controlSize="mini" continuous="YES" alignment="left" maxValue="60" doubleValue="10" tickMarkPosition="above" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2158">
                         <font key="font" size="12" name="Helvetica"/>
                     </sliderCell>
                     <connections>
@@ -1759,9 +1759,9 @@ Gw
                             <rect key="frame" x="3" y="3" width="416" height="105"/>
                             <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                             <subviews>
-                                <slider verticalHuggingPriority="750" tag="3" translatesAutoresizingMaskIntoConstraints="NO" id="1386">
+                                <slider customClass="HorosCellSlider" verticalHuggingPriority="750" tag="3" translatesAutoresizingMaskIntoConstraints="NO" id="1386">
                                     <rect key="frame" x="104" y="80" width="296" height="15"/>
-                                    <sliderCell key="cell" controlSize="mini" continuous="YES" alignment="left" minValue="1" maxValue="50" doubleValue="1" tickMarkPosition="below" numberOfTickMarks="50" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2170">
+                                    <sliderCell key="cell" customClass="HorosCellSliderCell" controlSize="mini" continuous="YES" alignment="left" minValue="1" maxValue="50" doubleValue="1" tickMarkPosition="below" numberOfTickMarks="50" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2170">
                                         <font key="font" size="12" name="Helvetica"/>
                                     </sliderCell>
                                     <connections>
@@ -1776,9 +1776,9 @@ Gw
                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
                                     </textFieldCell>
                                 </textField>
-                                <slider verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="1384">
+                                <slider customClass="HorosCellSlider" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="1384">
                                     <rect key="frame" x="104" y="52" width="296" height="15"/>
-                                    <sliderCell key="cell" controlSize="mini" continuous="YES" alignment="left" minValue="1" maxValue="90" doubleValue="1" tickMarkPosition="below" numberOfTickMarks="30" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2168">
+                                    <sliderCell key="cell" customClass="HorosCellSliderCell" controlSize="mini" continuous="YES" alignment="left" minValue="1" maxValue="90" doubleValue="1" tickMarkPosition="below" numberOfTickMarks="30" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2168">
                                         <font key="font" size="12" name="Helvetica"/>
                                     </sliderCell>
                                     <connections>
@@ -1793,9 +1793,9 @@ Gw
                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
                                     </textFieldCell>
                                 </textField>
-                                <slider verticalHuggingPriority="750" tag="1" translatesAutoresizingMaskIntoConstraints="NO" id="1387">
+                                <slider customClass="HorosCellSlider" verticalHuggingPriority="750" tag="1" translatesAutoresizingMaskIntoConstraints="NO" id="1387">
                                     <rect key="frame" x="104" y="37" width="296" height="15"/>
-                                    <sliderCell key="cell" controlSize="mini" continuous="YES" alignment="left" tag="1" minValue="1" maxValue="90" doubleValue="1" tickMarkPosition="above" numberOfTickMarks="30" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2171">
+                                    <sliderCell key="cell" customClass="HorosCellSliderCell" controlSize="mini" continuous="YES" alignment="left" tag="1" minValue="1" maxValue="90" doubleValue="1" tickMarkPosition="above" numberOfTickMarks="30" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2171">
                                         <font key="font" size="12" name="Helvetica"/>
                                     </sliderCell>
                                     <connections>
@@ -2832,9 +2832,9 @@ Gw
                         <action selector="subSharpen:" target="-2" id="1666"/>
                     </connections>
                 </button>
-                <slider toolTip="sum up next frames [alt 1] [alt 2] [alt 3]" verticalHuggingPriority="750" horizontalCompressionResistancePriority="1000" verticalCompressionResistancePriority="1000" misplaced="YES" tag="20" translatesAutoresizingMaskIntoConstraints="NO" id="1656">
+                <slider customClass="HorosCellSlider" toolTip="sum up next frames [alt 1] [alt 2] [alt 3]" verticalHuggingPriority="750" horizontalCompressionResistancePriority="1000" verticalCompressionResistancePriority="1000" misplaced="YES" tag="20" translatesAutoresizingMaskIntoConstraints="NO" id="1656">
                     <rect key="frame" x="98" y="2" width="73" height="15"/>
-                    <sliderCell key="cell" controlSize="mini" continuous="YES" alignment="left" tag="20" minValue="1" maxValue="10" doubleValue="1" tickMarkPosition="below" numberOfTickMarks="10" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2230">
+                    <sliderCell key="cell" customClass="HorosCellSliderCell" controlSize="mini" continuous="YES" alignment="left" tag="20" minValue="1" maxValue="10" doubleValue="1" tickMarkPosition="below" numberOfTickMarks="10" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2230">
                         <font key="font" size="12" name="Helvetica"/>
                     </sliderCell>
                     <connections>
@@ -2852,9 +2852,9 @@ Gw
                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
                     </textFieldCell>
                 </textField>
-                <slider toolTip="% subtraction [0.80 ... 1.00] (default 1.00 %)" verticalHuggingPriority="750" horizontalCompressionResistancePriority="1000" verticalCompressionResistancePriority="1000" misplaced="YES" tag="16" translatesAutoresizingMaskIntoConstraints="NO" id="1621">
+                <slider customClass="HorosCellSlider" toolTip="% subtraction [0.80 ... 1.00] (default 1.00 %)" verticalHuggingPriority="750" horizontalCompressionResistancePriority="1000" verticalCompressionResistancePriority="1000" misplaced="YES" tag="16" translatesAutoresizingMaskIntoConstraints="NO" id="1621">
                     <rect key="frame" x="100" y="21" width="73" height="13"/>
-                    <sliderCell key="cell" controlSize="mini" scrollable="YES" lineBreakMode="clipping" continuous="YES" alignment="left" tag="16" minValue="0.80000000000000004" maxValue="1" doubleValue="1" tickMarkPosition="below" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2228"/>
+                    <sliderCell key="cell" customClass="HorosCellSliderCell" controlSize="mini" scrollable="YES" lineBreakMode="clipping" continuous="YES" alignment="left" tag="16" minValue="0.80000000000000004" maxValue="1" doubleValue="1" tickMarkPosition="below" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2228"/>
                     <connections>
                         <action selector="subCtrlSliders:" target="-2" id="1629"/>
                     </connections>
@@ -3283,30 +3283,30 @@ DQ
                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
                     </textFieldCell>
                 </textField>
-                <slider verticalHuggingPriority="750" tag="2" translatesAutoresizingMaskIntoConstraints="NO" id="860">
+                <slider customClass="HorosCellSlider" verticalHuggingPriority="750" tag="2" translatesAutoresizingMaskIntoConstraints="NO" id="860">
                     <rect key="frame" x="39" y="0.0" width="86" height="12"/>
-                    <sliderCell key="cell" controlSize="mini" continuous="YES" alignment="left" tag="2" maxValue="1" doubleValue="1" tickMarkPosition="below" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2246">
+                    <sliderCell key="cell" customClass="HorosCellSliderCell" controlSize="mini" continuous="YES" alignment="left" tag="2" maxValue="1" doubleValue="1" tickMarkPosition="below" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2246">
                         <font key="font" size="12" name="Helvetica"/>
                     </sliderCell>
                     <connections>
                         <action selector="sliderRGBFactor:" target="-1" id="934"/>
                     </connections>
                 </slider>
-                <slider verticalHuggingPriority="750" tag="1" translatesAutoresizingMaskIntoConstraints="NO" id="859">
+                <slider customClass="HorosCellSlider" verticalHuggingPriority="750" tag="1" translatesAutoresizingMaskIntoConstraints="NO" id="859">
                     <rect key="frame" x="39" y="11" width="86" height="12"/>
-                    <sliderCell key="cell" controlSize="mini" continuous="YES" alignment="left" tag="1" maxValue="1" doubleValue="1" tickMarkPosition="below" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2245">
+                    <sliderCell key="cell" customClass="HorosCellSliderCell" controlSize="mini" continuous="YES" alignment="left" tag="1" maxValue="1" doubleValue="1" tickMarkPosition="below" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2245">
                         <font key="font" size="12" name="Helvetica"/>
                     </sliderCell>
                     <connections>
                         <action selector="sliderRGBFactor:" target="-1" id="933"/>
                     </connections>
                 </slider>
-                <slider verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="858">
+                <slider customClass="HorosCellSlider" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="858">
                     <rect key="frame" x="39" y="22" width="86" height="12"/>
                     <constraints>
                         <constraint firstAttribute="width" constant="86" id="YXf-OH-S42"/>
                     </constraints>
-                    <sliderCell key="cell" controlSize="mini" continuous="YES" alignment="left" maxValue="1" doubleValue="1" tickMarkPosition="below" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2244">
+                    <sliderCell key="cell" customClass="HorosCellSliderCell" controlSize="mini" continuous="YES" alignment="left" maxValue="1" doubleValue="1" tickMarkPosition="below" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2244">
                         <font key="font" size="12" name="Helvetica"/>
                     </sliderCell>
                     <connections>
@@ -3975,9 +3975,9 @@ Gw
                             <rect key="frame" x="3" y="3" width="588" height="106"/>
                             <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                             <subviews>
-                                <slider verticalHuggingPriority="750" misplaced="YES" tag="3" translatesAutoresizingMaskIntoConstraints="NO" id="1351">
+                                <slider customClass="HorosCellSlider" verticalHuggingPriority="750" misplaced="YES" tag="3" translatesAutoresizingMaskIntoConstraints="NO" id="1351">
                                     <rect key="frame" x="100" y="79" width="472" height="15"/>
-                                    <sliderCell key="cell" controlSize="mini" continuous="YES" alignment="left" minValue="1" maxValue="50" doubleValue="1" tickMarkPosition="below" numberOfTickMarks="50" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2298">
+                                    <sliderCell key="cell" customClass="HorosCellSliderCell" controlSize="mini" continuous="YES" alignment="left" minValue="1" maxValue="50" doubleValue="1" tickMarkPosition="below" numberOfTickMarks="50" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2298">
                                         <font key="font" size="12" name="Helvetica"/>
                                     </sliderCell>
                                     <connections>
@@ -3992,9 +3992,9 @@ Gw
                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
                                     </textFieldCell>
                                 </textField>
-                                <slider verticalHuggingPriority="750" misplaced="YES" translatesAutoresizingMaskIntoConstraints="NO" id="1353">
+                                <slider customClass="HorosCellSlider" verticalHuggingPriority="750" misplaced="YES" translatesAutoresizingMaskIntoConstraints="NO" id="1353">
                                     <rect key="frame" x="100" y="49" width="472" height="15"/>
-                                    <sliderCell key="cell" controlSize="mini" continuous="YES" alignment="left" minValue="1" maxValue="90" doubleValue="1" tickMarkPosition="below" numberOfTickMarks="30" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2300">
+                                    <sliderCell key="cell" customClass="HorosCellSliderCell" controlSize="mini" continuous="YES" alignment="left" minValue="1" maxValue="90" doubleValue="1" tickMarkPosition="below" numberOfTickMarks="30" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2300">
                                         <font key="font" size="12" name="Helvetica"/>
                                     </sliderCell>
                                     <connections>
@@ -4009,9 +4009,9 @@ Gw
                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
                                     </textFieldCell>
                                 </textField>
-                                <slider verticalHuggingPriority="750" misplaced="YES" translatesAutoresizingMaskIntoConstraints="NO" id="1355">
+                                <slider customClass="HorosCellSlider" verticalHuggingPriority="750" misplaced="YES" translatesAutoresizingMaskIntoConstraints="NO" id="1355">
                                     <rect key="frame" x="100" y="37" width="472" height="15"/>
-                                    <sliderCell key="cell" controlSize="mini" continuous="YES" alignment="left" minValue="1" maxValue="90" doubleValue="1" tickMarkPosition="above" numberOfTickMarks="30" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2302">
+                                    <sliderCell key="cell" customClass="HorosCellSliderCell" controlSize="mini" continuous="YES" alignment="left" minValue="1" maxValue="90" doubleValue="1" tickMarkPosition="above" numberOfTickMarks="30" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2302">
                                         <font key="font" size="12" name="Helvetica"/>
                                     </sliderCell>
                                     <connections>
@@ -4787,9 +4787,9 @@ Gw
                             <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
                         </textFieldCell>
                     </textField>
-                    <slider verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="1498">
+                    <slider customClass="HorosCellSlider" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="1498">
                         <rect key="frame" x="36" y="114" width="262" height="24"/>
-                        <sliderCell key="cell" continuous="YES" alignment="left" minValue="1" maxValue="20" doubleValue="10" tickMarkPosition="below" numberOfTickMarks="20" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2333">
+                        <sliderCell key="cell" customClass="HorosCellSliderCell" continuous="YES" alignment="left" minValue="1" maxValue="20" doubleValue="10" tickMarkPosition="below" numberOfTickMarks="20" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2333">
                             <font key="font" size="12" name="Helvetica"/>
                         </sliderCell>
                         <connections>
@@ -5392,9 +5392,9 @@ Gw
                             <rect key="frame" x="3" y="3" width="399" height="100"/>
                             <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                             <subviews>
-                                <slider verticalHuggingPriority="750" misplaced="YES" translatesAutoresizingMaskIntoConstraints="NO" id="1878">
+                                <slider customClass="HorosCellSlider" verticalHuggingPriority="750" misplaced="YES" translatesAutoresizingMaskIntoConstraints="NO" id="1878">
                                     <rect key="frame" x="103" y="73" width="279" height="15"/>
-                                    <sliderCell key="cell" controlSize="mini" continuous="YES" alignment="left" minValue="1" maxValue="50" doubleValue="1" tickMarkPosition="below" numberOfTickMarks="50" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2355">
+                                    <sliderCell key="cell" customClass="HorosCellSliderCell" controlSize="mini" continuous="YES" alignment="left" minValue="1" maxValue="50" doubleValue="1" tickMarkPosition="below" numberOfTickMarks="50" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2355">
                                         <font key="font" size="12" name="Helvetica"/>
                                     </sliderCell>
                                     <connections>
@@ -5409,9 +5409,9 @@ Gw
                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
                                     </textFieldCell>
                                 </textField>
-                                <slider verticalHuggingPriority="750" misplaced="YES" translatesAutoresizingMaskIntoConstraints="NO" id="1877">
+                                <slider customClass="HorosCellSlider" verticalHuggingPriority="750" misplaced="YES" translatesAutoresizingMaskIntoConstraints="NO" id="1877">
                                     <rect key="frame" x="103" y="43" width="279" height="15"/>
-                                    <sliderCell key="cell" controlSize="mini" continuous="YES" alignment="left" minValue="1" maxValue="90" doubleValue="1" tickMarkPosition="below" numberOfTickMarks="30" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2354">
+                                    <sliderCell key="cell" customClass="HorosCellSliderCell" controlSize="mini" continuous="YES" alignment="left" minValue="1" maxValue="90" doubleValue="1" tickMarkPosition="below" numberOfTickMarks="30" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2354">
                                         <font key="font" size="12" name="Helvetica"/>
                                     </sliderCell>
                                     <connections>
@@ -5426,9 +5426,9 @@ Gw
                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
                                     </textFieldCell>
                                 </textField>
-                                <slider verticalHuggingPriority="750" misplaced="YES" tag="1" translatesAutoresizingMaskIntoConstraints="NO" id="1872">
+                                <slider customClass="HorosCellSlider" verticalHuggingPriority="750" misplaced="YES" tag="1" translatesAutoresizingMaskIntoConstraints="NO" id="1872">
                                     <rect key="frame" x="103" y="31" width="279" height="15"/>
-                                    <sliderCell key="cell" controlSize="mini" continuous="YES" alignment="left" tag="1" minValue="1" maxValue="90" doubleValue="1" tickMarkPosition="above" numberOfTickMarks="30" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2349">
+                                    <sliderCell key="cell" customClass="HorosCellSliderCell" controlSize="mini" continuous="YES" alignment="left" tag="1" minValue="1" maxValue="90" doubleValue="1" tickMarkPosition="above" numberOfTickMarks="30" allowsTickMarkValuesOnly="YES" sliderType="linear" id="2349">
                                         <font key="font" size="12" name="Helvetica"/>
                                     </sliderCell>
                                     <connections>

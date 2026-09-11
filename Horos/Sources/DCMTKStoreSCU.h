@@ -49,6 +49,8 @@ int runStoreSCU(const char *myAET, const char*peerAET, const char*hostname, int 
 * DCMTKStoreSCU performs the DICOM send
 * based on DCMTK 
 */
+@class HorosStoreReport;
+
 @interface DCMTKStoreSCU : NSObject {
 	BOOL _threadStatus;
 	
@@ -64,6 +66,7 @@ int runStoreSCU(const char *myAET, const char*peerAET, const char*hostname, int 
 	int _numberOfFiles;
 	int _numberSent;
 	int _numberErrors;
+	HorosStoreReport *_report;
 	NSString *_patientName;
 	NSString *_studyDescription; 
 	id _logEntry;

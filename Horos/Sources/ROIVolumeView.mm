@@ -3,7 +3,7 @@
  
  Horos is free software: you can redistribute it and/or modify
  it under the terms of the GNU Lesser General Public License as published by
- the Free Software Foundation,  version 3 of the License.
+ the Free Software Foundation, ùversion 3 of the License.
  
  The Horos Project was based originally upon the OsiriX Project which at the time of
  the code fork was licensed as a LGPL project.  However, not all of the the source-code
@@ -15,29 +15,30 @@
  
  Horos is distributed in the hope that it will be useful, but
  WITHOUT ANY WARRANTY EXPRESS OR IMPLIED, INCLUDING ANY WARRANTY OF
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE OR USE.  See the
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE OR USE. ùSee the
  GNU Lesser General Public License for more details.
  
  You should have received a copy of the GNU Lesser General Public License
- along with Horos.  If not, see http://www.gnu.org/licenses/lgpl.html
+ along with Horos. ùIf not, see http://www.gnu.org/licenses/lgpl.html
  
  Prior versions of this file were published by the OsiriX team pursuant to
  the below notice and licensing protocol.
  ============================================================================
- Program:   OsiriX
-  Copyright (c) OsiriX Team
-  All rights reserved.
-  Distributed under GNU - LGPL
-  
-  See http://www.osirix-viewer.com/copyright.html for details.
-     This software is distributed WITHOUT ANY WARRANTY; without even
-     the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
-     PURPOSE.
+ Program: ù OsiriX
+ ùCopyright (c) OsiriX Team
+ ùAll rights reserved.
+ ùDistributed under GNU - LGPL
+ ù
+ ùSee http://www.osirix-viewer.com/copyright.html for details.
+ ù ù This software is distributed WITHOUT ANY WARRANTY; without even
+ ù ù the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+ ù ù PURPOSE.
  ============================================================================*/
 
 #import "options.h"
 
 #import "ROIVolumeView.h"
+#include "VRFramebufferCapture.h"
 #import "DCMPix.h"
 #import "DCMView.h"
 #import "DICOMExport.h"
@@ -52,6 +53,7 @@
 #import "N2Debug.h"
 #import "DicomDatabase.h"
 #import "ROI.h"
+#import "Horos-Swift.h"
 #import <vtkConfigure.h>
 
 #define D2R 0.01745329251994329576923690768    // degrees to radians
@@ -89,54 +91,19 @@
 	unsigned char	*buf = nil;
 	long			i;
 	
-	NSRect size = [self bounds];
-	
-	*width = (long) size.size.width;
-	*width/=4;
-	*width*=4;
-	*height = (long) size.size.height;
+	// The drawable is measured in pixels, not points. Reading [self bounds] and
+	// handing those numbers to glReadPixels captured the lower left quarter of a
+	// Retina window and declared it the whole image, so the export came out
+	// cropped and moved into the corner. The VTK window knows the size of its
+	// drawable, and the shared readback returns tightly packed, top-down RGB -
+	// which is what the row flip that used to be here produced.
 	*spp = 3;
 	*bpp = 8;
 	
-	buf = (unsigned char*) malloc( *width * *height * 4 * *bpp/8);
+	buf = HorosCopyVRFramebuffer([self getVTKRenderWindow], width, height);
 	if( buf)
 	{
-		[self getVTKRenderWindow]->MakeCurrent();
-//		[[NSOpenGLContext currentContext] flushBuffer];
-		
-		CGLContextObj cgl_ctx = (CGLContextObj) [[NSOpenGLContext currentContext] CGLContextObj];
-		
-		glReadBuffer(GL_FRONT);
-		
-		#if __BIG_ENDIAN__
-			glReadPixels(0, 0, *width, *height, GL_RGB, GL_UNSIGNED_BYTE, buf);
-		#else
-			glReadPixels(0, 0, *width, *height, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV, buf);
-			i = *width * *height;
-			unsigned char	*t_argb = buf;
-			unsigned char	*t_rgb = buf;
-			while( i-->0)
-			{
-				*((int*) t_rgb) = *((int*) t_argb);
-				t_argb+=4;
-				t_rgb+=3;
-			}
-		#endif
-		
 		long rowBytes = *width**spp**bpp/8;
-		
-		{
-			unsigned char	*tempBuf = (unsigned char*) malloc( rowBytes);
-			
-			for( i = 0; i < *height/2; i++)
-			{
-				memcpy( tempBuf, buf + (*height - 1 - i)*rowBytes, rowBytes);
-				memcpy( buf + (*height - 1 - i)*rowBytes, buf + i*rowBytes, rowBytes);
-				memcpy( buf + i*rowBytes, tempBuf, rowBytes);
-			}
-			
-			free( tempBuf);
-		}
 		
 		//Add the small OsiriX logo at the bottom right of the image
 		NSImage				*logo = [NSImage imageNamed:@"SmallLogo.tif"];
@@ -377,9 +344,17 @@
 //    display an error !
     
     NSString *error = 0L;
+    NSInteger algorithm = [[NSUserDefaults standardUserDefaults] integerForKey:@"UseDelaunayFor3DRoi"];
+    HorosROISurfaceChoice *choice = [HorosROISurfaceAlgorithm resolvePreference: algorithm];
+    if( !choice.available)
+    {
+        NSRunCriticalAlertPanel( NSLocalizedString( @"ROIs", nil), @"%@", NSLocalizedString( @"OK", nil), nil, nil, choice.diagnosis);
+        return nil;
+    }
+    algorithm = choice.preference;
     
     NSMutableArray **ptsPtr = nil;
-    if( [[NSUserDefaults standardUserDefaults] integerForKey:@"UseDelaunayFor3DRoi"] != 0)
+    if( algorithm == 1)
         ptsPtr = &ptsArray;
     
     float volume = [vc computeVolume: roi points: ptsPtr generateMissingROIs: YES generatedROIs: generatedROIs computeData: statistics error: &error];
@@ -394,7 +369,7 @@
     }
     
     vtkPolyData *profile = nil;
-    if( [[NSUserDefaults standardUserDefaults] integerForKey:@"UseDelaunayFor3DRoi"] != 0)
+    if( algorithm == 1)
     {
         vtkPoints *points = vtkPoints::New();
         long i = 0;
@@ -406,10 +381,9 @@
         points->Delete();
     }
     
-    switch( [[NSUserDefaults standardUserDefaults] integerForKey: @"UseDelaunayFor3DRoi"])
+    switch( algorithm)
     {
         // Iso Contour
-        default:
         case 0:
         {
             NSData *vD = nil;
@@ -537,6 +511,10 @@
             tmapper->Delete();
             delaunayTriangulator->Delete();
         }
+            break;
+
+        default:
+            mapper = nil;
             break;
             
             /*
@@ -821,22 +799,18 @@
         catch(...)
         {
             printf( "***** C++ exception in %s\r", __PRETTY_FUNCTION__);
-            
-            if( [[NSUserDefaults standardUserDefaults] integerForKey:@"UseDelaunayFor3DRoi"] != 0) // Iso Contour
+            if ([HorosROISurfaceAlgorithm shouldRewritePreferenceAfterFailure: [[NSUserDefaults standardUserDefaults] integerForKey:@"UseDelaunayFor3DRoi"]])
             {
-                [[NSUserDefaults standardUserDefaults] setInteger:0 forKey:@"UseDelaunayFor3DRoi"];
-                [self renderVolume];
+                NSLog(@"ROI surface reconstruction failed; keeping UseDelaunayFor3DRoi");
             }
         }
     }
     @catch (NSException * e)
     {
         N2LogExceptionWithStackTrace(e);
-        
-        if( [[NSUserDefaults standardUserDefaults] integerForKey:@"UseDelaunayFor3DRoi"] != 0) // Iso Contour
+        if ([HorosROISurfaceAlgorithm shouldRewritePreferenceAfterFailure: [[NSUserDefaults standardUserDefaults] integerForKey:@"UseDelaunayFor3DRoi"]])
         {
-            [[NSUserDefaults standardUserDefaults] setInteger:0 forKey:@"UseDelaunayFor3DRoi"];
-            [self renderVolume];
+            NSLog(@"ROI surface reconstruction failed; keeping UseDelaunayFor3DRoi");
         }
     }
     

@@ -84,4 +84,18 @@ California 94305, USA.
     return result;
 }
 
+
++ (NSString *)mailExportErrorMessage:(NSDictionary *)errorInfo result:(NSAppleEventDescriptor *)result
+{
+    if (!errorInfo && !result)
+        return NSLocalizedString(@"Horos could not prepare the Mail draft. Check that Mail is available and retry the export. If the problem persists, reinstall Horos to restore its Mail export script.", nil);
+    NSInteger code = errorInfo ? [[errorInfo objectForKey:NSAppleScriptErrorNumber] integerValue] : [result int32Value];
+    if (!errorInfo && result && code == 0) return nil;
+    if (code == -1743 || code == -1744)
+        return NSLocalizedString(@"Mail access was denied. Allow Horos to control Mail in System Settings > Privacy & Security > Automation, then retry the export.", nil);
+    if (code == -1712)
+        return NSLocalizedString(@"Horos did not receive a reply from Mail in time (error -1712). If macOS asked for Automation permission, allow Horos to control Mail in System Settings > Privacy & Security > Automation, then retry. Check Mail and any draft already opened; attachments may be incomplete.", nil);
+    return [NSString stringWithFormat:NSLocalizedString(@"Horos could not finish creating the Mail draft (error %ld). Check Mail and any draft already opened before retrying; attachments may be incomplete.", nil), (long)code];
+}
+
 @end

@@ -19,4 +19,4 @@ MARKETING_VERSION = 4.0.0
 HUMAN_READABLE_VERSION = Horos v4.0.0 RC5
 
 /// Copyright notice for the bundle
-HUMAN_READABLE_COPYRIGHT = © 2020 The Horos Project & OsiriX Team
+HUMAN_READABLE_COPYRIGHT = © The Horos Project, OsiriX Team, Yves Starreveld / ystarrev, and contributors

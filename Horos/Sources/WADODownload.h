@@ -38,6 +38,7 @@
 
 #import <Foundation/Foundation.h>
 
+@class HorosRetrieveManifest;
 
 @interface WADODownload : NSObject
 {
@@ -46,15 +47,20 @@
     int WADOGrandTotal, WADOBaseTotal;
     unsigned long totalData, receivedData;
 	NSMutableDictionary *WADODownloadDictionary, *logEntry;
-	BOOL showErrorMessage, firstWadoErrorDisplayed, _abortAssociation;
+	BOOL showErrorMessage, _abortAssociation;
     NSTimeInterval firstReceivedTime, lastStatusUpdate;
     NSString *baseStatus;
+    HorosRetrieveManifest *manifest;
 }
 
 @property BOOL _abortAssociation, showErrorMessage;
 @property int countOfSuccesses, WADOGrandTotal, WADOBaseTotal;
 @property unsigned long totalData, receivedData;
 @property (retain) NSString *baseStatus;
+
+// What was asked for and what arrived, by SOP Instance UID. Valid once
+// -WADODownload: has returned; nil before the first call.
+@property (readonly, retain) HorosRetrieveManifest *manifest;
 
 - (void) WADODownload: (NSArray*) urlToDownload;
 

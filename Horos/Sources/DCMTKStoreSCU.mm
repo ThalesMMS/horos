@@ -1,3 +1,5 @@
+#include "HorosDICOMIdentity.h"
+#include "HorosDIMSEAssociation.h"
 /*=========================================================================
  This file is part of the Horos Project (www.horosproject.org)
  
@@ -37,6 +39,7 @@
 
 #import "LogManager.h"
 #import "AppController.h"
+#import "Horos-Swift.h"
 #import "DCMTKStoreSCU.h"
 #import "BrowserController.h"
 #import "DicomFile.h"
@@ -47,17 +50,20 @@
 #import "N2Debug.h"
 #import "N2Stuff.h"
 #undef verify
-#include "osconfig.h" /* make sure OS specific configuration is included first */
+#include "HorosDCMTKCompatibility.h"
+#include "HorosDICOMRepresentation.h"
+#include "HorosTLSConfiguration.h"
+#include <dcmtk/config/osconfig.h> /* make sure OS specific configuration is included first */
 
 #define  ON_THE_FLY_COMPRESSION 1
 
-#define INCLUDE_CSTDLIB
-#define INCLUDE_CSTDIO
-#define INCLUDE_CSTRING
-#define INCLUDE_CERRNO
-#define INCLUDE_CSTDARG
-#define INCLUDE_CCTYPE
-#include "ofstdinc.h"
+#include <cstdlib>
+#include <cstdio>
+#include <cstring>
+#include <cerrno>
+#include <cstdarg>
+#include <cctype>
+#include <dcmtk/ofstd/ofstdinc.h>
 
 BEGIN_EXTERN_C
 #ifdef HAVE_SYS_FILE_H
@@ -69,38 +75,39 @@ END_EXTERN_C
 #include <GUSI.h>
 #endif
 
-#include "ofstring.h"
-#include "dimse.h"
-#include "diutil.h"
-#include "dcdatset.h"
-#include "dcmetinf.h"
-#include "dcfilefo.h"
-#include "dcdebug.h"
-#include "dcuid.h"
-#include "dcdict.h"
-#include "dcdeftag.h"
-//#include "cmdlnarg.h"
-#include "ofconapp.h"
-#include "dcuid.h"     /* for dcmtk version name */
-#include "dicom.h"     /* for DICOM_APPLICATION_REQUESTOR */
-#include "dcostrmz.h"  /* for dcmZlibCompressionLevel */
-#include "dcasccfg.h"  /* for class DcmAssociationConfiguration */
-#include "dcasccff.h"  /* for class DcmAssociationConfigurationFile */
+#include <dcmtk/ofstd/ofstring.h>
+#include <dcmtk/dcmnet/dimse.h>
+#include <dcmtk/dcmnet/diutil.h>
+#include <dcmtk/dcmdata/dcdatset.h>
+#include <dcmtk/dcmdata/dcmetinf.h>
+#include <dcmtk/dcmdata/dcfilefo.h>
+#include "HorosDCMTKCompatibility.h"
+#include "HorosTLSConfiguration.h"
+#include <dcmtk/dcmdata/dcuid.h>
+#include <dcmtk/dcmdata/dcdict.h>
+#include <dcmtk/dcmdata/dcdeftag.h>
+//#include <dcmtk/dcmdata/cmdlnarg.h>
+#include <dcmtk/ofstd/ofconapp.h>
+#include <dcmtk/dcmdata/dcuid.h>     /* for dcmtk version name */
+#include <dcmtk/dcmnet/dicom.h>     /* for DICOM_APPLICATION_REQUESTOR */
+#include <dcmtk/dcmdata/dcostrmz.h>  /* for dcmZlibCompressionLevel */
+#include <dcmtk/dcmnet/dcasccfg.h>  /* for class DcmAssociationConfiguration */
+#include <dcmtk/dcmnet/dcasccff.h>  /* for class DcmAssociationConfigurationFile */
 
 #ifdef ON_THE_FLY_COMPRESSION
-#include "djdecode.h"  /* for dcmjpeg decoders */
-#include "djencode.h"  /* for dcmjpeg encoders */
-#include "dcrledrg.h"  /* for DcmRLEDecoderRegistration */
-#include "dcrleerg.h"  /* for DcmRLEEncoderRegistration */
-#include "djrploss.h"
-#include "djrplol.h"
-#include "dcpixel.h"
-#include "dcrlerp.h"
+#include <dcmtk/dcmjpeg/djdecode.h>  /* for dcmjpeg decoders */
+#include <dcmtk/dcmjpeg/djencode.h>  /* for dcmjpeg encoders */
+#include <dcmtk/dcmdata/dcrledrg.h>  /* for DcmRLEDecoderRegistration */
+#include <dcmtk/dcmdata/dcrleerg.h>  /* for DcmRLEEncoderRegistration */
+#include <dcmtk/dcmjpeg/djrploss.h>
+#include <dcmtk/dcmjpeg/djrplol.h>
+#include <dcmtk/dcmdata/dcpixel.h>
+#include <dcmtk/dcmdata/dcrlerp.h>
 #endif
 
 #ifdef WITH_OPENSSL
-#include "tlstrans.h"
-#include "tlslayer.h"
+#include <dcmtk/dcmtls/tlstrans.h>
+#include <dcmtk/dcmtls/tlslayer.h>
 #endif
 
 #ifdef WITH_ZLIB
@@ -113,6 +120,7 @@ END_EXTERN_C
 #import "DCM.h"
 #import "DCMTransferSyntax.h"
 #import "SendController.h"
+#import "NSFileManager+N2.h"
 
 #import "OpenGLScreenReader.h"
 
@@ -125,55 +133,41 @@ END_EXTERN_C
 #define APPLICATIONTITLE        "STORESCU"
 #define PEERAPPLICATIONTITLE    "ANY-SCP"
 
-static OFBool opt_verbose = OFTrue;
-static OFBool opt_showPresentationContexts = OFTrue;
-static OFBool opt_debug = OFTrue;
-static OFBool opt_abortAssociation = OFFalse;
-static OFCmdUnsignedInt opt_maxReceivePDULength = ASC_DEFAULTMAXPDU;
-//static OFCmdUnsignedInt opt_maxSendPDULength = 0;
-static E_TransferSyntax opt_networkTransferSyntax = EXS_LittleEndianExplicit;
-
-static int lastStatusCode = STATUS_Success;
-
-static OFBool opt_proposeOnlyRequiredPresentationContexts = OFFalse;
-static OFBool opt_combineProposedTransferSyntaxes = OFFalse;
-
-static OFCmdUnsignedInt opt_repeatCount = 1;
-//static OFCmdUnsignedInt opt_inventPatientCount = 25;
-//static OFCmdUnsignedInt opt_inventStudyCount = 50;
-//static OFCmdUnsignedInt opt_inventSeriesCount = 100;
-static OFBool opt_correctUIDPadding = OFFalse;
-//static OFBool opt_inventSOPInstanceInformation = OFFalse;
-//static OFString patientNamePrefix("OSIRIX^PN_");   // PatientName is PN (maximum 16 chars)
-//static OFString patientIDPrefix("PID_"); // PatientID is LO (maximum 64 chars)
-//static OFString studyIDPrefix("SID_");   // StudyID is SH (maximum 16 chars)
-//static OFString accessionNumberPrefix;  // AccessionNumber is SH (maximum 16 chars)
-T_DIMSE_BlockingMode opt_blockMode = DIMSE_NONBLOCKING;
-int opt_dimse_timeout = 0;
-int opt_acse_timeout = 30;
-int opt_Quality = 90;
-
-//#ifdef WITH_ZLIB
-//static OFCmdUnsignedInt opt_compressionLevel = 0;
-//#endif
-
+// All mutable C helper state belongs to one -run: invocation.
+struct StoreSendContext {
+    StoreSendContext() = default;
+    StoreSendContext(const StoreSendContext&) = delete;
+    StoreSendContext& operator=(const StoreSendContext&) = delete;
+    OFBool opt_verbose = OFTrue;
+    OFBool opt_showPresentationContexts = OFTrue;
+    OFBool opt_debug = OFTrue;
+    OFBool opt_abortAssociation = OFFalse;
+    OFCmdUnsignedInt opt_maxReceivePDULength = ASC_DEFAULTMAXPDU;
+    E_TransferSyntax opt_networkTransferSyntax = EXS_LittleEndianExplicit;
+    int lastStatusCode = STATUS_Success;
+    OFBool opt_proposeOnlyRequiredPresentationContexts = OFFalse;
+    OFBool opt_combineProposedTransferSyntaxes = OFFalse;
+    OFCmdUnsignedInt opt_repeatCount = 1;
+    OFBool opt_correctUIDPadding = OFFalse;
+    T_DIMSE_BlockingMode opt_blockMode = DIMSE_NONBLOCKING;
+    int opt_dimse_timeout = 0;
+    int opt_acse_timeout = 30;
+    int opt_Quality = 90;
+    HorosStoreReport *storeReport = nil; // owned by this sender
+    NSString *temporaryDirectory = nil;
+    unsigned long seed = 0;
+    ~StoreSendContext() {
+        @autoreleasepool {
+            if (temporaryDirectory) {
+                [[NSFileManager defaultManager] removeItemAtPath:temporaryDirectory error:NULL];
+                [temporaryDirectory release];
+            }
+        }
+    }
+};
 #ifdef WITH_OPENSSL
-//static int         opt_keyFileFormat = SSL_FILETYPE_PEM;
-//static OFBool      opt_doAuthenticate = OFFalse;
-#if OPENSSL_VERSION_NUMBER >= 0x0090700fL
-static OFString    opt_ciphersuites(TLS1_TXT_RSA_WITH_AES_128_SHA ":" SSL3_TXT_RSA_DES_192_CBC3_SHA);
-#else
-static OFString    opt_ciphersuites(SSL3_TXT_RSA_DES_192_CBC3_SHA);
-#endif
-//static const char *opt_readSeedFile = NULL;
-//static const char *opt_writeSeedFile = NULL;
-//static DcmCertificateVerification opt_certVerification = DCV_requireCertificate;
-//static const char *opt_dhparam = NULL;
-
 static NSString *opensslSync = @"openssl";
 #endif
-
-static int inc = 0;
 
 static void
 errmsg(const char *msg,...)
@@ -188,10 +182,10 @@ errmsg(const char *msg,...)
 }
 
 static OFCondition
-addStoragePresentationContexts(T_ASC_Parameters *params, OFList<OFString>& sopClasses);
+addStoragePresentationContexts(StoreSendContext &context, T_ASC_Parameters *params, OFList<OFString>& sopClasses);
 
 static OFCondition
-cstore(T_ASC_Association *assoc, const OFString& fname);
+cstore(StoreSendContext &context, T_ASC_Association *assoc, const OFString& fname);
 
 #define SHORTCOL 4
 #define LONGCOL 19
@@ -250,11 +244,11 @@ addPresentationContext(T_ASC_Parameters *params,
 }
 
 static OFCondition
-addStoragePresentationContexts(T_ASC_Parameters *params, OFList<OFString>& sopClasses)
+addStoragePresentationContexts(StoreSendContext &context, T_ASC_Parameters *params, OFList<OFString>& sopClasses)
 {
     /*
      * Each SOP Class will be proposed in two presentation contexts (unless
-     * the opt_combineProposedTransferSyntaxes global variable is true).
+     * the send's context.opt_combineProposedTransferSyntaxes option is true).
      * The command line specified a preferred transfer syntax to use.
      * This prefered transfer syntax will be proposed in one
      * presentation context and a set of alternative (fallback) transfer
@@ -271,7 +265,7 @@ addStoragePresentationContexts(T_ASC_Parameters *params, OFList<OFString>& sopCl
 
     // Which transfer syntax was preferred on the command line
     OFString preferredTransferSyntax;
-    if (opt_networkTransferSyntax == EXS_Unknown) {
+    if (context.opt_networkTransferSyntax == EXS_Unknown) {
         /* gLocalByteOrder is defined in dcxfer.h */
         if (gLocalByteOrder == EBO_LittleEndian) {
             /* we are on a little endian machine */
@@ -281,7 +275,7 @@ addStoragePresentationContexts(T_ASC_Parameters *params, OFList<OFString>& sopCl
             preferredTransferSyntax = UID_BigEndianExplicitTransferSyntax;
         }
     } else {
-        DcmXfer xfer(opt_networkTransferSyntax);
+        DcmXfer xfer(context.opt_networkTransferSyntax);
         preferredTransferSyntax = xfer.getXferID();
     }
 
@@ -297,7 +291,7 @@ addStoragePresentationContexts(T_ASC_Parameters *params, OFList<OFString>& sopCl
     fallbackSyntaxes.remove(preferredTransferSyntax);
     // If little endian implicit is preferred then we don't need any fallback syntaxes
     // because it is the default transfer syntax and all applications must support it.
-    if (opt_networkTransferSyntax == EXS_LittleEndianImplicit) {
+    if (context.opt_networkTransferSyntax == EXS_LittleEndianImplicit) {
         fallbackSyntaxes.clear();
     }
 
@@ -312,23 +306,26 @@ addStoragePresentationContexts(T_ASC_Parameters *params, OFList<OFString>& sopCl
         ++s_cur;
     }
 
-    if (!opt_proposeOnlyRequiredPresentationContexts) {
-        // add the (short list of) known storage sop classes to the list
-        // the array of Storage SOP Class UIDs comes from dcuid.h
-        for (int i=0; i<numberOfDcmShortSCUStorageSOPClassUIDs; i++) {
-            sopClasses.push_back(dcmShortSCUStorageSOPClassUIDs[i]);
-        }
-    }
-
-    // thin out the sop classes to remove any duplicates.
+    // The selected files come first. The upstream short list does not include
+    // every storage class (notably SEG), and optional classes must not consume
+    // the 128-context budget before the actual batch has been represented.
     OFList<OFString> sops;
-    s_cur = sopClasses.begin();
-    s_end = sopClasses.end();
-    while (s_cur != s_end) {
-        if (!isaListMember(sops, *s_cur)) {
-            sops.push_back(*s_cur);
+    for (const OFString& sop : sopClasses) {
+        OFString candidate = sop;
+        if (!isaListMember(sops, candidate)) sops.push_back(candidate);
+    }
+    const OFBool combineSyntaxes = context.opt_combineProposedTransferSyntaxes ||
+        (!fallbackSyntaxes.empty() && sops.size() > 64);
+    const size_t maximumClasses = (combineSyntaxes || fallbackSyntaxes.empty()) ? 128 : 64;
+    if (sops.size() > maximumClasses) {
+        errmsg("Too many required presentation contexts");
+        return ASC_BADPRESENTATIONCONTEXTID;
+    }
+    if (!context.opt_proposeOnlyRequiredPresentationContexts) {
+        for (int i = 0; i < numberOfDcmShortSCUStorageSOPClassUIDs && sops.size() < maximumClasses; ++i) {
+            OFString candidate = dcmShortSCUStorageSOPClassUIDs[i];
+            if (!isaListMember(sops, candidate)) sops.push_back(candidate);
         }
-        ++s_cur;
     }
 
     // add a presentations context for each sop class / transfer syntax pair
@@ -343,7 +340,7 @@ addStoragePresentationContexts(T_ASC_Parameters *params, OFList<OFString>& sopCl
             return ASC_BADPRESENTATIONCONTEXTID;
         }
 
-        if (opt_combineProposedTransferSyntaxes) {
+        if (combineSyntaxes) {
             cond = addPresentationContext(params, pid, *s_cur, combinedSyntaxes);
             pid += 2;   /* only odd presentation context id's */
         } else {
@@ -476,7 +473,7 @@ addStoragePresentationContexts(T_ASC_Parameters *params, OFList<OFString>& sopCl
 //    OFString sopInstanceUID = makeUID(SITE_INSTANCE_UID_ROOT, (int)imageCounter);
 //    OFString imageNumber = intToString((int)imageCounter);
 //
-//    if (opt_verbose) {
+//    if (context.opt_verbose) {
 //        COUT << "Inventing Identifying Information (" <<
 //            "pa" << patientCounter << ", st" << studyCounter <<
 //            ", se" << seriesCounter << ", im" << imageCounter << "): " << endl;
@@ -503,11 +500,12 @@ addStoragePresentationContexts(T_ASC_Parameters *params, OFList<OFString>& sopCl
 //}
 
 static void
-progressCallback(void * /*callbackData*/,
+progressCallback(void *callbackData,
     T_DIMSE_StoreProgress *progress,
     T_DIMSE_C_StoreRQ * /*req*/)
 {
-    if (opt_verbose) {
+    StoreSendContext &context = *static_cast<StoreSendContext *>(callbackData);
+    if (context.opt_verbose) {
         switch (progress->state) {
         case DIMSE_StoreBegin:
             printf("XMIT:"); break;
@@ -548,7 +546,7 @@ static OFBool decompressFile(DcmFileFormat fileformat, const char *fname, char *
               DcmDataset *dataset = fileformat.getDataset();
 
               // decompress data set if compressed
-              dataset->chooseRepresentation(EXS_LittleEndianExplicit, NULL);
+              HorosChooseDICOMRepresentation(fileformat, EXS_LittleEndianExplicit);
 
               // check if everything went well
               if (dataset->canWriteXfer(EXS_LittleEndianExplicit))
@@ -570,7 +568,7 @@ static OFBool decompressFile(DcmFileFormat fileformat, const char *fname, char *
 	return status;
 }
 
-static OFBool compressFile(DcmFileFormat fileformat, const char *fname, char *outfname)
+static OFBool compressFile(StoreSendContext &context, DcmFileFormat fileformat, const char *fname, char *outfname)
 {
 	OFCondition cond;
 	OFBool status = YES;
@@ -582,9 +580,9 @@ static OFBool compressFile(DcmFileFormat fileformat, const char *fname, char *ou
         
         #ifndef OSIRIX_LIGHT
         BOOL useDCMTKForJP2K = [[NSUserDefaults standardUserDefaults] boolForKey: @"useDCMTKForJP2K"];
-        if( useDCMTKForJP2K == NO && opt_networkTransferSyntax == EXS_JPEG2000)
+        if( useDCMTKForJP2K == NO && context.opt_networkTransferSyntax == EXS_JPEG2000)
         {
-            NSLog(@"SEND - Compress JPEG 2000 Lossy (%d) : %s", opt_Quality, fname);
+            NSLog(@"SEND - Compress JPEG 2000 Lossy (%d) : %s", context.opt_Quality, fname);
             NSString *path = [NSString stringWithUTF8String:fname];
             NSString *outpath = [NSString stringWithUTF8String:outfname];
             
@@ -596,7 +594,7 @@ static OFBool compressFile(DcmFileFormat fileformat, const char *fname, char *ou
             {
                 DCMTransferSyntax *tsx = [DCMTransferSyntax JPEG2000LossyTransferSyntax];
                                         
-                [dcmObject writeToFile:outpath withTransferSyntax: tsx quality: opt_Quality AET:@"Horos" atomically:YES];
+                [dcmObject writeToFile:outpath withTransferSyntax: tsx quality: context.opt_Quality AET:@"Horos" atomically:YES];
             }
             @catch( NSException *e)
             {
@@ -604,7 +602,7 @@ static OFBool compressFile(DcmFileFormat fileformat, const char *fname, char *ou
             }
             [dcmObject release];
         }
-        else if( useDCMTKForJP2K == NO && opt_networkTransferSyntax == EXS_JPEG2000LosslessOnly)
+        else if( useDCMTKForJP2K == NO && context.opt_networkTransferSyntax == EXS_JPEG2000LosslessOnly)
         {
             NSLog(@"SEND - Compress JPEG 2000 Lossless: %s", fname);
             
@@ -637,31 +635,31 @@ static OFBool compressFile(DcmFileFormat fileformat, const char *fname, char *ou
                 
                 DcmRepresentationParameter *params = nil;
                 DJ_RPLossy lossyParams( 90);
-                DJ_RPLossy JP2KParams( opt_Quality);
+                DJ_RPLossy JP2KParams( context.opt_Quality);
                 DJ_RPLossy JP2KParamsLossLess( DCMLosslessQuality);
                 DcmRLERepresentationParameter rleParams;
                 DJ_RPLossless losslessParams(6,0);
                 
-                if (opt_networkTransferSyntax == EXS_JPEGProcess14SV1TransferSyntax)
+                if (context.opt_networkTransferSyntax == EXS_JPEGProcess14SV1TransferSyntax)
                     params = &losslessParams;
-                else if (opt_networkTransferSyntax == EXS_JPEGProcess2_4TransferSyntax)
+                else if (context.opt_networkTransferSyntax == EXS_JPEGProcess2_4TransferSyntax)
                     params = &lossyParams; 
-                else if (opt_networkTransferSyntax == EXS_RLELossless)
+                else if (context.opt_networkTransferSyntax == EXS_RLELossless)
                     params = &rleParams;
-                else if (opt_networkTransferSyntax == EXS_JPEG2000LosslessOnly)
+                else if (context.opt_networkTransferSyntax == EXS_JPEG2000LosslessOnly)
                     params = &JP2KParamsLossLess; 
-                else if (opt_networkTransferSyntax == EXS_JPEG2000)
+                else if (context.opt_networkTransferSyntax == EXS_JPEG2000)
                     params = &JP2KParams;
-                else if (opt_networkTransferSyntax == EXS_JPEGLSLossless)
+                else if (context.opt_networkTransferSyntax == EXS_JPEGLSLossless)
                     params = &JP2KParamsLossLess; 
-                else if (opt_networkTransferSyntax == EXS_JPEGLSLossy)
+                else if (context.opt_networkTransferSyntax == EXS_JPEGLSLossy)
                     params = &JP2KParams;
                 
                 // this causes the lossless JPEG version of the dataset to be created
-                dataset->chooseRepresentation(opt_networkTransferSyntax, params);
+                HorosChooseDICOMRepresentation(fileformat, context.opt_networkTransferSyntax, params, context.opt_Quality);
 
                 // check if everything went well
-                if (dataset->canWriteXfer(opt_networkTransferSyntax))
+                if (dataset->canWriteXfer(context.opt_networkTransferSyntax))
                 {
                     // force the meta-header UIDs to be re-generated when storing the file 
                     // since the UIDs in the data set may have changed 
@@ -674,7 +672,7 @@ static OFBool compressFile(DcmFileFormat fileformat, const char *fname, char *ou
                     
                     unlink( outfname);
                     
-                    cond = fileformat.saveFile( outfname, opt_networkTransferSyntax);
+                    cond = fileformat.saveFile( outfname, context.opt_networkTransferSyntax);
                     status =  (cond.good()) ? YES : NO;
                 }
                 else
@@ -692,10 +690,10 @@ static OFBool compressFile(DcmFileFormat fileformat, const char *fname, char *ou
 	return status;
 }
 
-static long seed = 0;
+
 
 static OFCondition
-storeSCU(T_ASC_Association * assoc, const char *fname)
+storeSCU(StoreSendContext &context, T_ASC_Association * assoc, const char *fname)
     /*
      * This function will read all the information from the given file,
      * figure out a corresponding presentation context which will be used
@@ -707,6 +705,7 @@ storeSCU(T_ASC_Association * assoc, const char *fname)
      *   fname - [in] Name of the file which shall be processed.
      */
 {
+    NSString *sourcePath = [NSString stringWithUTF8String:fname];
     DIC_US msgId = assoc->nextMsgID++;
     T_ASC_PresentationContextID presId;
     T_DIMSE_C_StoreRQ req;
@@ -716,11 +715,14 @@ storeSCU(T_ASC_Association * assoc, const char *fname)
     DcmDataset *statusDetail = NULL;
 	char outfname[ 4096];
 	
-	sprintf( outfname, "%s/%ld.dcm", [[DicomDatabase activeLocalDatabase] tempDirPathC], seed++);
+	if (!context.temporaryDirectory)
+        context.temporaryDirectory = [[[NSFileManager defaultManager] tmpDirectoryPathInDir:[[DicomDatabase activeLocalDatabase] tempDirPath]] retain];
+    if (snprintf(outfname, sizeof(outfname), "%s/%lu.dcm", [context.temporaryDirectory fileSystemRepresentation], context.seed++) >= sizeof(outfname))
+        [NSException raise:NSGenericException format:@"DICOM send temporary path is too long."];
 
     OFBool unsuccessfulStoreEncountered = OFTrue; // assumption
 	
-    if (opt_verbose) {
+    if (context.opt_verbose) {
         printf("--------------------------\n");
         printf("Sending file: %s\n", fname);
     }
@@ -735,6 +737,8 @@ storeSCU(T_ASC_Association * assoc, const char *fname)
     /* figure out if an error occured while the file was read*/
     if (cond.bad()) {
         errmsg("Bad DICOM file: %s: %s", fname, cond.text());
+        [context.storeReport recordUnreadablePath: sourcePath
+                                   reason: [NSString stringWithUTF8String: cond.text()]];
         return cond;
     }
 
@@ -744,9 +748,12 @@ storeSCU(T_ASC_Association * assoc, const char *fname)
 //    }
 
     /* figure out which SOP class and SOP instance is encapsulated in the file */
-    if (!DU_findSOPClassAndInstanceInDataSet(dcmff.getDataset(),
-        sopClass, sopInstance, opt_correctUIDPadding)) {
+    if (!HorosFindSOPClassAndInstanceInDataSet(dcmff.getDataset(),
+        sopClass, sizeof( sopClass), sopInstance, sizeof( sopInstance), context.opt_correctUIDPadding)) {
         errmsg("No SOP Class & Instance UIDs in file: %s", fname);
+        // DIMSE_BADDATA prints as "DIMSE Inappropriate data for message", which
+        // is what a user saw and could do nothing with.
+        [context.storeReport recordPathWithoutIdentity: sourcePath];
         return DIMSE_BADDATA;
     }
 	
@@ -758,7 +765,7 @@ storeSCU(T_ASC_Association * assoc, const char *fname)
      * to find a presentation context for deflated explicit VR first.
      */
     if (filexfer.isNotEncapsulated() &&
-        opt_networkTransferSyntax == EXS_DeflatedLittleEndianExplicit)
+        context.opt_networkTransferSyntax == EXS_DeflatedLittleEndianExplicit)
     {
         filexfer = EXS_DeflatedLittleEndianExplicit;
     }
@@ -768,7 +775,7 @@ storeSCU(T_ASC_Association * assoc, const char *fname)
 	
 	//printf("on the fly conversion\n");
 	//we have a valid presentation ID,.Chaeck and see if file is consistent with it
-	DcmXfer preferredXfer(opt_networkTransferSyntax);
+	DcmXfer preferredXfer(context.opt_networkTransferSyntax);
 	OFBool status = NO;
 	presId = ASC_findAcceptedPresentationContextID(assoc, sopClass, preferredXfer.getXferID());
 	T_ASC_PresentationContext pc;
@@ -787,9 +794,9 @@ storeSCU(T_ASC_Association * assoc, const char *fname)
 		}
 		else if (filexfer.isNotEncapsulated() && proposedTransfer.isEncapsulated())
 		{
-			status = compressFile(dcmff, fname, outfname);
+			status = compressFile(context, dcmff, fname, outfname);
 		}
-		else if (filexfer.getXfer() != opt_networkTransferSyntax)
+		else if (filexfer.getXfer() != context.opt_networkTransferSyntax)
 		{
 			// The file is already compressed, we will re-compress the file.....
 //			E_TransferSyntax fileTS = filexfer.getXfer();
@@ -805,7 +812,7 @@ storeSCU(T_ASC_Association * assoc, const char *fname)
 			else
 				printf("------ Warning! Recompression: presentation for syntax:\n%s -> %s\n", dcmFindNameOfUID(filexfer.getXferID()), dcmFindNameOfUID(preferredXfer.getXferID()));
 			
-			status = compressFile(dcmff, fname, outfname);
+			status = compressFile(context, dcmff, fname, outfname);
 		}
 	 }
 	 else
@@ -817,9 +824,10 @@ storeSCU(T_ASC_Association * assoc, const char *fname)
 		filexfer = dcmff.getDataset()->getOriginalXfer();
 		
 		/* figure out which SOP class and SOP instance is encapsulated in the file */
-		if (!DU_findSOPClassAndInstanceInDataSet(dcmff.getDataset(),
-			sopClass, sopInstance, opt_correctUIDPadding)) {
+		if (!HorosFindSOPClassAndInstanceInDataSet(dcmff.getDataset(),
+			sopClass, sizeof( sopClass), sopInstance, sizeof( sopInstance), context.opt_correctUIDPadding)) {
 			errmsg("No SOP Class & Instance UIDs in file: %s", outfname);
+			[context.storeReport recordPathWithoutIdentity: sourcePath];
 			return DIMSE_BADDATA;
 		}
 		
@@ -836,11 +844,19 @@ storeSCU(T_ASC_Association * assoc, const char *fname)
         if (!modalityName) modalityName = dcmFindNameOfUID(sopClass);
         if (!modalityName) modalityName = "unknown SOP class";
         errmsg("No presentation context for: (%s) %s", modalityName, sopClass);
+        
+        // The negotiation, not the file and not the message: the association is
+        // up and the node simply will not take this SOP class in this transfer
+        // syntax. A C-ECHO says nothing about that.
+        const char *syntaxName = dcmFindNameOfUID(filexfer.getXferID());
+        [context.storeReport recordNoPresentationContextPath: sourcePath
+                                         sopClassUID: [NSString stringWithFormat: @"%s (%s)", sopClass, modalityName]
+                                      transferSyntax: [NSString stringWithUTF8String: syntaxName? syntaxName : "an unknown transfer syntax"]];
         return DIMSE_NOVALIDPRESENTATIONCONTEXTID;
     }
 
     /* if required, dump general information concerning transfer syntaxes */
-    if (opt_verbose) {
+    if (context.opt_verbose) {
         DcmXfer fileTransfer(dcmff.getDataset()->getOriginalXfer());
         T_ASC_PresentationContext pc;
         ASC_findAcceptedPresentationContext(assoc->params, presId, &pc);
@@ -858,36 +874,52 @@ storeSCU(T_ASC_Association * assoc, const char *fname)
     req.Priority = DIMSE_PRIORITY_LOW;
 
     /* if required, dump some more general information */
-    if (opt_verbose) {
+    if (context.opt_verbose) {
         printf("Store SCU RQ: MsgID %d, (%s)\n", msgId, dcmSOPClassUIDToModality(sopClass));
     }
 
     /* finally conduct transmission of data */
     cond = DIMSE_storeUser(assoc, presId, &req,
-        NULL, dcmff.getDataset(), progressCallback, NULL,
-        opt_blockMode, opt_dimse_timeout,
-        &rsp, &statusDetail, NULL, DU_fileSize(fname));
+        NULL, dcmff.getDataset(), progressCallback, &context,
+        context.opt_blockMode, context.opt_dimse_timeout,
+        &rsp, &statusDetail, NULL, OFStandard::getFileSize(fname));
 
     /*
      * If store command completed normally, with a status
      * of success or some warning then the image was accepted.
      */
+    NSString *storedPath = sourcePath;
+    NSString *dimseStatus = [NSString stringWithFormat: @"status 0x%04x (%s)", rsp.DimseStatus, DU_cstoreStatusString( rsp.DimseStatus)];
+    
     if (cond == EC_Normal && (rsp.DimseStatus == STATUS_Success || DICOM_WARNING_STATUS(rsp.DimseStatus))) {
         unsuccessfulStoreEncountered = OFFalse;
+        [context.storeReport recordSentPath: storedPath statusText: dimseStatus];
     }
     else
     {
         if (cond == EC_Normal)
+        {
+            // The node answered and refused this instance. The association is
+            // still good; the next file may well be accepted.
             DIMSE_printCStoreRSP(stdout, &rsp);
+            [context.storeReport recordRejectedPath: storedPath statusText: dimseStatus];
+        }
+        else
+        {
+            // The transmission itself failed. Nothing after this is worth
+            // attempting on the same association.
+            [context.storeReport recordTransportFailurePath: storedPath
+                                             reason: [NSString stringWithUTF8String: cond.text()]];
+        }
     }
 
     /* remember the response's status for later transmissions of data */
-    lastStatusCode = rsp.DimseStatus;
+    context.lastStatusCode = rsp.DimseStatus;
 
     /* dump some more general information */
     if (cond == EC_Normal)
     {
-        if (opt_verbose) {
+        if (context.opt_verbose) {
             DIMSE_printCStoreRSP(stdout, &rsp);
         }
     }
@@ -917,9 +949,9 @@ storeSCU(T_ASC_Association * assoc, const char *fname)
 }
 
 
-static OFCondition cstore(T_ASC_Association * assoc, const OFString& fname)
+static OFCondition cstore(StoreSendContext &context, T_ASC_Association * assoc, const OFString& fname)
     /*
-     * This function will process the given file as often as is specified by opt_repeatCount.
+     * This function will process the given file as often as is specified by context.opt_repeatCount.
      * "Process" in this case means "read file, send C-STORE-RQ, receive C-STORE-RSP".
      *
      * Parameters:
@@ -929,14 +961,14 @@ static OFCondition cstore(T_ASC_Association * assoc, const OFString& fname)
 {
     OFCondition cond = EC_Normal;
 	
-    /* opt_repeatCount specifies how many times a certain file shall be processed */
-    int n = (int)opt_repeatCount;
+    /* context.opt_repeatCount specifies how many times a certain file shall be processed */
+    int n = (int)context.opt_repeatCount;
 
     /* as long as no error occured and the counter does not equal 0 */
     while ((cond.good()) && n--)
     {
         /* process file (read file, send C-STORE-RQ, receive C-STORE-RSP) */
-        cond = storeSCU(assoc, fname.c_str());
+        cond = storeSCU(context, assoc, fname.c_str());
     }
     
     /* return result value */
@@ -1002,8 +1034,9 @@ static OFCondition cstore(T_ASC_Association * assoc, const OFString& fname)
 		if (_secureConnection)
 		{
 			_doAuthenticate = [[extraParameters objectForKey:@"TLSAuthenticated"] boolValue];
-			_keyFileFormat = SSL_FILETYPE_PEM;
-			certVerification = (TLSCertificateVerificationType)[[extraParameters objectForKey:@"TLSCertificateVerification"] intValue];
+			_keyFileFormat = DCF_Filetype_PEM;
+			// An unrecognised value must not mean "do not check the peer".
+			certVerification = (TLSCertificateVerificationType)[HorosTLSVerificationPolicy normalise: [[extraParameters objectForKey:@"TLSCertificateVerification"] intValue]];
 			
 			NSArray *suites = [extraParameters objectForKey:@"TLSCipherSuites"];
 			NSMutableArray *selectedCipherSuites = [NSMutableArray array];
@@ -1026,21 +1059,16 @@ static OFCondition cstore(T_ASC_Association * assoc, const OFString& fname)
 		_filesToSend = [[NSMutableArray arrayWithArray: filesToSend] retain];
 		[_filesToSend removeDuplicatedStrings];
         
-        NSMutableArray *toBeRemoved = [NSMutableArray array];
-        for( NSString *f in _filesToSend)
-        {
-            if( [[NSFileManager defaultManager] fileExistsAtPath: f] == NO)
-            {
-                [toBeRemoved addObject: f];
-                NSLog( @"**** DCMTKStoreSCU: file not available: %@", f);
-            }
-        }
-        [_filesToSend removeObjectsInArray: toBeRemoved];
-        
+        // Preserve absent paths in the requested inventory. The send loop
+        // records their read failure alongside the other per-file outcomes.
+
 		_numberOfFiles = _filesToSend.count;
 		_numberSent = 0;
 		_numberErrors = 0;
 		_logEntry = nil;
+		
+		[_report release];
+		_report = [[HorosStoreReport alloc] init];
 		
 		DcmFileFormat fileformat;
 		if ([_filesToSend count])
@@ -1089,6 +1117,8 @@ static OFCondition cstore(T_ASC_Association * assoc, const OFString& fname)
 	[_patientName release];
 	[_studyDescription release];
 	[_logEntry release];
+	
+	[_report release];
     
 	// TLS
 	[_cipherSuites release];
@@ -1103,6 +1133,8 @@ static OFCondition cstore(T_ASC_Association * assoc, const OFString& fname)
 	NSException* localException = nil;
 	
 	NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
+    StoreSendContext context;
+    context.storeReport = _report;
 	
 	[[AppController sharedAppController] notificationTitle: NSLocalizedString( @"DICOM Send", nil) description: [NSString stringWithFormat: NSLocalizedString(@"Sending %@...\rTo: %@ - %@", nil), N2LocalizedSingularPluralCount( _filesToSend.count, NSLocalizedString(@"file", nil), NSLocalizedString(@"files", nil)), _calledAET, _hostname] name:@"send"];
 	
@@ -1129,12 +1161,11 @@ static OFCondition cstore(T_ASC_Association * assoc, const OFString& fname)
     
     OFList<OFString> fileNameList;       // list of files to transfer to SCP
     OFList<OFString> sopClassUIDList;    // the list of sop classes
-    OFList<OFString> sopInstanceUIDList; // the list of sop instances
     
     T_ASC_Network *net = NULL;
     T_ASC_Parameters *params;
     DIC_NODENAME localHost;
-    DIC_NODENAME peerHost;
+
     T_ASC_Association *assoc = NULL;
     DcmAssociationConfiguration asccfg; // handler for association configuration profiles
     
@@ -1144,77 +1175,75 @@ static OFCondition cstore(T_ASC_Association * assoc, const OFString& fname)
 	
     [[NSUserDefaults standardUserDefaults] setBool: 0 forKey: @"verbose_dcmtkStoreScu"];
     
-	opt_verbose = [[NSUserDefaults standardUserDefaults] boolForKey: @"verbose_dcmtkStoreScu"];
-	opt_showPresentationContexts = [[NSUserDefaults standardUserDefaults] boolForKey: @"verbose_dcmtkStoreScu"];
-	opt_debug = [[NSUserDefaults standardUserDefaults] boolForKey: @"verbose_dcmtkStoreScu"];
-	DUL_Debug( [[NSUserDefaults standardUserDefaults] boolForKey: @"verbose_dcmtkStoreScu"]);
-	DIMSE_debug( [[NSUserDefaults standardUserDefaults] boolForKey: @"verbose_dcmtkStoreScu"]);
-	SetDebugLevel( [[NSUserDefaults standardUserDefaults] boolForKey: @"verbose_dcmtkStoreScu"]);
+	context.opt_verbose = [[NSUserDefaults standardUserDefaults] boolForKey: @"verbose_dcmtkStoreScu"];
+	context.opt_showPresentationContexts = [[NSUserDefaults standardUserDefaults] boolForKey: @"verbose_dcmtkStoreScu"];
+	context.opt_debug = [[NSUserDefaults standardUserDefaults] boolForKey: @"verbose_dcmtkStoreScu"];
+	OFLog::configure([[NSUserDefaults standardUserDefaults] boolForKey: @"verbose_dcmtkStoreScu"] ? OFLogger::DEBUG_LOG_LEVEL : OFLogger::WARN_LOG_LEVEL);
 	
 	switch (_transferSyntax)
 	{
 		default:
 		case SendExplicitLittleEndian:
-			opt_networkTransferSyntax = EXS_LittleEndianExplicit;
+			context.opt_networkTransferSyntax = EXS_LittleEndianExplicit;
 			break;
 		case SendJPEG2000Lossless:
-			opt_networkTransferSyntax = EXS_JPEG2000LosslessOnly;
-			opt_Quality = 0;
+			context.opt_networkTransferSyntax = EXS_JPEG2000LosslessOnly;
+			context.opt_Quality = 0;
 			break;
 		case SendJPEG2000Lossy10: 
-			opt_networkTransferSyntax = EXS_JPEG2000;
-			opt_Quality = 1;
+			context.opt_networkTransferSyntax = EXS_JPEG2000;
+			context.opt_Quality = 1;
 			break;
 		case SendJPEG2000Lossy20:
-			opt_networkTransferSyntax = EXS_JPEG2000;
-			opt_Quality = 2;
+			context.opt_networkTransferSyntax = EXS_JPEG2000;
+			context.opt_Quality = 2;
 			break;
 		case SendJPEG2000Lossy50:
-			opt_networkTransferSyntax = EXS_JPEG2000;
-			opt_Quality = 3;
+			context.opt_networkTransferSyntax = EXS_JPEG2000;
+			context.opt_Quality = 3;
 			break;
         case SendJPEGLSLossless:
-			opt_networkTransferSyntax = EXS_JPEGLSLossless;
-			opt_Quality = 0;
+			context.opt_networkTransferSyntax = EXS_JPEGLSLossless;
+			context.opt_Quality = 0;
 			break;
 		case SendJPEGLSLossy10: 
-			opt_networkTransferSyntax = EXS_JPEGLSLossy;
-			opt_Quality = 1;
+			context.opt_networkTransferSyntax = EXS_JPEGLSLossy;
+			context.opt_Quality = 1;
 			break;
 		case SendJPEGLSLossy20:
-			opt_networkTransferSyntax = EXS_JPEGLSLossy;
-			opt_Quality = 2;
+			context.opt_networkTransferSyntax = EXS_JPEGLSLossy;
+			context.opt_Quality = 2;
 			break;
 		case SendJPEGLSLossy50:
-			opt_networkTransferSyntax = EXS_JPEGLSLossy;
-			opt_Quality = 3;
+			context.opt_networkTransferSyntax = EXS_JPEGLSLossy;
+			context.opt_Quality = 3;
 			break;
 		case SendJPEGLossless: 
-			opt_networkTransferSyntax = EXS_JPEGProcess14SV1TransferSyntax;
+			context.opt_networkTransferSyntax = EXS_JPEGProcess14SV1TransferSyntax;
 			break;
 		case SendJPEGLossy9:
-			opt_networkTransferSyntax = EXS_JPEGProcess2_4TransferSyntax;
-			opt_Quality = 90;
+			context.opt_networkTransferSyntax = EXS_JPEGProcess2_4TransferSyntax;
+			context.opt_Quality = 90;
 			break;
 		case SendJPEGLossy8:
-			opt_networkTransferSyntax = EXS_JPEGProcess2_4TransferSyntax;
-			opt_Quality = 80;
+			context.opt_networkTransferSyntax = EXS_JPEGProcess2_4TransferSyntax;
+			context.opt_Quality = 80;
 			break;
 		case SendJPEGLossy7:
-			opt_networkTransferSyntax = EXS_JPEGProcess2_4TransferSyntax;
-			opt_Quality = 70;
+			context.opt_networkTransferSyntax = EXS_JPEGProcess2_4TransferSyntax;
+			context.opt_Quality = 70;
 			break;
 		case SendImplicitLittleEndian:
-			opt_networkTransferSyntax = EXS_LittleEndianImplicit;
+			context.opt_networkTransferSyntax = EXS_LittleEndianImplicit;
 			break;
 		case SendRLE:
-			opt_networkTransferSyntax = EXS_RLELossless;
+			context.opt_networkTransferSyntax = EXS_RLELossless;
 			break;
 		case SendExplicitBigEndian:
-			opt_networkTransferSyntax = EXS_BigEndianExplicit;
+			context.opt_networkTransferSyntax = EXS_BigEndianExplicit;
 			break;
 		case SendBZip:
-			opt_networkTransferSyntax = EXS_DeflatedLittleEndianExplicit;
+			context.opt_networkTransferSyntax = EXS_DeflatedLittleEndianExplicit;
 			break;
 	}
     
@@ -1223,11 +1252,11 @@ static OFCondition cstore(T_ASC_Association * assoc, const OFString& fname)
 #endif
 
 	//default should be False
-	opt_proposeOnlyRequiredPresentationContexts = OFFalse;
-//	opt_combineProposedTransferSyntaxes = OFTrue;
+	context.opt_proposeOnlyRequiredPresentationContexts = OFFalse;
+//	context.opt_combineProposedTransferSyntaxes = OFTrue;
 	
 #ifdef WITH_ZLIB
-	if (opt_networkTransferSyntax == EXS_DeflatedLittleEndianExplicit)
+	if (context.opt_networkTransferSyntax == EXS_DeflatedLittleEndianExplicit)
 		dcmZlibCompressionLevel.set((int) _compression);
 #endif
 	
@@ -1241,26 +1270,20 @@ static OFCondition cstore(T_ASC_Association * assoc, const OFString& fname)
     if( opt_timeout < 2)
         opt_timeout = 2;
     
-    if( [[NSUserDefaults standardUserDefaults] integerForKey:@"DICOMConnectionTimeout"] > 0)
-    {
-        NSLog( @"--- DICOMConnectionTimeout: %d", (int) [[NSUserDefaults standardUserDefaults] integerForKey:@"DICOMConnectionTimeout"]);
-        dcmConnectionTimeout.set( (Sint32) [[NSUserDefaults standardUserDefaults] integerForKey:@"DICOMConnectionTimeout"]);
-    }
-    else
-        dcmConnectionTimeout.set( (Sint32) opt_timeout);
+    const Sint32 connectionTimeout = (Sint32)[[NSUserDefaults standardUserDefaults] integerForKey:@"DICOMConnectionTimeout"];
     
    //acse-timeout
     
-	opt_acse_timeout = OFstatic_cast(int, opt_timeout);
+	context.opt_acse_timeout = OFstatic_cast(int, opt_timeout);
 	
 	//dimse-timeout
 	//OFCmdSignedInt opt_timeout = 0;
 	
-	opt_dimse_timeout = OFstatic_cast(int, opt_timeout);
-	opt_blockMode = DIMSE_NONBLOCKING;
+	context.opt_dimse_timeout = OFstatic_cast(int, opt_timeout);
+	context.opt_blockMode = DIMSE_NONBLOCKING;
 	
 	//max PUD
-	//opt_maxReceivePDULength = 
+	//context.opt_maxReceivePDULength =
 	
 	//max-send-pdu
 	//opt_maxSendPDULength = 
@@ -1271,118 +1294,32 @@ static OFCondition cstore(T_ASC_Association * assoc, const OFString& fname)
 	#ifndef OSIRIX_LIGHT
 //	if( _secureConnection)
 //		[DDKeychain lockTmpFiles];
-	NSString *uniqueStringID = [NSString stringWithFormat:@"%d.%d.%d", getpid(), inc++, (int) random()];
+	NSString *uniqueStringID = NSUUID.UUID.UUIDString;
 	#endif
 	
 	@try
 	{
 	#ifndef OSIRIX_LIGHT
 	#ifdef WITH_OPENSSL
-		if(_cipherSuites)
-		{
-            @synchronized( opensslSync)
-            {
-                @try
-                {
-                    const char *current = NULL;
-                    const char *currentOpenSSL;
-                    
-                    opt_ciphersuites.clear();
-                    
-                    for (NSString *suite in _cipherSuites)
-                    {
-                        current = [suite cStringUsingEncoding:NSUTF8StringEncoding];
-                        
-                        if (NULL == (currentOpenSSL = DcmTLSTransportLayer::findOpenSSLCipherSuiteName(current)))
-                        {
-                            NSLog(@"ciphersuite '%s' is unknown.", current);
-                            NSLog(@"Known ciphersuites are:");
-                            unsigned long numSuites = DcmTLSTransportLayer::getNumberOfCipherSuites();
-                            for (unsigned long cs=0; cs < numSuites; cs++)
-                            {
-                                NSLog(@"%s", DcmTLSTransportLayer::getTLSCipherSuiteName(cs));
-                            }
-                            
-                            localException = [[NSException exceptionWithName:@"DICOM Network Failure (STORE-SCU TLS)" reason:[NSString stringWithFormat:@"Ciphersuite '%s' is unknown.", current] userInfo:nil] retain];
-                            [localException raise];
-                        }
-                        else
-                        {
-                            if (opt_ciphersuites.length() > 0) opt_ciphersuites += ":";
-                            opt_ciphersuites += currentOpenSSL;
-                        }
-                        
-                    }
-                }
-                @catch ( NSException *e)
-                {
-                    NSLog(@"******** cipherSuites Exception: %@", e);
-                }
-            }
-		}
-		
 	#endif
 	#endif
 		
-		  int paramCount = [_filesToSend count];
 		  const char *currentFilename = NULL;
-		  OFString errormsg;
 		  char sopClassUID[128];
 		  char sopInstanceUID[128];
-		  OFBool ignoreName;
-		  
-		 /* finally parse filenames */
-		  for (int i=0; i < paramCount; i++)
-		  {
-			[paths addObject:[_filesToSend objectAtIndex:i]];
-		  }
-		  
-		  for (int i=0; i < paramCount; i++)
-		  {
-			ignoreName = OFFalse;
-			currentFilename = [[paths objectAtIndex:i] UTF8String];
-			
-			if (access(currentFilename, R_OK) < 0)
-			{
-			  errormsg = "cannot access file: ";
-			  errormsg += currentFilename;
-//			  if (opt_haltOnUnsuccessfulStore)
-//				 errmsg(errormsg.c_str());
-//				 else CERR << "warning: " << errormsg << ", ignoring file" << endl;
-			}
-			else
-			{
-			  if (opt_proposeOnlyRequiredPresentationContexts)
-			  {
-				  if (!DU_findSOPClassAndInstanceInFile(currentFilename, sopClassUID, sopInstanceUID))
-				  {
-					ignoreName = OFTrue;
-					errormsg = "missing SOP class (or instance) in file: ";
-					errormsg += currentFilename;
-//					if (opt_haltOnUnsuccessfulStore)
-//					   errmsg(errormsg.c_str());
-//					   else CERR << "warning: " << errormsg << ", ignoring file" << endl;
-				  }
-				  else if (!dcmIsaStorageSOPClassUID(sopClassUID))
-				  {
-					ignoreName = OFTrue;
-					errormsg = "unknown storage sop class in file: ";
-					errormsg += currentFilename;
-					errormsg += ": ";
-					errormsg += sopClassUID;
-//					if (opt_haltOnUnsuccessfulStore)
-//					   errmsg(errormsg.c_str());
-//					   else CERR << "warning: " << errormsg << ", ignoring file" << endl;
-				  }
-				  else
-				  {
-					sopClassUIDList.push_back(sopClassUID);
-					sopInstanceUIDList.push_back(sopInstanceUID);
-				  }
-			  }
-			  if (!ignoreName) fileNameList.push_back(currentFilename);
-			}
-		  }
+          // Keep every selected path in the send/report inventory, including
+          // unreadable input. Identity inspection only supplies negotiation.
+          for (NSString *path in _filesToSend) {
+              [paths addObject:path];
+              currentFilename = [path fileSystemRepresentation];
+              fileNameList.push_back(currentFilename);
+              if (HorosFindSOPClassAndInstanceInFile(currentFilename,
+                    sopClassUID, sizeof(sopClassUID), sopInstanceUID, sizeof(sopInstanceUID)) &&
+                  dcmIsaStorageSOPClassUID(sopClassUID)) {
+                  sopClassUIDList.push_back(sopClassUID);
+              }
+          }
+
 
 	#ifdef ON_THE_FLY_COMPRESSION
 		// register global JPEG decompression codecs
@@ -1405,7 +1342,7 @@ static OFCondition cstore(T_ASC_Association * assoc, const OFString& fname)
 		}
 		
 		/* initialize network, i.e. create an instance of T_ASC_Network*. */
-		cond = ASC_initializeNetwork(NET_REQUESTOR, 0, opt_acse_timeout, &net);
+		cond = ASC_initializeNetwork(NET_REQUESTOR, 0, context.opt_acse_timeout, &net);
 		if (cond.bad())
 		{
 			DimseCondition::dump(cond);
@@ -1421,7 +1358,7 @@ static OFCondition cstore(T_ASC_Association * assoc, const OFString& fname)
         {
             @synchronized( opensslSync)
             {
-                tLayer = new DcmTLSTransportLayer(DICOM_APPLICATION_REQUESTOR, _readSeedFile);
+                tLayer = new DcmTLSTransportLayer(NET_REQUESTOR, _readSeedFile, OFTrue);
                 if (tLayer == NULL)
                 {
                     NSLog(@"unable to create TLS transport layer");
@@ -1437,7 +1374,7 @@ static OFCondition cstore(T_ASC_Association * assoc, const OFString& fname)
                     
                     for (NSString *cert in trustedCertificates)
                     {
-                        if (TCS_ok != tLayer->addTrustedCertificateFile([[trustedCertificatesDir stringByAppendingPathComponent:cert] cStringUsingEncoding:NSUTF8StringEncoding], _keyFileFormat))
+                        if (tLayer->addTrustedCertificateFile([[trustedCertificatesDir stringByAppendingPathComponent:cert] cStringUsingEncoding:NSUTF8StringEncoding], static_cast<DcmKeyFileFormat>(_keyFileFormat)).bad())
                         {
                             localException = [[NSException exceptionWithName:@"DICOM Network Failure (STORE-SCU TLS)" reason:[NSString stringWithFormat:@"Unable to load certificate file %@", [trustedCertificatesDir stringByAppendingPathComponent:cert]] userInfo:nil] retain];
                             [localException raise];
@@ -1453,7 +1390,7 @@ static OFCondition cstore(T_ASC_Association * assoc, const OFString& fname)
                             //				do
                             //				{
                             //					app.checkValue(cmd.getValue(current));
-                            //					if (TCS_ok != tLayer->addTrustedCertificateDir(current, opt_keyFileFormat))
+                            //					if (tLayer->addTrustedCertificateDir(current, opt_keyFileFormat).bad())
                             //					{
                             //						CERR << "warning unable to load certificates from directory '" << current << "', ignoring" << endl;
                             //					}
@@ -1476,13 +1413,13 @@ static OFCondition cstore(T_ASC_Association * assoc, const OFString& fname)
                     NSString *_privateKeyFile = [DICOMTLS keyPathForServerAddress:_hostname port:_port AETitle:_calledAET withStringID:uniqueStringID]; // generates the PEM file for the private key
                     NSString *_certificateFile = [DICOMTLS certificatePathForServerAddress:_hostname port:_port AETitle:_calledAET withStringID:uniqueStringID]; // generates the PEM file for the certificate		
                     
-                    if (TCS_ok != tLayer->setPrivateKeyFile([_privateKeyFile cStringUsingEncoding:NSUTF8StringEncoding], SSL_FILETYPE_PEM))
+                    if (tLayer->setPrivateKeyFile([_privateKeyFile cStringUsingEncoding:NSUTF8StringEncoding], DCF_Filetype_PEM).bad())
                     {
                         localException = [[NSException exceptionWithName:@"DICOM Network Failure (STORE-SCU TLS)" reason:[NSString stringWithFormat:@"Unable to load private TLS key from %@", _privateKeyFile] userInfo:nil] retain];
                         [localException raise];
                     }
                     
-                    if (TCS_ok != tLayer->setCertificateFile([_certificateFile cStringUsingEncoding:NSUTF8StringEncoding], SSL_FILETYPE_PEM))
+                    if (tLayer->setCertificateFile([_certificateFile cStringUsingEncoding:NSUTF8StringEncoding], DCF_Filetype_PEM, TSP_Profile_BCP_195_RFC_8996).bad())
                     {
                         localException = [[NSException exceptionWithName:@"DICOM Network Failure (STORE-SCU TLS)" reason:[NSString stringWithFormat:@"Unable to load certificate from %@", _certificateFile] userInfo:nil] retain];
                         [localException raise];
@@ -1495,7 +1432,7 @@ static OFCondition cstore(T_ASC_Association * assoc, const OFString& fname)
                     }
                 }
                 
-                if (TCS_ok != tLayer->setCipherSuites(opt_ciphersuites.c_str()))
+                if (HorosConfigureTLSCipherSuites(*tLayer, _cipherSuites).bad())
                 {
                     localException = [[NSException exceptionWithName:@"DICOM Network Failure (STORE-SCU TLS)" reason:@"Unable to set selected cipher suites" userInfo:nil] retain];
                     [localException raise];
@@ -1525,7 +1462,7 @@ static OFCondition cstore(T_ASC_Association * assoc, const OFString& fname)
         #endif
             
          /* initialize asscociation parameters, i.e. create an instance of T_ASC_Parameters*. */
-        cond = ASC_createAssociationParameters(&params, opt_maxReceivePDULength);
+        cond = ASC_createAssociationParameters(&params, context.opt_maxReceivePDULength, connectionTimeout > 0 ? connectionTimeout : context.opt_acse_timeout);
         if (cond.bad())
         {
             DimseCondition::dump(cond);
@@ -1553,14 +1490,15 @@ static OFCondition cstore(T_ASC_Association * assoc, const OFString& fname)
         /* Figure out the presentation addresses and copy the */
         /* corresponding values into the association parameters.*/
         gethostname(localHost, sizeof(localHost) - 1);
-        sprintf(peerHost, "%s:%d", opt_peer, (int)opt_port);
+        // Address formatting and dual-stack DNS fallback are application policy.
         //NSLog(@"peer host: %s", peerHost);
-        ASC_setPresentationAddresses(params, localHost, peerHost);
+        cond = HorosDIMSESetPeerAddress(params, localHost, opt_peer, (int)opt_port);
+            if (cond.bad()) [[NSException exceptionWithName:@"DICOM Network Failure" reason:[NSString stringWithUTF8String:cond.text()] userInfo:nil] raise];
         
 
         /* Set the presentation contexts which will be negotiated */
         /* when the network connection will be established */
-        cond = addStoragePresentationContexts(params, sopClassUIDList);
+        cond = addStoragePresentationContexts(context, params, sopClassUIDList);
         if (cond.bad())
         {
             DimseCondition::dump(cond);
@@ -1571,7 +1509,7 @@ static OFCondition cstore(T_ASC_Association * assoc, const OFString& fname)
 
         
         /* dump presentation contexts if required */
-        if (opt_showPresentationContexts || opt_debug)
+        if (context.opt_showPresentationContexts || context.opt_debug)
         {
             printf("Request Parameters:\n");
             ASC_dumpParameters(params, COUT);
@@ -1580,9 +1518,9 @@ static OFCondition cstore(T_ASC_Association * assoc, const OFString& fname)
         
         /* create association, i.e. try to establish a network connection to another */
         /* DICOM application. This call creates an instance of T_ASC_Association*. */
-        if (opt_verbose)
+        if (context.opt_verbose)
             printf("Requesting Association\n");
-        cond = ASC_requestAssociation(net, params, &assoc);
+        cond = HorosDIMSERequestAssociation(net, params, &assoc);
         if (cond.bad())
         {
             if (cond == DUL_ASSOCIATIONREJECTED)
@@ -1591,28 +1529,28 @@ static OFCondition cstore(T_ASC_Association * assoc, const OFString& fname)
                 ASC_getRejectParameters(params, &rej);
                 errmsg("Association Rejected:");
                 ASC_printRejectParameters(stderr, &rej);
-                localException = [[NSException exceptionWithName:@"DICOM Network Failure (STORE-SCU)" reason:[NSString stringWithFormat: @"Association Rejected %04x:%04x %s", cond.module(), cond.code(), cond.text()] userInfo:nil] retain];
+                localException = [[NSException exceptionWithName:@"DICOM Network Failure (STORE-SCU)" reason:[HorosNetworkDiagnosis explainFailureToHost: _hostname port: _port condition: [NSString stringWithFormat: @"Association Rejected %04x:%04x %s", cond.module(), cond.code(), cond.text()]] userInfo:nil] retain];
                 [localException raise];
 
             } else {
                 errmsg("Association Request Failed:");
                 DimseCondition::dump(cond);
-                localException = [[NSException exceptionWithName:@"DICOM Network Failure (STORE-SCU)" reason:[NSString stringWithFormat: @"Association Request Failed %04x:%04x %s", cond.module(), cond.code(), cond.text()] userInfo:nil] retain];
+                localException = [[NSException exceptionWithName:@"DICOM Network Failure (STORE-SCU)" reason:[HorosNetworkDiagnosis explainFailureToHost: _hostname port: _port condition: [NSString stringWithFormat: @"Association Request Failed %04x:%04x %s", cond.module(), cond.code(), cond.text()]] userInfo:nil] retain];
                 [localException raise];
             }
         }
         
         
         /* dump the connection parameters if in debug mode*/
-        if (opt_debug)
+        if (context.opt_debug)
         {
-            ostream& out = ofConsole.lockCout();     
+            std::ostream& out = ofConsole.lockCout();
             ASC_dumpConnectionParameters(assoc, out);
             ofConsole.unlockCout();
         }
 
         /* dump the presentation contexts which have been accepted/refused */
-        if (opt_showPresentationContexts || opt_debug)
+        if (context.opt_showPresentationContexts || context.opt_debug)
         {
             printf("Association Parameters Negotiated:\n");
             ASC_dumpParameters(params, COUT);
@@ -1629,7 +1567,7 @@ static OFCondition cstore(T_ASC_Association * assoc, const OFString& fname)
         }
 
         /* dump general information concerning the establishment of the network connection if required */
-        if (opt_verbose) {
+        if (context.opt_verbose) {
             printf("Association Accepted (Max Send PDV: %u)\n",
                     assoc->sendPDVLength);
         }
@@ -1640,16 +1578,30 @@ static OFCondition cstore(T_ASC_Association * assoc, const OFString& fname)
         OFListIterator(OFString) iter = fileNameList.begin();
         OFListIterator(OFString) enditer = fileNameList.end();
         
-        while ((iter != enditer) && (cond == EC_Normal)) // compare with EC_Normal since DUL_PEERREQUESTEDRELEASE is also good()
+        BOOL associationLost = NO;
+        while (iter != enditer)
         {
-            cond = cstore(assoc, *iter);
+            cond = cstore(context, assoc, *iter);
             
             ++iter;
             
             if (cond == EC_Normal)
                 _numberSent++;
             else
-                _numberErrors = _numberOfFiles - _numberSent;
+            {
+                _numberErrors++;
+                
+                // A file this node will not take is not a reason to stop
+                // offering it the others. A transmission that failed is: the
+                // association is gone, and everything after it would fail too.
+                if( [_report lastFailureIsFileLevel] == NO)
+                {
+                    associationLost = YES;
+                    _numberErrors = _numberOfFiles - _numberSent;
+                }
+                else
+                    cond = EC_Normal; // carry on with the next file
+            }
             
             NSMutableDictionary  *userInfo = [NSMutableDictionary dictionary];
             [userInfo setObject:[NSNumber numberWithInt:_numberOfFiles] forKey:@"SendTotal"];
@@ -1673,18 +1625,24 @@ static OFCondition cstore(T_ASC_Association * assoc, const OFString& fname)
                 [NSThread currentThread].progress = [[userInfo objectForKey: @"NumberSent"] floatValue] / [[userInfo objectForKey: @"SendTotal"] floatValue];
             }
             
+            if( associationLost)
+                break;
+            
             if ([operation isCancelled] || (operation == nil && [[NSThread currentThread] isCancelled]))
                 break;
         }
         
+        if( [_report failedCount])
+            NSLog( @"**** DICOM send: %@", [_report detailWithLimit: 20]);
+        
         /* tear down association, i.e. terminate network connection to SCP */
         if (cond == EC_Normal)
         {
-            if (opt_abortAssociation)
+            if (context.opt_abortAssociation)
             {
-                if (opt_verbose)
+                if (context.opt_verbose)
                     printf("Aborting Association\n");
-                cond = ASC_abortAssociation(assoc);
+                cond = ASC_closeTransportConnection(assoc);
                 if (cond.bad())
                 {
                     errmsg("Association Abort Failed:");
@@ -1695,7 +1653,7 @@ static OFCondition cstore(T_ASC_Association * assoc, const OFString& fname)
             } else
             {
                 /* release association */
-                if (opt_verbose)
+                if (context.opt_verbose)
                     printf("Releasing Association\n");
                 cond = ASC_releaseAssociation(assoc);
                 if (cond.bad())
@@ -1710,10 +1668,10 @@ static OFCondition cstore(T_ASC_Association * assoc, const OFString& fname)
         else if (cond == DUL_PEERREQUESTEDRELEASE)
         {
             errmsg("Protocol Error: peer requested release (Aborting)");
-            if (opt_verbose)
+            if (context.opt_verbose)
                 printf("Aborting Association\n");
             localException = [[NSException exceptionWithName:@"DICOM Network Failure (STORE-SCU)" reason:[NSString stringWithFormat: @"Protocol Error: peer requested release (Aborting) %04x:%04x %s", cond.module(), cond.code(), cond.text()] userInfo:nil] retain];
-            cond = ASC_abortAssociation(assoc);
+            cond = ASC_closeTransportConnection(assoc);
             if (cond.bad())
             {
                 errmsg("Association Abort Failed:");
@@ -1723,17 +1681,17 @@ static OFCondition cstore(T_ASC_Association * assoc, const OFString& fname)
         }
         else if (cond == DUL_PEERABORTEDASSOCIATION)
         {
-            if (opt_verbose) printf("Peer Aborted Association\n");
+            if (context.opt_verbose) printf("Peer Aborted Association\n");
         }
         else
         {
             errmsg("SCU Failed:");
             DimseCondition::dump(cond);
-            if (opt_verbose)
+            if (context.opt_verbose)
                 printf("Aborting Association\n");
             
             localException = [[NSException exceptionWithName:@"DICOM Network Failure (STORE-SCU)" reason:[NSString stringWithFormat: @"SCU Failed %04x:%04x %s", cond.module(), cond.code(), cond.text()] userInfo:nil] retain];
-            cond = ASC_abortAssociation(assoc);
+            cond = ASC_closeTransportConnection(assoc);
             if (cond.bad())
             {
                 errmsg("Association Abort Failed:");
@@ -1790,10 +1748,10 @@ static OFCondition cstore(T_ASC_Association * assoc, const OFString& fname)
       {
         if (!tLayer->writeRandomSeed(opt_writeSeedFile))
         {
-          CERR << "Error while writing random seed file '" << opt_writeSeedFile << "', ignoring." << endl;
+          CERR << "Error while writing random context.seed file '" << opt_writeSeedFile << "', ignoring." << endl;
         }
       } else {
-        CERR << "Warning: cannot write random seed, ignoring." << endl;
+        CERR << "Warning: cannot write random context.seed, ignoring." << endl;
       }
     }
     delete tLayer;
@@ -1817,7 +1775,7 @@ static OFCondition cstore(T_ASC_Association * assoc, const OFString& fname)
 
 //    if (opt_haltOnUnsuccessfulStore && unsuccessfulStoreEncountered)
 //	{
-//        if (lastStatusCode == STATUS_Success)
+//        if (context.lastStatusCode == STATUS_Success)
 //		{
 //           
 //        }
@@ -1864,9 +1822,13 @@ static OFCondition cstore(T_ASC_Association * assoc, const OFString& fname)
 			[[AppController sharedAppController] notificationTitle: NSLocalizedString( @"DICOM Send", nil) description: [NSString stringWithFormat: NSLocalizedString(@"Errors ! %@ of %@ generated errors.", nil), N2LocalizedDecimal( _numberErrors) , N2LocalizedSingularPluralCount( _numberOfFiles, NSLocalizedString(@"file", nil), NSLocalizedString(@"files", nil))]  name:@"send"];
             
             NSLog( @"DCMTKStoreSCU: _numberSent: %d / _numberOfFiles : %d", _numberSent, _numberOfFiles);
+            NSLog( @"DCMTKStoreSCU: %@", [_report detailWithLimit: 20]);
             
+            // The reason used to be "see Applications/Utilities/Console.app for
+            // more detailed informations", and what was there to see was
+            // fprintf(stderr) from a released application.
             if( localException == nil)
-                localException = [[NSException exceptionWithName:@"DICOM Network Failure (STORE-SCU)" reason:@"Unsuccessful Store Encountered, see Applications/Utilities/Console.app for more detailed informations." userInfo:nil] retain];
+                localException = [[NSException exceptionWithName:@"DICOM Network Failure (STORE-SCU)" reason: [_report detailWithLimit: 5] userInfo:nil] retain];
 		}
 		else
 			[userInfo setObject:@"Complete" forKey:@"Message"];

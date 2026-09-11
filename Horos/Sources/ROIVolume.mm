@@ -43,6 +43,7 @@
 #import "ITKSegmentation3D.h"
 #import "ROIVolumeView.h"
 #import "WaitRendering.h"
+#import "Horos-Swift.h"
 
 @implementation ROIVolume
 
@@ -102,27 +103,45 @@
 
 - (void) setROIList: (NSArray*) newRoiList
 {
-	int i;
-	float prevArea, preLocation;
-	prevArea = 0.;
-	preLocation = 0.;
+	NSMutableArray *volumeSlices = [NSMutableArray array];
+	NSMutableArray *seriesOrigins = [NSMutableArray array];
 	volume = 0.;
 	
-	for(i = 0; i < [newRoiList count]; i++)
+	for( DCMPix *seriesPix in [viewer pixList])
 	{
-		ROI *curROI = [newRoiList objectAtIndex:i];
+		[seriesOrigins addObject: [[[HorosROIPatientPoint alloc] initWithX: seriesPix.originX
+																		 y: seriesPix.originY
+																		 z: seriesPix.originZ] autorelease]];
+	}
+	
+	for( ROI *curROI in newRoiList)
+	{
 		if([curROI type]==tPencil || [curROI type]==tCPolygon || [curROI type]==tPlain)
 		{
 			[roiList addObject:curROI];
-			// volume
 			DCMPix *pic = [curROI pix];
-			float curArea = [curROI roiArea];
-			if( preLocation != 0)
-				volume += (([pic sliceLocation] - preLocation)/10.) * (curArea + prevArea)/2.;
-			prevArea = curArea;
-			preLocation = [pic sliceLocation];
+			float orientation[ 9];
+			[pic orientation: orientation];
+			HorosROIVolumeSlice *slice = [[[HorosROIVolumeSlice alloc] initWithAreaCm2: [curROI roiArea]
+																			   originX: pic.originX
+																			   originY: pic.originY
+																			   originZ: pic.originZ
+																			   normalX: orientation[ 6]
+																			   normalY: orientation[ 7]
+																			   normalZ: orientation[ 8]
+																		componentCount: 1
+																		maskPixelCount: 0
+																		  pixelAreaMm2: 0
+															  spacingBetweenSlicesMm: pic.spacingBetweenSlices] autorelease];
+			[volumeSlices addObject: slice];
 		}
 	}
+	HorosROIVolumeResult *measured = [HorosROIVolumeGeometry volumeFromSlices: volumeSlices
+															   seriesOrigins: seriesOrigins
+														  interpolateMissing: NO
+															  meshPointCount: 0];
+	if( measured)
+		volume = measured.volumeCm3;
 	
 	if([roiList count])
 	{

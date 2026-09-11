@@ -112,7 +112,7 @@ OFCondition storeSCP(
     T_DIMSE_C_StoreRQ * req,
     T_ASC_PresentationContextID presId,
     DcmQueryRetrieveDatabaseHandle& dbHandle,
-    OFBool correctUIDPadding);
+    OFBool correctUIDPadding, OFBool cancellable = OFFalse);
 
 
 

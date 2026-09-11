@@ -38,6 +38,7 @@
 
 #import "DCMAttributeTag.h"
 #import "DCM.h"
+#import "DCMTagNameAlias.h"
 
 @implementation DCMAttributeTag
 
@@ -125,7 +126,14 @@
 }
 - (id) initWithName:(NSString *)name
 {
-	NSString *tagString = [(NSDictionary *)[DCMTagForNameDictionary sharedTagForNameDictionary] objectForKey:name];
+	NSDictionary *names = (NSDictionary *)[DCMTagForNameDictionary sharedTagForNameDictionary];
+	NSString *tagString = [names objectForKey:name];
+	if( tagString == nil)
+	{
+		NSString *other = DCMTagNameOtherSpelling(name);
+		if (other)
+			tagString = [names objectForKey:other];
+	}
 	if( tagString == nil)
 		return nil;
 	return [self initWithTagString:tagString];

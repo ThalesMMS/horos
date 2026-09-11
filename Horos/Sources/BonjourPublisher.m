@@ -38,6 +38,7 @@
 #import "BonjourPublisher.h"
 #import "BonjourBrowser.h"
 #import "DCMPix.h"
+#import "Horos-Swift.h"
 #import "DCMTKStoreSCU.h"
 #import "SendController.h"
 #import "DicomStudy.h"
@@ -69,6 +70,7 @@ extern const char *GetPrivateIP(void);
 
 @interface O2DatabaseConnection : N2Connection {
     int _mode, _hdi;
+    BOOL _authorized;
     NSMutableArray* _stack;
 }
 
@@ -146,7 +148,9 @@ extern const char *GetPrivateIP(void);
             if (_listener)
                 NSLog(@"Horos database shared on port %d", [_listener port]);
             else
-                NSLog(@"Warning: unable to share Horos database");
+                [[AppController sharedAppController] reportListenBindFailureForService:HorosListenBindFailure.databaseSharingService
+                                                                                  port:8780
+                                                                             errnoCode:[N2ConnectionListener lastBindErrno]];
         }
         
         if (!activate && _listener) {
@@ -161,6 +165,20 @@ extern const char *GetPrivateIP(void);
 }
 
 - (void)updateBonjour {
+    // A service created while sharing is disabled retains port zero forever.
+    // Drop inactive/stale advertisements and create one only for a live listener.
+    if (!_listener || (_bonjour && _bonjour.port != _listener.port)) {
+        _bonjour.delegate = nil;
+        [_bonjour stop];
+        [_bonjour release];
+        _bonjour = nil;
+    }
+    if (!_listener) {
+        Class directService = NSClassFromString(@"HorosDirectTransferService");
+        if ([directService respondsToSelector:@selector(sharedService)])
+            [[directService sharedService] stop];
+        return;
+    }
     if (!_bonjour) {
         // lazily instantiate the NSNetService object that will advertise on our behalf.  Passing in "" for the domain causes the service
         // to be registered in the default registration domain, which will currently always be "local"
@@ -175,6 +193,21 @@ extern const char *GetPrivateIP(void);
 #undef EitherOr
     if ([AppController UID])
         [txtrec setObject:[AppController UID] forKey:@"UID"];
+
+    Class directPolicy = NSClassFromString(@"HorosDirectTransferPolicy");
+    Class directService = NSClassFromString(@"HorosDirectTransferService");
+    if ([directService respondsToSelector:@selector(sharedService)])
+        [[directService sharedService] startIfSharingActive];
+    if ([directPolicy respondsToSelector:@selector(bonjourTXTFields)])
+    {
+        NSDictionary *capability = [directPolicy bonjourTXTFields];
+        NSString *version = [capability objectForKey:@"HorosDirectTransferVersion"];
+        if ([version isKindOfClass:[NSString class]] && [version length])
+            [txtrec setObject:version forKey:@"HorosDirectTransferVersion"];
+        NSString *directPort = [capability objectForKey:@"HorosDirectTransferPort"];
+        if ([directPort isKindOfClass:[NSString class]] && [directPort length])
+            [txtrec setObject:directPort forKey:@"HorosDirectTransferPort"];
+    }
     
     if( [_bonjour setTXTRecordData:[NSNetService dataFromTXTRecordDictionary:txtrec]] == NO)
         NSLog(@"Warning: Horos Bonjour net service setTXTRecordData FAILED");
@@ -190,7 +223,10 @@ extern const char *GetPrivateIP(void);
 
 - (void)netService:(NSNetService*)sender didNotPublish:(NSDictionary*)errorDict
 {
+    if (sender != _bonjour) return; // a delayed callback from an earlier service
     NSLog(@"Warning: Horos Bonjour net service did not publish, %@", errorDict);
+    _bonjour.delegate = nil;
+    [_bonjour stop];
     [_bonjour release];
     _bonjour = nil;
 }
@@ -311,8 +347,29 @@ static NSString* const O2NotEnoughData = @"O2NotEnoughData";
         if (_mode == NONE) {
             if (self.availableSize < 6)
                 return;
+            BOOL protected = NSUserDefaults.bonjourSharingIsPasswordProtected;
+            if (memcmp(self.readBuffer.bytes, "AUTHR", 6) == 0) {
+                NSInteger length = [HorosSharedDatabaseAuthorization authorizedPrefixLength:self.readBuffer password:NSUserDefaults.bonjourSharingPassword required:protected];
+                if (length == 0) return;
+                if (length < 0) { [self close]; return; }
+                [self readData:length];
+                _authorized = YES;
+            }
             char command[6];
             [self readData:6 toBuffer:command];
+            if (command[5] != 0) { [self close]; return; }
+            NSString *name = [NSString stringWithUTF8String:command];
+            if (!name) { [self close]; return; }
+            if (protected && !_authorized && ![HorosSharedDatabaseAuthorization isPublicCommand:name]) {
+                [self close];
+                return;
+            }
+            if (strcmp(command, "AUTHV") == 0) {
+                unsigned int version = NSSwapHostIntToBig(1);
+                [self writeData:[NSData dataWithBytes:&version length:4]];
+                _mode = DONE;
+                return;
+            }
             
             if (strcmp(command, "DATAB") == 0)
                 _mode = DATAB;
@@ -631,7 +688,7 @@ static NSString* const O2NotEnoughData = @"O2NotEnoughData";
     NSString* pswd = NSUserDefaults.bonjourSharingPassword;
     
     int val = 0;
-    if (pswd)
+    if (NSUserDefaults.bonjourSharingIsPasswordProtected)
         val = NSSwapHostIntToBig(1);
     
     [self writeData:[NSMutableData dataWithBytes:&val length:sizeof(int)]];
@@ -640,12 +697,20 @@ static NSString* const O2NotEnoughData = @"O2NotEnoughData";
 }
 
 - (void)PASWD {
-    NSString* incomingPswd = [self _stackReadString];
+    [self _requireDataSize:4];
+    unsigned int length; [self.readBuffer getBytes:&length length:4];
+    length = NSSwapBigIntToHost(length);
+    if (length == 0 || length > 4097) { [self close]; return; }
+    [self _requireDataSize:(int)length + 4];
+    [self readData:4];
+    NSData *bytes = [self readData:length];
+    if (((const unsigned char *)bytes.bytes)[length - 1] != 0) { [self close]; return; }
+    NSString *incomingPswd = [[[NSString alloc] initWithBytes:bytes.bytes length:length - 1 encoding:NSUTF8StringEncoding] autorelease];
     
     // We read the string
     int val = 0;
     
-    if (!NSUserDefaults.bonjourSharingPassword || [incomingPswd isEqualToString: NSUserDefaults.bonjourSharingPassword])
+    if (!NSUserDefaults.bonjourSharingIsPasswordProtected || (NSUserDefaults.bonjourSharingPassword.length && [incomingPswd isEqualToString:NSUserDefaults.bonjourSharingPassword]))
     {
         val = NSSwapHostIntToBig(1);
     }

@@ -259,6 +259,7 @@ typedef NSInteger CPRExportRotationSpan;
 - (void) computeCrossReferenceLines:(CPRMPRDCMView*) sender;
 - (IBAction)setTool:(id)sender;
 - (void) setToolIndex: (ToolMode) toolIndex;
+- (void)selectCurvedPathDrawingTool;
 - (float) getClippingRangeThicknessInMm;
 - (void) propagateWLWW:(DCMView*) sender;
 - (void) propagateOriginRotationAndZoomToTransverseViews: (CPRTransverseView*) sender;
@@ -287,6 +288,7 @@ typedef NSInteger CPRExportRotationSpan;
 - (IBAction) loadBezierPath: (id) sender;
 - (void) saveBezierPathToFile:(NSString*) f;
 - (void) loadBezierPathFromFile:(NSString*) f;
+- (BOOL)importPatientSpaceCenterlineFromFile:(NSString*)path;
 - (NSDictionary*)exportDCMImage16bitWithWidth:(NSUInteger)width height:(NSUInteger)height fullDepth:(BOOL)fullDepth withDicomExport:(DICOMExport *)dicomExport; // dicomExport can be nil
 - (void) setupToolbar;
 - (void)removeNode;

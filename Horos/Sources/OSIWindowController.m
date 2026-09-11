@@ -132,6 +132,8 @@ static BOOL protectedReentryWindowDidResize = NO;
 	return magneticWindowActivated;
 }
 
++ (BOOL) dontEnterMagneticFunctions { return dontEnterMagneticFunctions; }
+
 + (void) setDontEnterMagneticFunctions:(BOOL) a
 {
 	dontEnterMagneticFunctions = a;
@@ -563,9 +565,6 @@ static BOOL protectedReentryWindowDidResize = NO;
 	{
         [[NSNotificationCenter defaultCenter] addObserver: self selector: @selector(windowWillCloseNotification:) name: NSWindowWillCloseNotification object: nil];
 	}
-
-    // Override toolbar style
-    self.window.toolbarStyle = NSWindowToolbarStyleExpanded;
 
 	return self;
 }

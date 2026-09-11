@@ -47,6 +47,7 @@
 
 // pdf to dicom
 +(void)transformPdfAtPath:(NSString*)pdfPath toDicomAtPath:(NSString*)outDicomPath usingSourceDicomAtPath:(NSString*)sourcePath;
++(void)transformPdfAtPath:(NSString*)pdfPath toDicomAtPath:(NSString*)outDicomPath usingSourceDicomAtPath:(NSString*)sourcePath fallbackAttributes:(NSDictionary*)fallback;
 -(void)transformPdfAtPath:(NSString*)pdfPath toDicomAtPath:(NSString*)outDicomPath;
 -(void)saveReportAsDicomAtPath:(NSString*)path;
 -(NSString*)saveReportAsDicomInTmp;

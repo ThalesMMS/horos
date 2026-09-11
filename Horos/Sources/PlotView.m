@@ -124,6 +124,10 @@
 	if( dataArray == nil) return;
 	if( dataSize < 2) return;
 	
+	// Fill and frame the view, not the area needing redraw: since macOS 14
+	// NSView no longer clips drawing to its bounds.
+	aRect = self.bounds;
+	
 	[[NSColor whiteColor] set];
 	NSRectFill(aRect);
 	

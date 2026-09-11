@@ -5,8 +5,9 @@ export PATH="$PATH:/opt/local/bin:/opt/local/sbin:/opt/homebrew/bin/"
 path="$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )/$(basename "${BASH_SOURCE[0]}")"
 cd "$TARGET_NAME"; pwd
 
-env=$(env|sort|grep -v 'LLBUILD_BUILD_ID=\|LLBUILD_LANE_ID=\|LLBUILD_TASK_ID=\|Apple_PubSub_Socket_Render=\|DISPLAY=\|SHLVL=\|SSH_AUTH_SOCK=\|SECURITYSESSIONID=')
-hash="$(git describe --always --tags --dirty) $(md5 -q "$path")-$(md5 -qs "$env")"
+# One narrow hash for every dependency; see Horos/Scripts/dependency-hash.sh.
+. "$(dirname "$path")/../dependency-hash.sh"
+dependency_hash "$path"
 
 set -e; set -o xtrace; set -o pipefail
 
@@ -34,14 +35,7 @@ rm -Rf "$cmake_dir.tmp" "$install_dir.tmp"
 mkdir -p "$cmake_dir"
 
 cd "$cmake_dir"
-set +e
-rsync -a --delete "$source_dir/" . 2>&1 | tee "$cmake_dir/rsync.log"
-rsync_status=${PIPESTATUS[0]}
-set -e
-if [ $rsync_status -ne 0 ]; then
-    echo "OpenSSL rsync failed with exit code $rsync_status" >&2
-    exit $rsync_status
-fi
+ditto "$source_dir" "$cmake_dir"
 
 export CC=clang
 export CXX=clang

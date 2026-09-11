@@ -38,6 +38,7 @@
 #import "OrthogonalReslice.h"
 #import "WaitRendering.h"
 #import "N2Debug.h"
+#import "Horos-Swift.h"
 
 #include <Accelerate/Accelerate.h>
 
@@ -76,7 +77,7 @@
         
         z = [[dict objectForKey:@"zValue"] intValue];
         
-        register float *basedstPtr = Ycache + z*maxY*maxX;
+        register float *basedstPtr = Ycache + [HorosResliceCacheLayout sliceBaseForSlice: z width: maxX height: maxY];
         register float *basesrcPtr = [[originalDCMPixList objectAtIndex: z] fImage];
         int x = maxX;
         while (x-->0)
@@ -265,11 +266,9 @@
 			
 			if( Ycache && yCacheQueue.operationCount == 0)
 			{
-//				BlockMoveData(	Ycache + newY*newX*i,
-//								[curPix fImage],
-//								newX * newY *sizeof(float));
-
-
+				// A commented-out BlockMoveData used to sit here carrying a
+				// third spelling of the cache layout, different again from both
+				// branches below. Removed with the stride it disagreed with.
 				if( sign > 0)
 				{
 					float		*srcP, *dstP, *curPixfImage = [curPix fImage];
@@ -278,7 +277,8 @@
 					
 					for( y = from; y < to; y++)
 					{
-						srcP = Ycache + y*newTotal*newX + i * w;
+						srcP = Ycache + [HorosResliceCacheLayout sliceBaseForSlice: y width: newTotal height: newX]
+									  + [HorosResliceCacheLayout columnOffsetForColumn: i height: w];
 						dstP = curPixfImage + (newY-y-1) * newX;
 						
 						memcpy(	dstP, srcP, newX *sizeof(float));
@@ -290,7 +290,12 @@
 					
 					for( y = from; y < to; y++)
 					{
-						srcP = Ycache + y*newTotal*newX + i * newTotal;
+						// This multiplied by newTotal -- the width -- while the
+						// cache lays columns out newX apart. Square images hid
+						// it; anything else came out hatched, and the last
+						// slice read past the buffer (#374, A225).
+						srcP = Ycache + [HorosResliceCacheLayout sliceBaseForSlice: y width: newTotal height: newX]
+									  + [HorosResliceCacheLayout columnOffsetForColumn: i height: newX];
 						
 						memcpy(	curPixfImage + y * newX, srcP, newX *sizeof(float));
 					}
@@ -401,7 +406,7 @@
 		if( thickSlab > 1 && Ycache == nil)
 		{
 			if(useYcache)
-				Ycache = malloc( newTotal*newY*newX*sizeof(float));
+				Ycache = malloc( [HorosResliceCacheLayout elementCountForWidth: newTotal height: newX slices: newY] * sizeof(float));
 			
 			if( Ycache)
 			{

@@ -38,6 +38,7 @@
  =========================================================================*/
 
 #import "LoupeController.h"
+#import "Horos-Swift.h"
 
 
 @implementation LoupeController
@@ -45,6 +46,9 @@
 - (id)init;
 {
 	if(![super initWithWindowNibName:@"Loupe"]) return nil;
+	// An accessory of the 2D viewer: it follows the viewer's window, and a
+	// full-screen Space of its own is not a thing a loupe does.
+	[HorosFullScreenWindowSupport declineNativeFullScreen: [self window]];
 	return self;
 }
 

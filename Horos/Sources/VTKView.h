@@ -97,6 +97,12 @@ typedef char* vtkCocoaRenderWindow;
 - (void)initializeVTKSupport;
 - (void)cleanUpVTKSupport;
 
+/// Point the render window at the window this view is in, and start the
+/// interactor, as many times as anyone likes. Answers NO when there is nothing
+/// to render into, so a caller that renders outside drawRect: can stop rather
+/// than draw into a window that is not there any more.
+- (BOOL)prepareRenderWindow;
+
 // Accessors
 - (void)setRenderer:(vtkRenderer*)theRenderer;
 

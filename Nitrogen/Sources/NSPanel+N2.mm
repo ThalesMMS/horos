@@ -36,37 +36,23 @@
  ============================================================================*/
 
 #import "NSPanel+N2.h"
+#import "Horos-Swift.h"
 
 
 @implementation NSPanel (N2)
 
-+(NSPanel*)alertWithTitle:(NSString*)title message:(NSString*)message defaultButton:(NSString*)defaultButton alternateButton:(NSString*)alternateButton icon:(NSImage*)icon {
++(NSWindow*)alertWithTitle:(NSString*)title message:(NSString*)message defaultButton:(NSString*)defaultButton alternateButton:(NSString*)alternateButton icon:(NSImage*)icon {
 	return [self alertWithTitle:title message:message defaultButton:defaultButton alternateButton:alternateButton icon:icon sheet:NO];
 }
 
-+(NSPanel*)alertWithTitle:(NSString*)title message:(NSString*)message defaultButton:(NSString*)defaultButton alternateButton:(NSString*)alternateButton icon:(NSImage*)icon sheet:(BOOL)sheet {
-	NSPanel* panel = NSGetAlertPanel(title, @"%@", defaultButton, alternateButton, NULL, message);
-	
-	if (icon) {
-		for (NSImageView* view in [[panel contentView] subviews])
-			if ([view isKindOfClass:[NSImageView class]])
-				[view setImage:icon];
-	}
-	
-	if (sheet) {
-		for (NSButton* button in [[panel contentView] subviews])
-			if ([button isKindOfClass:[NSButton class]]) {
-//				NSLog(@"button: %@ --- %@ %@ --- %d", button, [button target], NSStringFromSelector([button action]), [button tag]);
-				[button setTarget:self];
-				[button setAction:@selector(_sheetButtonAction:)];
-			}
-	}
-	
-	return [panel autorelease];
-}
-
-+(void)_sheetButtonAction:(NSButton*)button {
-	[NSApp endSheet:[button window] returnCode:[button tag]];
+// NSGetAlertPanel's window has to be given back with NSReleaseAlertPanel. It used
+// to be autoreleased here instead, which destroys a window the alert still owns:
+// the alert's dealloc then messaged freed memory and the process died with
+// EXC_BAD_ACCESS as soon as the surrounding autorelease pool drained. The panel is
+// now built from NSAlert, which owns its window, and the default/alternate buttons
+// keep answering 1 and 0.
++(NSWindow*)alertWithTitle:(NSString*)title message:(NSString*)message defaultButton:(NSString*)defaultButton alternateButton:(NSString*)alternateButton icon:(NSImage*)icon sheet:(BOOL)sheet {
+	return [HorosModalAlertPanel panelWithTitle:title message:message defaultButton:defaultButton alternateButton:alternateButton icon:icon endsSheet:sheet];
 }
 
 @end

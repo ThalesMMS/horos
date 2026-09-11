@@ -653,7 +653,7 @@
                                         <binding destination="308" name="value" keyPath="values.automaticWorkspaceSave" id="337"/>
                                     </connections>
                                 </button>
-                                <button horizontalCompressionResistancePriority="1000" id="336">
+                                <button toolTip="Restore the saved viewer layout, including other studies saved in the workspace." horizontalCompressionResistancePriority="1000" id="336">
                                     <rect key="frame" x="130" y="87" width="388" height="18"/>
                                     <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
                                     <buttonCell key="cell" type="check" title="Automatically load Workspace State when opening a study" bezelStyle="regularSquare" imagePosition="left" alignment="left" scrollable="YES" lineBreakMode="clipping" inset="2" id="363">

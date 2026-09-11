@@ -58,6 +58,8 @@
 - (id) initWithString:(NSString*) str;
 - (id) initWithString:(NSString*) str :(BOOL) useSession;
 - (BOOL) aborted;
+// Process pending modal input at a safe cancellation checkpoint.
+- (BOOL)pollCancellation;
 - (IBAction) abortButton: (id) sender;
 - (void) setCancel :(BOOL) val;
 - (void) setElapsedString :(NSString*) str;

@@ -39,6 +39,7 @@
 #include "FVTiff.h"
 #endif
 
+#import "HorosBoundedTask.h"
 #import "XMLController.h"
 #import "XMLControllerDCMTKCategory.h"
 #import "WaitRendering.h"
@@ -60,6 +61,7 @@
 #import "DCMAttributeTag.h"
 #import "DicomDatabase.h"
 #import "PluginManager.h"
+#import "Horos-Swift.h"
 
 static NSString* 	XMLToolbarIdentifier					= @"XML Toolbar Identifier";
 static NSString*	ExportToolbarItemIdentifier				= @"Export.icns";
@@ -335,7 +337,16 @@ extern int delayedTileWindows;
             
             [self reloadFromDCMDocument];
             
-            NSString *searchGpEl = [NSString stringWithFormat:@"%@,%@", [NSString stringWithFormat:@"%04x", group], [NSString stringWithFormat:@"%04x", element]];
+            // The outline row carries the tag as DCMAttributeTag writes it, in
+            // upper case. This was formatted in lower case and compared with
+            // isEqualToString:, so a tag containing a hex letter - 0008,103E,
+            // Series Description among them - never matched any row, the edit
+            // was never recorded, and Apply wrote nothing. The document had
+            // already been changed in memory, so the field appeared in the
+            // editor and was gone again after saving and reopening. Asking the
+            // tag for its own string keeps the two sides the same by
+            // construction.
+            NSString *searchGpEl = tag.stringValue;
             
             for( int i = 0 ; i < [table numberOfRows]; i++)
             {
@@ -914,32 +925,19 @@ extern int delayedTileWindows;
 
 - (void)outlineView:(NSOutlineView *)outlineView willDisplayCell:(id)cell forTableColumn:(NSTableColumn *)tableColumn item:(id)item
 {
-	BOOL found = NO;
-	
-	if( [[search stringValue] isEqualToString:@""] == NO)
-	{
-		found = [self item: item containsString: [search stringValue]];
-		
-		if( found)
-		{
-			[cell setTextColor: [NSColor blackColor]];
-			[cell setFont:[NSFont boldSystemFontOfSize:12]];
-		}
-		else
-		{
-			[cell setTextColor: [NSColor grayColor]];
-			[cell setFont:[NSFont systemFontOfSize:12]];
-		}
-	}
-	else
-	{
-		[cell setTextColor: [NSColor blackColor]];
-		[cell setFont:[NSFont systemFontOfSize:12]];
-	}
-	[cell setLineBreakMode: NSLineBreakByTruncatingMiddle];
-    
-     if( [modifiedFields containsObject: [self getPath: item]])
-         [cell setTextColor: [NSColor redColor]];
+    BOOL searching = search.stringValue.length != 0;
+    BOOL found = searching && [self item:item containsString:search.stringValue];
+    BOOL modified = [modifiedFields containsObject:[self getPath:item]];
+    NSInteger row = [outlineView rowForItem:item];
+    BOOL selected = row >= 0 && [outlineView.selectedRowIndexes containsIndex:(NSUInteger)row];
+    NSColor *color = NSColor.textColor;
+    if (selected) color = NSColor.selectedControlTextColor;
+    else if (modified) color = [NSColor.systemRedColor blendedColorWithFraction:0.25 ofColor:NSColor.textColor];
+    // Nonmatches remain readable; bold matches distinguish search results without
+    // reducing text contrast on alternating rows, especially in Light appearance.
+    [cell setTextColor:color];
+    [cell setFont:(found || modified) ? [NSFont boldSystemFontOfSize:12] : [NSFont systemFontOfSize:12]];
+    [cell setLineBreakMode:NSLineBreakByTruncatingMiddle];
 }
 
 - (void) traverse: (NSXMLNode*) node string:(NSMutableString*) string
@@ -1233,12 +1231,50 @@ extern int delayedTileWindows;
                 for (int i = 0; i < [modifiedFields count]; i++)
                 {
                     NSString* field = [modifiedFields objectAtIndex:i];
-                    NSString* value = [modifiedValues objectAtIndex:i];
+                    id value = [modifiedValues objectAtIndex:i];
                     
-                    [tagAndValues addObject:[NSArray  arrayWithObjects:[DCMAttributeTag tagWithTagString:field],(value?value:@""),nil]];
+                    // The row's address, not its first tag. -[DCMAttributeTag
+                    // initWithTagString:] scans the first (gggg,eeee) and drops
+                    // the rest, so an edit inside a sequence -
+                    // (0054,0016)[0].(0018,1074) - was addressed to the
+                    // sequence element and never reached the value.
+                    id tag = [HorosDICOMTagPath pathWithString: field];
+                    
+                    if( tag == nil)
+                        tag = [DCMAttributeTag tagWithTagString: field];
+                    
+                    if( tag == nil)
+                        continue;
+                    
+                    // Delete marks the row with NSNull and shows it as "to be
+                    // deleted". That marker used to be handed to the writer as
+                    // if it were a value: it is not a string, so the edit was
+                    // dropped and reported as a file that could not be written,
+                    // and the tag stayed in the file. An entry of one element
+                    // is a removal; two is a replacement, and an empty string
+                    // there empties the element without removing it.
+                    if( value == nil || value == [NSNull null])
+                        [tagAndValues addObject: [NSArray arrayWithObject: tag]];
+                    else
+                        [tagAndValues addObject: [NSArray arrayWithObjects: tag, value, nil]];
                 }
                 
-                [XMLController modifyDicom:tagAndValues dicomFiles:files];
+                // The result was discarded, so a file that could not be written
+                // looked exactly like a successful edit.
+                NSArray *reasons = nil;
+                if( [XMLController modifyDicom:tagAndValues dicomFiles:files reasons: &reasons] == NO)
+                {
+                    NSString *detail = [NSString stringWithFormat: NSLocalizedString( @"Some of the %d selected files could not be modified. Their original values are unchanged.", nil), (int) files.count];
+                    
+                    // Naming the fields that were refused, and why, is the
+                    // difference between a dead end and a fixable mistake.
+                    if( reasons.count)
+                        detail = [detail stringByAppendingFormat: @"\n\n%@", [reasons componentsJoinedByString: @"\n"]];
+                    
+                    NSRunCriticalAlertPanel( NSLocalizedString( @"DICOM Editing", nil),
+                                            @"%@", NSLocalizedString( @"OK", nil), nil, nil,
+                                            detail);
+                }
                 
                 
                 
@@ -1314,33 +1350,48 @@ extern int delayedTileWindows;
 		return;
 	}
 	
-	NSTask *theTask = [[NSTask alloc] init];
-
-	NSPipe *thePipe = [NSPipe pipe];
-	
-	[theTask setLaunchPath:[[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"/dciodvfy"]];
-	[theTask setArguments: [NSMutableArray arrayWithObject: srcFile]];
-	[theTask setStandardError: thePipe];
-	[theTask launch];
-	
-	NSData *resData = [[thePipe fileHandleForReading] readDataToEndOfFile];
-	
-    while( [theTask isRunning])
-        [NSThread sleepForTimeInterval: 0.1];
+	// The validator reports on stderr and exits non-zero when it finds problems,
+	// which is a normal result. The bundled helper is arm64; an Intel leftover
+	// is named and is not launched under Rosetta. The command stays in Resources.
+	NSString *validator = [[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent: @"/dciodvfy"];
+	NSString *archReason = [HorosArchitectureAudit helperDiagnosisAtPath:validator];
+	if (archReason.length)
+	{
+		NSRunCriticalAlertPanel( NSLocalizedString( @"DICOM Validator", nil),
+								@"%@", NSLocalizedString( @"OK", nil), nil, nil, archReason);
+		return;
+	}
+	HorosBoundedTaskOptions options = { .timeout = 30.0, .capturesStandardError = YES, .allowsFailureStatus = YES};
+	NSError *taskError = nil;
+	NSData *resData = HorosRunBoundedTaskWithOptions( validator, @[ srcFile], options, &taskError);
 	
 	NSString *resString = nil;
-    
-    resString = [[[NSString alloc] initWithData:resData encoding: NSUTF8StringEncoding] autorelease];
-    
-    if( resString == nil)
-        resString = [[[NSString alloc] initWithData:resData encoding: NSASCIIStringEncoding] autorelease];
+	
+	if( resData)
+	{
+		resString = [[[NSString alloc] initWithData:resData encoding: NSUTF8StringEncoding] autorelease];
+		
+		if( resString == nil)
+			resString = [[[NSString alloc] initWithData:resData encoding: NSASCIIStringEncoding] autorelease];
+	}
+	
+	if( resString.length == 0)
+	{
+		NSString *reason = taskError.localizedDescription ?: NSLocalizedString( @"The validator produced no output.", nil);
+		
+		if( [[NSFileManager defaultManager] isExecutableFileAtPath: validator] == NO)
+			reason = NSLocalizedString( @"The validator is missing from the application bundle.", nil);
+		
+		NSRunCriticalAlertPanel( NSLocalizedString( @"DICOM Validator", nil),
+								@"%@", NSLocalizedString( @"OK", nil), nil, nil,
+								[NSString stringWithFormat: NSLocalizedString( @"The DICOM validator could not check this file: %@", nil), reason]);
+		return;
+	}
 	
 	[validatorText setString: resString];
 	
 	[validatorWindow makeKeyAndOrderFront: self];
 	[validatorWindow setTitle: srcFile];
-	
-	[theTask release];
 }
 
 - (IBAction) sortSeries: (id) sender
@@ -1552,7 +1603,7 @@ extern int delayedTileWindows;
 		[toolbarItem setLabel: NSLocalizedString(@"Export XML",nil)];
 		[toolbarItem setPaletteLabel: NSLocalizedString(@"Export XML",nil)];
 			[toolbarItem setToolTip: NSLocalizedString(@"Export these XML Data in a XML File",nil)];
-		[toolbarItem setImage: [NSImage imageNamed: ExportToolbarItemIdentifier]];
+		[toolbarItem setImage:[NSImage imageNamed:@"Export"]];
 		[toolbarItem setTarget: self];
 		[toolbarItem setAction: @selector(exportXML:)];
     }
@@ -1580,7 +1631,7 @@ extern int delayedTileWindows;
 		[toolbarItem setLabel: NSLocalizedString(@"Export Text", nil)];
 		[toolbarItem setPaletteLabel: NSLocalizedString(@"Export Text", nil)];
 		[toolbarItem setToolTip: NSLocalizedString(@"Export these XML Data in a Text File", nil)];
-		[toolbarItem setImage: [NSImage imageNamed: ExportToolbarItemIdentifier]];
+		[toolbarItem setImage:[NSImage imageNamed:@"Export"]];
 		[toolbarItem setTarget: self];
 		[toolbarItem setAction: @selector(exportText:)];
     }
@@ -1632,6 +1683,9 @@ extern int delayedTileWindows;
                 toolbarItem = item;
         }
     }
+
+    if( toolbarItem)
+        [HorosToolbarPolicy prepareItem: toolbarItem];
 	
     return toolbarItem;
 }

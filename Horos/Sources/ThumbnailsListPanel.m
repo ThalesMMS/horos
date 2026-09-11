@@ -36,6 +36,7 @@
  ============================================================================*/
 
 #import "ThumbnailsListPanel.h"
+#import "Horos-Swift.h"
 #import "ViewerController.h"
 #import "AppController.h"
 #import "NSWindow+N2.h"
@@ -77,7 +78,11 @@ static 	NSMutableDictionary *associatedScreen = nil;
 	if ([[NSScreen screens] count] <= screen)
 		return;
     
-	NSRect screenRect = [[[NSScreen screens] objectAtIndex:screen] visibleFrame];
+	// The area this screen may hold Horos windows on. A list pinned to the left
+	// edge of the display would sit in the strip somebody reserved for something
+	// else, and the tiling that leaves room for it would be reserving it twice.
+	NSScreen *thisScreen = [[NSScreen screens] objectAtIndex:screen];
+	NSRect screenRect = [HorosTilingArea rectForScreen: thisScreen visibleFrame: thisScreen.visibleFrame];
 	
 	NSRect dstframe;
 	dstframe.size.height = screenRect.size.height;
@@ -131,12 +136,28 @@ static 	NSMutableDictionary *associatedScreen = nil;
 	return self;
 }
 
+// Release the borrowed view only after returning it to its owning viewer.
+// This must work even if floating thumbnails were disabled after attachment.
+- (void)prepareForScreenReconfiguration
+{
+    if ([self isWindowLoaded]) [[self window] orderOut:self];
+    if (thumbnailsView) {
+        [associatedScreen removeObjectForKey:[NSValue valueWithPointer:thumbnailsView]];
+        if (superView) [superView addSubview:thumbnailsView];
+        else [thumbnailsView removeFromSuperview];
+        [thumbnailsView release];
+        thumbnailsView = nil;
+    }
+    superView = nil;
+    [viewer release];
+    viewer = nil;
+}
+
 - (void) dealloc
 {
-	[[NSNotificationCenter defaultCenter] removeObserver: self];
-    
-	[thumbnailsView release];
-	[super dealloc];
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [self prepareForScreenReconfiguration];
+    [super dealloc];
 }
 
 - (void)windowDidResignKey:(NSNotification *)aNotification
@@ -202,15 +223,21 @@ static 	NSMutableDictionary *associatedScreen = nil;
     NSWindow *window = [aNotification object];
 	if( [[window windowController] isKindOfClass:[ViewerController class]] && window.isVisible)
 	{
-		if( [[NSScreen screens] count] > screen)
-		{
+        NSArray *screens = [NSScreen screens];
+        if (screen < 0 || (NSUInteger)screen >= screens.count) {
+            [self.window orderOut:self];
+            return;
+        }
+        {
 			if( [window screen] == [[NSScreen screens] objectAtIndex: screen])
 			{
                 if( viewer && viewer.window.windowNumber > 0)
                     [[self window] orderWindow: NSWindowAbove relativeTo: viewer.window.windowNumber];
 			}
-			else
-				[self.window orderOut:self];
+            else if (!viewer.window.isVisible || viewer.window.screen != [screens objectAtIndex:screen])
+                [self.window orderOut:self];
+            // Focus on another display does not invalidate this display's viewer
+            // or thumbnail panel. Hide only when our own owner is no longer here.
 		}
 	}
 	

@@ -161,6 +161,17 @@ NSString * const _CPRGeneratorRunLoopMode = @"_CPRGeneratorRunLoopMode";
     [operation release];
 }
 
+- (void)cancelOutstandingRequests
+{
+    CPRGeneratorOperation *operation;
+
+    assert([NSThread isMainThread]);
+
+    for (operation in _observedOperations) {
+        [operation cancel];
+    }
+}
+
 - (CGFloat)frameRate
 {
 	assert([NSThread isMainThread]);

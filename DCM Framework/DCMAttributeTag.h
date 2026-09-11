@@ -36,6 +36,7 @@
  ============================================================================*/
 
 #import <Foundation/Foundation.h>
+#import "DCMTagNameAlias.h"
 
 /** \brief  DICOM Attribute Tag 
 *

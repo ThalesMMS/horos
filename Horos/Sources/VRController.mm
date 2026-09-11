@@ -3,7 +3,7 @@
  
  Horos is free software: you can redistribute it and/or modify
  it under the terms of the GNU Lesser General Public License as published by
- the Free Software Foundation, Êversion 3 of the License.
+ the Free Software Foundation, ?version 3 of the License.
  
  The Horos Project was based originally upon the OsiriX Project which at the time of
  the code fork was licensed as a LGPL project.  However, not all of the the source-code
@@ -15,24 +15,24 @@
  
  Horos is distributed in the hope that it will be useful, but
  WITHOUT ANY WARRANTY EXPRESS OR IMPLIED, INCLUDING ANY WARRANTY OF
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE OR USE. ÊSee the
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE OR USE. ?See the
  GNU Lesser General Public License for more details.
  
  You should have received a copy of the GNU Lesser General Public License
- along with Horos. ÊIf not, see http://www.gnu.org/licenses/lgpl.html
+ along with Horos. ?If not, see http://www.gnu.org/licenses/lgpl.html
  
  Prior versions of this file were published by the OsiriX team pursuant to
  the below notice and licensing protocol.
  ============================================================================
- Program: Ê OsiriX
- ÊCopyright (c) OsiriX Team
- ÊAll rights reserved.
- ÊDistributed under GNU - LGPL
- Ê
- ÊSee http://www.osirix-viewer.com/copyright.html for details.
- Ê Ê This software is distributed WITHOUT ANY WARRANTY; without even
- Ê Ê the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- Ê Ê PURPOSE.
+ Program: ? OsiriX
+ ?Copyright (c) OsiriX Team
+ ?All rights reserved.
+ ?Distributed under GNU - LGPL
+ ?
+ ?See http://www.osirix-viewer.com/copyright.html for details.
+ ? ? This software is distributed WITHOUT ANY WARRANTY; without even
+ ? ? the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+ ? ? PURPOSE.
  ============================================================================*/
 
 #import "options.h"
@@ -63,6 +63,7 @@
 #import "N2Debug.h"
 #import "PluginManager.h"
 #import "DicomDatabase.h"
+#import "Horos-Swift.h"
 
 static NSString* 	VRStandardToolbarIdentifier = @"VR Toolbar Identifier";
 static NSString* 	VRPanelToolbarIdentifier = @"VRPanel Toolbar Identifier";
@@ -280,8 +281,12 @@ static NSString*	CLUTEditorsViewToolbarItemIdentifier = @"CLUTEditors";
 
 - (void) setMovieFrame: (long) l
 {
-    curMovieIndex = l;
+    if( maxMovieIndex < 1)
+        return;
+    curMovieIndex = (short)[HorosFourDSeriesGuard wrappedIndex: l count: maxMovieIndex];
     [moviePosSlider setIntValue: curMovieIndex];
+    if( volumeData[ curMovieIndex] == nil)
+        return;
     
     [view movieChangeSource: (float*) [volumeData[ curMovieIndex] bytes] showWait: NO];
     [self displayROIVolumes];
@@ -323,11 +328,7 @@ static NSString*	CLUTEditorsViewToolbarItemIdentifier = @"CLUTEditors";
     
     if( thisTime - lastMovieTime > 1.0 / [movieRateSlider floatValue])
     {
-        val = curMovieIndex;
-        val ++;
-        
-        if( val < 0) val = 0;
-        if( val >= maxMovieIndex) val = 0;
+        val = (short)[HorosFourDSeriesGuard nextIndex: curMovieIndex count: maxMovieIndex];
         
         [self setMovieFrame: val];
         
@@ -361,6 +362,26 @@ static NSString*	CLUTEditorsViewToolbarItemIdentifier = @"CLUTEditors";
 
 -(void) addMoviePixList:(NSMutableArray*) pix :(NSData*) vData
 {
+    if( [HorosFourDSeriesGuard canStoreTimeAt: maxMovieIndex capacity: MAX4D] == NO)
+    {
+        NSRunAlertPanel(NSLocalizedString(@"Volume Rendering", nil), @"%@", nil, nil, nil,
+                        [HorosFourDSeriesGuard capacityReasonAt: maxMovieIndex capacity: MAX4D]);
+        return;
+    }
+    NSString *slices = [HorosFourDSeriesGuard reasonForInconsistentSlices: pix atTime: maxMovieIndex];
+    if( slices)
+    {
+        NSRunAlertPanel(NSLocalizedString(@"Volume Rendering", nil), @"%@", nil, nil, nil, slices);
+        return;
+    }
+    HorosFourDTimeGeometry *reference = [HorosFourDSeriesGuard geometryFromPixList: pixList[0] volume: volumeData[0]];
+    HorosFourDTimeGeometry *candidate = [HorosFourDSeriesGuard geometryFromPixList: pix volume: vData];
+    NSString *reason = [HorosFourDSeriesGuard reconstructionRefusalComparing: candidate to: reference atTime: maxMovieIndex];
+    if( reason)
+    {
+        NSRunAlertPanel(NSLocalizedString(@"Volume Rendering", nil), @"%@", nil, nil, nil, reason);
+        return;
+    }
     [pix retain];
     pixList[ maxMovieIndex] = pix;
     
@@ -435,14 +456,25 @@ static NSString*	CLUTEditorsViewToolbarItemIdentifier = @"CLUTEditors";
     
     computeMinMaxDepth++;
     
+    if( pixList[0] == nil || [pixList[0] count] == 0)
+    {
+        computeMinMaxDepth--;
+        return;
+    }
+    
     maximumValue = minimumValue = [[pixList[ 0] objectAtIndex: 0] maxValueOfSeries];
     
-    blendingMinimumValue = [[blendingPixList objectAtIndex: 0] minValueOfSeries];
-    blendingMaximumValue = [[blendingPixList objectAtIndex: 0] maxValueOfSeries];
+    if( blendingPixList && [blendingPixList count])
+    {
+        blendingMinimumValue = [[blendingPixList objectAtIndex: 0] minValueOfSeries];
+        blendingMaximumValue = [[blendingPixList objectAtIndex: 0] maxValueOfSeries];
+    }
     
     int i;
     for( i = 0; i < maxMovieIndex; i++)
     {
+        if( pixList[ i] == nil || [pixList[ i] count] == 0)
+            continue;
         if( maximumValue < [[pixList[ i] objectAtIndex: 0] maxValueOfSeries]) maximumValue = [[pixList[ i] objectAtIndex: 0] maxValueOfSeries];
         if( minimumValue > [[pixList[ i] objectAtIndex: 0] minValueOfSeries]) minimumValue = [[pixList[ i] objectAtIndex: 0] minValueOfSeries];
     }
@@ -456,6 +488,8 @@ static NSString*	CLUTEditorsViewToolbarItemIdentifier = @"CLUTEditors";
     
     if( [[viewer2D modality] isEqualToString: @"CT"] && maximumValue - minimumValue > 8192 && computeMinMaxDepth == 1)
     {
+        if ([HorosMPROpenGeometry shouldPresentHighDynamicPromptDuringHiddenInit:[style isEqualToString:@"noNib"]])
+        {
         NSInteger result = NSRunCriticalAlertPanel( NSLocalizedString( @"High Dynamic Values", nil), NSLocalizedString( @"Voxel values have a very high dynamic range (>8192). Two options are available to use the 3D engine: clip values above 7168 and below -1024 or resample the values.", nil), NSLocalizedString( @"Clip", nil), NSLocalizedString( @"Resample", nil), nil);
         
         if( result == NSAlertDefaultReturn)
@@ -467,6 +501,8 @@ static NSString*	CLUTEditorsViewToolbarItemIdentifier = @"CLUTEditors";
             
             for( int x = 0; x < maxMovieIndex; x++)
             {
+                if( pixList[ x] == nil || [pixList[ x] count] == 0 || volumeData[ x] == nil)
+                    continue;
                 vImage_Buffer srcf;
                 
                 DCMPix *firstObject = [pixList[ x] objectAtIndex: 0];
@@ -485,6 +521,7 @@ static NSString*	CLUTEditorsViewToolbarItemIdentifier = @"CLUTEditors";
             
             NSLog( @"-- new maxValueOfSeries = %f", maximumValue);
             NSLog( @"-- new minValueOfSeries = %f", minimumValue);
+        }
         }
     }
     
@@ -506,14 +543,27 @@ static NSString*	CLUTEditorsViewToolbarItemIdentifier = @"CLUTEditors";
     
     @try
     {
-        // MEMORY TEST: The renderer needs to have the volume in short
+        // MEMORY TEST: The renderer needs to have the volume in short.
+        //
+        // This used to fail with a dialogue titled "32-bit" telling the operator
+        // to upgrade to OsiriX 64-bit or OsiriX MD. On this arm64-only, 64-bit
+        // product that is false, unactionable and names another application, and
+        // it said nothing about what was too large. A214 asks for an explicit
+        // diagnosis; this one names the matrix and the size that was refused.
         {
-            unsigned long sizeofshort = sizeof( short) + 1;	//extra space for gradients computation
-            char	*testPtr = (char*) malloc( [firstObject pwidth] * [firstObject pheight] * [pix count] * sizeofshort);
+            NSInteger sizeofshort = sizeof( short) + 1;	//extra space for gradients computation
+            NSInteger needed = [HorosVolumeAllocation byteCountForWidth: [firstObject pwidth]
+                                                                 height: [firstObject pheight]
+                                                                 slices: [pix count]
+                                                          bytesPerVoxel: sizeofshort];
+            char	*testPtr = (char*) malloc( needed);
             if( testPtr == nil)
             {
-                if( NSRunAlertPanel( NSLocalizedString(@"32-bit",nil), NSLocalizedString( @"Cannot use the 3D engine.\r\rUpgrade to OsiriX 64-bit or OsiriX MD to solve this issue.",nil), NSLocalizedString(@"OK", nil), NSLocalizedString(@"OsiriX 64-bit", nil), nil) == NSAlertAlternateReturn)
-                    [[AppController sharedAppController] osirix64bit: self];
+                NSRunAlertPanel( NSLocalizedString( @"Not enough memory", nil),
+                                NSLocalizedString( @"Cannot use the 3D engine: a %@ volume needs %@ of contiguous memory, and the request was refused. Nothing was reduced silently; close other studies or open a smaller series.", nil),
+                                NSLocalizedString( @"OK", nil), nil, nil,
+                                [HorosVolumeAllocation describeMatrixWithWidth: [firstObject pwidth] height: [firstObject pheight] slices: [pix count]],
+                                [HorosVolumeAllocation describeByteCount: needed]);
                 
                 return nil;
             }
@@ -555,7 +605,7 @@ static NSString*	CLUTEditorsViewToolbarItemIdentifier = @"CLUTEditors";
         style = [m retain];
         _renderingMode = [renderingMode retain];
         
-        for( i = 0; i < 100; i++) undodata[ i] = nil;
+        for( i = 0; i < MAX4D; i++) undodata[ i] = nil;
         
         curMovieIndex = 0;
         maxMovieIndex = 1;
@@ -639,8 +689,7 @@ static NSString*	CLUTEditorsViewToolbarItemIdentifier = @"CLUTEditors";
         err = [view setPixSource:pixList[0] :(float*) [volumeData[0] bytes]];
         if( err != 0)
         {
-            if( NSRunAlertPanel( NSLocalizedString(@"32-bit",nil), NSLocalizedString( @"Cannot use the 3D engine.\r\rUpgrade to OsiriX 64-bit or OsiriX MD to solve this issue.",nil), NSLocalizedString(@"OK", nil), NSLocalizedString(@"OsiriX 64-bit", nil), nil) == NSAlertAlternateReturn)
-                [[AppController sharedAppController] osirix64bit: self];
+            NSRunAlertPanel( NSLocalizedString( @"Not enough memory", nil), NSLocalizedString( @"Cannot use the 3D engine.\r\rClose other studies or open a smaller series. Nothing was reduced silently.", nil), NSLocalizedString( @"OK", nil), nil, nil);
             [self autorelease];
             return nil;
         }
@@ -1008,6 +1057,9 @@ static NSString*	CLUTEditorsViewToolbarItemIdentifier = @"CLUTEditors";
 
 - (void) applyScissor : (NSArray*) object
 {
+    if( object.count < 9)
+        return;
+    
     int			i                   = [[object objectAtIndex: 0] intValue];
     int			stackOrientation	= [[object objectAtIndex: 1] intValue];
     int			c					= [[object objectAtIndex: 2] intValue];
@@ -1018,36 +1070,43 @@ static NSString*	CLUTEditorsViewToolbarItemIdentifier = @"CLUTEditors";
     NSPoint     minClip             = [[object objectAtIndex: 7] pointValue];
     NSPoint     maxClip             = [[object objectAtIndex: 8] pointValue];
     
-    int			index;
-    
-    switch( stackOrientation)
-    {
-        case 2:
-            index = i;
-            break;
-            
-        case 1:
-        case 0:
-            index = 0;
-            break;
-    }
-    
     BOOL outside = NO;
     BOOL restore = NO;
     
     if( c == NSCarriageReturnCharacter || c == NSEnterCharacter) outside = YES;
     else if( c == NSTabCharacter) restore = YES;
     
+    NSArray *targetList = blendedSeries ? blendingPixList : pixList[ curMovieIndex];
+    if( targetList.count < 1)
+        return;
+    
+    DCMPix *probe = [targetList objectAtIndex: 0];
+    HorosVRScissorPlan *plan = [HorosVRScissorBounds planWithWidth:(int)[probe pwidth]
+                                                           height:(int)[probe pheight]
+                                                       sliceCount:(int)targetList.count
+                                                      orientation:stackOrientation
+                                                          stackNo:i
+                                                          restore:restore
+                                                         clipMinX:minClip.x
+                                                         clipMinY:minClip.y
+                                                         clipMaxX:maxClip.x
+                                                         clipMaxY:maxClip.y];
+    if( plan.accepted == NO)
+        return;
+    
+    int index = (int)plan.pixIndex;
+    i = (int)plan.stackNo;
+    stackOrientation = (int)plan.orientation;
+    restore = plan.restore;
+    minClip = NSMakePoint( plan.clipMinX, plan.clipMinY);
+    maxClip = NSMakePoint( plan.clipMaxX, plan.clipMaxY);
+    
+    if( index < 0 || index >= (int)targetList.count)
+        return;
+    
     if( addition == NO) newVal = self.deleteValue;
     
-    if( blendedSeries)
-    {
-        [[blendingPixList objectAtIndex: index] fillROI:roi newVal:newVal minValue: -FLT_MAX maxValue: FLT_MAX outside:outside orientationStack:stackOrientation stackNo:i restore:restore addition:addition spline: NO clipMin: minClip clipMax: maxClip];
-    }
-    else
-    {
-        [[pixList[ curMovieIndex] objectAtIndex: index] fillROI:roi newVal:newVal minValue: -FLT_MAX maxValue: FLT_MAX outside:outside orientationStack:stackOrientation stackNo:i restore:restore addition:addition spline: NO clipMin: minClip clipMax: maxClip];
-    }
+    [[targetList objectAtIndex: index] fillROI:roi newVal:newVal minValue: -FLT_MAX maxValue: FLT_MAX outside:outside orientationStack:stackOrientation stackNo:i restore:restore addition:addition spline: NO clipMin: minClip clipMax: maxClip];
 }
 
 - (void) prepareUndo
@@ -1058,10 +1117,18 @@ static NSString*	CLUTEditorsViewToolbarItemIdentifier = @"CLUTEditors";
     {
         DCMPix  *firstObject = [pixList[ i] objectAtIndex:0];
         float*	data = (float*) [volumeData[ i] bytes];
-        long	memSize = [firstObject pwidth] * [firstObject pheight] * [pixList[ i] count] * sizeof( short);
+        NSInteger memSize = [HorosVRScissorBounds undoByteCountForWidth:(int)[firstObject pwidth]
+                                                                height:(int)[firstObject pheight]
+                                                            sliceCount:(int)[pixList[ i] count]];
+        
+        if( memSize <= 0)
+        {
+            NSLog(@"Undo failed... not enough memory");
+            continue;
+        }
         
         if( undodata[ i] == nil)
-            undodata[ i] = (float*) malloc( memSize);
+            undodata[ i] = (float*) malloc( (size_t)memSize);
         
         if( undodata[ i])
         {
@@ -1312,7 +1379,7 @@ static NSString*	CLUTEditorsViewToolbarItemIdentifier = @"CLUTEditors";
     }
     
     [view setCurrentTool: newTool];
-    [toolsMatrix selectCellWithTag:newTool];
+    [toolsMatrix selectCellWithTag:[view currentTool]];
 }
 
 - (void) setWLWW:(float) iwl :(float) iww
@@ -1447,8 +1514,8 @@ static NSString*	CLUTEditorsViewToolbarItemIdentifier = @"CLUTEditors";
     
     [view getWLWW:&iwl :&iww];
     
-    [wl setStringValue:[NSString stringWithFormat:@"%0.f", iwl]];
-    [ww setStringValue:[NSString stringWithFormat:@"%0.f", iww]];
+    [wl setStringValue: [HorosWindowLevelText stringForValue: iwl]];
+    [ww setStringValue: [HorosWindowLevelText stringForValue: iww]];
     
     [newName setStringValue: NSLocalizedString( @"Unnamed", nil)];
     
@@ -1683,6 +1750,10 @@ static NSString*	CLUTEditorsViewToolbarItemIdentifier = @"CLUTEditors";
     // We are the delegate
     [toolbar setDelegate: self];
     
+    // Keep multi-row custom controls out of the compact unified titlebar.
+    if (@available(macOS 11.0, *))
+        self.window.toolbarStyle = NSWindowToolbarStyleExpanded;
+
     // Attach the toolbar to the document window
     [[self window] setToolbar: toolbar];
     [[self window] setShowsToolbarButton: [style isEqualToString:@"panel"]];
@@ -2050,7 +2121,7 @@ static NSString*	CLUTEditorsViewToolbarItemIdentifier = @"CLUTEditors";
     }
     else
         toolbarItem = nil;
-    
+
     for (id key in [PluginManager plugins])
     {
         if ([[[PluginManager plugins] objectForKey:key] respondsToSelector:@selector(toolbarItemForItemIdentifier:forVRViewer:)])
@@ -2061,6 +2132,10 @@ static NSString*	CLUTEditorsViewToolbarItemIdentifier = @"CLUTEditors";
                 toolbarItem = item;
         }
     }
+
+    // Plugins supply their own items, so prepare after they had their turn.
+    if( toolbarItem)
+        [HorosToolbarPolicy prepareItem: toolbarItem];
     
     return toolbarItem;
 }
@@ -3215,7 +3290,10 @@ NSInteger sort3DSettingsDict(id preset1, id preset2, void *context)
         }
     }
     
-    presetPageMax = ((long)[settingsList count]-1) / [presetPreviewArray count];
+    // One division by the number of slots, in one place: an empty group used to
+    // reach this as (0-1)/9, and a panel with no slots at all as a divide by zero.
+    presetPageMax = (int) ([HorosPresetPageLayout pageCountForPresetCount: [settingsList count]
+                                                                   slots: [presetPreviewArray count]] - 1);
     [self enablePresetPageButtons];
     
     return [settingsList sortedArrayUsingFunction:sort3DSettingsDict context:NULL];
@@ -3282,9 +3360,20 @@ NSInteger sort3DSettingsDict(id preset1, id preset2, void *context)
         
         @try
         {
-            if( [selectedPresetPreview index] < 0) NSLog( @" ******** if( [selectedPresetPreview index] < 0)");
+            // The same stale selection the info panel has to survive: nothing to
+            // apply is not an exception, it is a preset that is no longer there.
+            NSArray *settingsList = [self find3DSettingsForGroupName:[presetsGroupPopUpButton titleOfSelectedItem]];
+            NSInteger selected = [selectedPresetPreview index];
+            if( selected < 0 || selected >= (NSInteger) [settingsList count])
+            {
+                NSLog( @"3D preset not applied: the selected preset is no longer in group \"%@\"", [presetsGroupPopUpButton titleOfSelectedItem]);
+                [www end];
+                [www close];
+                [www autorelease];
+                return;
+            }
             
-            NSDictionary *preset = [[self find3DSettingsForGroupName:[presetsGroupPopUpButton titleOfSelectedItem]] objectAtIndex:[selectedPresetPreview index]];
+            NSDictionary *preset = [settingsList objectAtIndex: selected];
             
             // CLUT
             NSString *clut = [preset objectForKey:@"CLUT"];
@@ -3419,45 +3508,48 @@ NSInteger sort3DSettingsDict(id preset1, id preset2, void *context)
     if([presetsGroupPopUpButton numberOfItems]<1) return;
     NSArray *settingsList = [self find3DSettingsForGroupName:[presetsGroupPopUpButton titleOfSelectedItem]];
     
-    [numberOfPresetInGroupTextField setStringValue:[NSString stringWithFormat:NSLocalizedString(@"Number of Presets: %d", nil), [settingsList count]]];
+    [numberOfPresetInGroupTextField setStringValue:[NSString stringWithFormat:NSLocalizedString(@"Number of Presets: %d", nil), (int) [settingsList count]]];
     
-    int i, n;
+    NSInteger slots = [presetPreviewArray count];
+    presetPageNumber = (int) [HorosPresetPageLayout clampPage: presetPageNumber
+                                                  presetCount: [settingsList count] slots: slots];
+    NSArray *indices = [HorosPresetPageLayout presetIndicesForPage: presetPageNumber
+                                                      presetCount: [settingsList count] slots: slots];
     
-    // fill the thumbnails
-    n = 0;
-    for(i=0; i<[presetPreviewArray count] && n<[settingsList count]; i++)
+    for( NSInteger slot = 0; slot < slots; slot++)
     {
-        n = presetPageNumber*[presetPreviewArray count] + i;
-        if(n<[settingsList count])
+        NSInteger n = [[indices objectAtIndex: slot] integerValue];
+        VRPresetPreview *preview = [presetPreviewArray objectAtIndex: slot];
+        
+        if( n == NSNotFound)                            // this slot shows nothing
         {
-            [(NSTextField*)[presetNameArray objectAtIndex:i] setStringValue:[NSString stringWithFormat:@"%d. %@", n+1,[[settingsList objectAtIndex:n] objectForKey:@"name"]]];
-            [(VRPresetPreview*)[presetPreviewArray objectAtIndex:i] setIsEmpty:NO];
-            
-            [(VRPresetPreview*)[presetPreviewArray objectAtIndex:i] setVtkCamera: [view vtkCamera]];
-            
-            //			double a[ 6];
-            //			if( [view croppingBox: a])
-            //				[(VRPresetPreview*)[presetPreviewArray objectAtIndex:i] setCroppingBox: a];
-            
-            [self load3DSettingsDictionary:[settingsList objectAtIndex:n] forPreview:[presetPreviewArray objectAtIndex:i]];
-            
-            [(VRPresetPreview*)[presetPreviewArray objectAtIndex:i] setIndex:n];
-            [(VRPresetPreview*)[presetPreviewArray objectAtIndex:i] setLOD:1.0];
+            [(NSTextField*)[presetNameArray objectAtIndex: slot] setStringValue: @""];
+            [preview setIsEmpty: YES];
+            continue;
         }
+        
+        NSDictionary *settings = [settingsList objectAtIndex: n];
+        [(NSTextField*)[presetNameArray objectAtIndex: slot] setStringValue: [NSString stringWithFormat: @"%ld. %@", (long) n+1, [settings objectForKey: @"name"]]];
+        [preview setIsEmpty: NO];
+        [preview setAccessibilityLabel: [settings objectForKey: @"name"]];
+        [preview setVtkCamera: [view vtkCamera]];
+        [self load3DSettingsDictionary: settings forPreview: preview];
+        [preview setIndex: (int) n];
+        [preview setLOD: 1.0];
     }
     
-    // the others will be black
-    
-    if(n>=[settingsList count]) i--;
-    
-    while(i<[presetPreviewArray count])
+    // Selecting a slot asks the info panel for the preset behind it, so a page
+    // with no preset on it has nothing to select.
+    NSInteger selectable = [HorosPresetPageLayout selectableSlotForPage: presetPageNumber
+                                                            presetCount: [settingsList count] slots: slots];
+    if( selectable >= 0)
+        [(VRPresetPreview*)[presetPreviewArray objectAtIndex: selectable] setSelected];
+    else
     {
-        [(NSTextField*)[presetNameArray objectAtIndex:i] setStringValue:@""];
-        [(VRPresetPreview*)[presetPreviewArray objectAtIndex:i] setIsEmpty:YES];
-        i++;
+        // and the ring goes with the presets
+        for( VRPresetPreview *preview in presetPreviewArray) [preview hideSelectionFrame];
+        [self setSelectedPresetPreview: nil];
     }
-    
-    if([presetPreviewArray count]) [(VRPresetPreview*)[presetPreviewArray objectAtIndex:0] setSelected];
 }
 
 - (void)load3DSettingsDictionary:(NSDictionary*)preset forPreview:(VRPresetPreview*)preview;
@@ -3648,7 +3740,9 @@ NSInteger sort3DSettingsDict(id preset1, id preset2, void *context)
 
 - (void)setSelectedPresetPreview:(VRPresetPreview*)aPresetPreview;
 {
+    [selectedPresetPreview setSelectedState:NO];
     selectedPresetPreview = aPresetPreview;
+    [selectedPresetPreview setSelectedState:YES];
     [self updatePresetInfoPanel];
 }
 
@@ -3710,7 +3804,7 @@ NSInteger sort3DSettingsDict(id preset1, id preset2, void *context)
     
     [self selectGroupWithName: [[NSUserDefaults standardUserDefaults] stringForKey:@"LAST_3D_PRESET"]];
     
-    [presetsPanel orderFront:self];
+    [presetsPanel makeKeyAndOrderFront:self];
 }
 
 - (void)centerPresetsPanel;
@@ -3735,10 +3829,22 @@ NSInteger sort3DSettingsDict(id preset1, id preset2, void *context)
 
 - (void)updatePresetInfoPanel;
 {	
-    if( [selectedPresetPreview index] < 0) NSLog( @" ******** [selectedPresetPreview index] < 0");
     if( selectedPresetPreview == nil) return;
     
-    NSDictionary *presetDictionary = [[self find3DSettingsForGroupName:[presetsGroupPopUpButton titleOfSelectedItem]] objectAtIndex:[selectedPresetPreview index]];
+    // The selection can outlive the preset behind it - a group emptied while the
+    // panel is open, a page left over from a longer group. Asking the list for
+    // that index raised NSRangeException out of whoever refreshed the panel.
+    NSArray *settingsList = [self find3DSettingsForGroupName:[presetsGroupPopUpButton titleOfSelectedItem]];
+    NSInteger selected = [selectedPresetPreview index];
+    if( selected < 0 || selected >= (NSInteger) [settingsList count])
+    {
+        for( NSTextField *field in @[infoNameTextField, infoCLUTTextField, infoOpacityTextField,
+                                     infoShadingsTextField, infoWLWWTextField, infoProjectionTextField])
+            [field setStringValue: @""];
+        return;
+    }
+    
+    NSDictionary *presetDictionary = [settingsList objectAtIndex: selected];
     
     [infoNameTextField setStringValue:[NSString stringWithFormat:NSLocalizedString(@"Name: %@", nil), [presetDictionary objectForKey:@"name"]]];
     

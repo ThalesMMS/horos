@@ -49,7 +49,7 @@
         <customObject id="-1" userLabel="First Responder" customClass="FirstResponder"/>
         <customObject id="-3" userLabel="Application" customClass="NSObject"/>
         <window title="DICOM Query/Retrieve" allowsToolTipsWhenApplicationIsInactive="NO" autorecalculatesKeyViewLoop="NO" visibleAtLaunch="NO" frameAutosaveName="QR" animationBehavior="default" id="144" userLabel="Window">
-            <windowStyleMask key="styleMask" titled="YES" closable="YES" miniaturizable="YES" resizable="YES" texturedBackground="YES"/>
+            <windowStyleMask key="styleMask" titled="YES" closable="YES" miniaturizable="YES" resizable="YES"/>
             <rect key="contentRect" x="0.0" y="0.0" width="914" height="672"/>
             <rect key="screenRect" x="0.0" y="0.0" width="2560" height="1417"/>
             <value key="minSize" type="size" width="914" height="672"/>
@@ -1439,7 +1439,6 @@
                     <constraint firstItem="1153" firstAttribute="top" secondItem="657" secondAttribute="bottom" constant="2" id="HoG-ON-nDf"/>
                     <constraint firstItem="1170" firstAttribute="leading" secondItem="145" secondAttribute="leading" constant="749" id="LQV-QJ-qQs"/>
                     <constraint firstAttribute="bottom" secondItem="1153" secondAttribute="bottom" constant="1" id="Y1t-kw-LGG"/>
-                    <constraint firstAttribute="bottom" secondItem="1170" secondAttribute="bottom" constant="611" id="gfF-Ki-2Cs"/>
                     <constraint firstItem="657" firstAttribute="leading" secondItem="145" secondAttribute="leading" constant="7" id="lT9-LS-ZSp"/>
                     <constraint firstItem="1170" firstAttribute="top" secondItem="145" secondAttribute="top" constant="1" id="lrh-18-cvm"/>
                     <constraint firstItem="1153" firstAttribute="top" secondItem="788" secondAttribute="bottom" constant="7" id="m4U-wS-fzD"/>

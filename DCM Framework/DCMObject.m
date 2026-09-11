@@ -921,10 +921,35 @@ PixelRepresentation
                     DCMAttribute *attr = nil;
                     
                     //sequence attribute
-                    if( [DCMValueRepresentation isSequenceVR:vr] || ([DCMValueRepresentation  isUnknownVR:vr] && vl == 0xFFFFFFFF))
+                    BOOL isUndefinedLengthUnknownVR = [DCMValueRepresentation isUnknownVR:vr] && vl == 0xFFFFFFFF;
+                    if( [DCMValueRepresentation isSequenceVR:vr] || isUndefinedLengthUnknownVR)
                     {
                         attr = (DCMAttribute *) [[[DCMSequenceAttribute alloc] initWithAttributeTag:(DCMAttributeTag *)tag] autorelease];
-                        *byteOffset = [self readNewSequenceAttribute:attr dicomData:dicomData byteOffset:byteOffset lengthToRead:(int)vl specificCharacterSet:specificCharacterSet];
+                        DCMTransferSyntax *outerTransferSyntax = nil;
+
+                        // CP-246: an undefined-length UN value is encoded as an
+                        // Implicit VR Little Endian sequence, even when the outer
+                        // data set uses an explicit transfer syntax.
+                        if( isUndefinedLengthUnknownVR && isExplicit)
+                        {
+                            outerTransferSyntax = [[dicomData transferSyntaxForDataset] retain];
+                            [dicomData setTransferSyntaxForDataset:[DCMTransferSyntax ImplicitVRLittleEndianTransferSyntax]];
+                            [dicomData startReadingDataSet];
+                        }
+
+                        @try
+                        {
+                            *byteOffset = [self readNewSequenceAttribute:attr dicomData:dicomData byteOffset:byteOffset lengthToRead:(int)vl specificCharacterSet:specificCharacterSet];
+                        }
+                        @finally
+                        {
+                            if( outerTransferSyntax)
+                            {
+                                [dicomData setTransferSyntaxForDataset:outerTransferSyntax];
+                                [dicomData startReadingDataSet];
+                                [outerTransferSyntax release];
+                            }
+                        }
                     } 
                     // "7FE0,0010" == PixelData
                     else if (strcmp(tagUTF8, "7FE0,0010") == 0 && tag.isPrivate == NO)
@@ -1038,12 +1063,39 @@ PixelRepresentation
 	BOOL undefinedLength = lengthToRead == 0xFFFFFFFF;
 	int endByteOffset = (undefinedLength) ? 0xFFFFFFFF : *byteOffset+lengthToRead-1;
 	NSException *myException;
+	
+	// A malformed sequence used to be read forever. Every error inside the item
+	// loop was caught and the loop carried on - the break was commented out for
+	// a Philips file that needed one bad item stepped over - so a sequence of
+	// undefined length with no delimiter, or one whose reads run off the end of
+	// the data, produced one log line per iteration and never returned. Three
+	// things end it now: an iteration that does not advance, reading past the
+	// end of the data, and a run of consecutive errors. One bad item is still
+	// stepped over.
+	int previousByteOffset = -1;
+	int consecutiveFailures = 0;
+	const int maximumConsecutiveFailures = 8;
+	
 	@try {
 		if (DCMDEBUG)
 			NSLog(@"Read newSequence:%@  lengthtoRead:%d byteOffset:%d, characterSet: %@", [attr description], lengthToRead, *byteOffset, [aSpecificCharacterSet characterSet] );
 		while (undefinedLength || *byteOffset < endByteOffset)
         {
+            if( previousByteOffset == *byteOffset)
+            {
+                NSLog( @"***** DCMObject readNewSequenceAttribute made no progress at byte %d: abandoning the sequence", *byteOffset);
+                break;
+            }
+            previousByteOffset = *byteOffset;
+            
+            if( [dicomData position] >= [dicomData length])
+            {
+                NSLog( @"***** DCMObject readNewSequenceAttribute reached the end of the data inside a sequence at byte %d", *byteOffset);
+                break;
+            }
+            
 			NSAutoreleasePool *subPool = [[NSAutoreleasePool alloc] init];
+            BOOL itemFailed = NO;
             
             @try {
                 int itemStartOffset=*byteOffset;
@@ -1077,11 +1129,24 @@ PixelRepresentation
             }
             @catch( NSException *e) {
                 NSLog( @"%@", e);
-//                break; // Horos bug #210 provided to OP, but OP stopped responding to email
+                itemFailed = YES;
             }
             @finally {
                 [subPool release];
             }
+            
+            if( itemFailed)
+            {
+                // One bad item is worth stepping over; a run of them means what
+                // is being read is not a sequence any more.
+                if( ++consecutiveFailures >= maximumConsecutiveFailures)
+                {
+                    NSLog( @"***** DCMObject readNewSequenceAttribute abandoned a sequence after %d consecutive errors at byte %d", consecutiveFailures, *byteOffset);
+                    break;
+                }
+            }
+            else
+                consecutiveFailures = 0;
 		}
 		
 		

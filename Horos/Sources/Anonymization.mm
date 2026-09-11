@@ -36,6 +36,8 @@
  ============================================================================*/
 
 #import "Anonymization.h"
+#import "Horos-Swift.h"
+#import "HorosAnonymizationSafety.h"
 #import "DCMAttributeTag.h"
 #import "AnonymizationViewController.h"
 #import "AnonymizationSavePanelController.h"
@@ -312,9 +314,33 @@ static NSString *templateDicomFile = nil;
 
 +(NSDictionary*)anonymizeFiles:(NSArray*)files dicomImages: (NSArray*) dicomImages toPath:(NSString*)dirPath withTags:(NSArray*)intags
 {
-	if( [files count] != [dicomImages count])
+    return [self anonymizeFiles:files dicomImages:dicomImages toPath:dirPath withTags:intags error:NULL];
+}
+
++(NSDictionary*)anonymizeFiles:(NSArray*)files dicomImages: (NSArray*) dicomImages toPath:(NSString*)dirPath withTags:(NSArray*)intags error:(NSError **)outError
+{
+    if (outError) *outError = nil;
+    NSMutableOrderedSet *failureReasons = [NSMutableOrderedSet orderedSet];
+    NSMutableOrderedSet *failedTags = [NSMutableOrderedSet orderedSet];
+    NSMutableDictionary *fileFailures = [NSMutableDictionary dictionary];
+    NSMutableDictionary *originalForStaged = [NSMutableDictionary dictionary];
+    void (^recordFailure)(NSString *, NSString *) = ^(NSString *source, NSString *reason) {
+        [failureReasons addObject:reason];
+        if (!source) return;
+        NSMutableArray *reasons = [fileFailures objectForKey:source];
+        if (!reasons) {
+            reasons = [NSMutableArray array];
+            [fileFailures setObject:reasons forKey:source];
+        }
+        if (![reasons containsObject:reason]) [reasons addObject:reason];
+    };
+    NSMutableArray *publishedFiles = [NSMutableArray array];
+    BOOL cancelled = NO;
+	if (!files.count || files.count != dicomImages.count || !intags.count || [NSSet setWithArray:files].count != files.count)
 	{
-		NSLog( @"***** anonymizeFiles [files count] != [dicomImages count]");
+		if (outError) *outError = [NSError errorWithDomain:@"HorosAnonymization" code:1 userInfo:
+            @{NSLocalizedDescriptionKey: NSLocalizedString(@"Select images and at least one field to anonymize. The image selection must be complete and must not repeat a file path.", nil),
+              @"HorosAnonymizationFileResults": HorosAnonymizationFileResults(files, fileFailures, NO)}];
         
 		return nil;
 	}
@@ -360,17 +386,15 @@ static NSString *templateDicomFile = nil;
 	
 	NSMutableDictionary* filenameTranslation = [NSMutableDictionary dictionaryWithCapacity:files.count];
 	
-	NSString* tempDirPath = [dirPath stringByAppendingPathComponent:@".temp"];
-    @try
-    {
-        [[NSFileManager defaultManager] confirmDirectoryAtPath:tempDirPath];
-    }
-    @catch (NSException *exception)
-    {
-        [self performSelectorOnMainThread: @selector(error:) withObject: exception.description waitUntilDone: NO];
+    NSError *stagingError = nil;
+    NSString *tempDirPath = HorosCreateAnonymizationStagingDirectory(dirPath, &stagingError);
+    if (!tempDirPath) {
+        if (outError) *outError = [NSError errorWithDomain:@"HorosAnonymization" code:2 userInfo:
+            @{NSLocalizedDescriptionKey: NSLocalizedString(@"Cannot create the anonymization working folder. Check destination permissions and available space. The originals were preserved.", nil),
+              @"HorosAnonymizationFileResults": HorosAnonymizationFileResults(files, fileFailures, NO)}];
         return nil;
     }
-    
+
     //////////////////////
     //////////////////////
     //////////////////////
@@ -410,24 +434,29 @@ static NSString *templateDicomFile = nil;
             NSString* tempFileName = [NSString stringWithFormat:@"%d.%@", (int) fileIndex, ext];
             NSString* tempFilePath = [tempDirPath stringByAppendingPathComponent:tempFileName];
             
-            [[NSFileManager defaultManager] copyItemAtPath: filePath toPath: tempFilePath byReplacingExisting: YES error: nil];
+            NSError *copyError = nil;
+            if (![[NSFileManager defaultManager] copyItemAtPath:filePath toPath:tempFilePath error:&copyError])
+                [NSException raise:NSFileHandleOperationException format:@"%@", copyError.localizedDescription];
             
             [filenameTranslation setObject:tempFilePath forKey:filePath];
             ++fileIndex;
             
             [producedFiles addObject: tempFilePath];
+            [originalForStaged setObject:filePath forKey:tempFilePath];
             
             [splash incrementBy: 1];
         }
         @catch (NSException * e)
         {
-            N2LogExceptionWithStackTrace(e);
+            recordFailure(filePath, NSLocalizedString(@"An input file could not be copied. Check access permissions and available space.", nil));
         }
         
         [pool release];
         
-        if( [splash aborted])
+        if ([splash pollCancellation]) {
+            cancelled = YES;
             break;
+        }
     }
     
     //////////////////////
@@ -436,11 +465,16 @@ static NSString *templateDicomFile = nil;
     //////////////////////
     //////////////////////
     
-    BOOL anonymationSuccess = YES;
+    BOOL anonymationSuccess = !cancelled && producedFiles.count == files.count;
     NSMutableArray* producedAnonFiles = [NSMutableArray arrayWithCapacity: files.count];
     
     for (NSString* f in producedFiles)
     {
+        if (cancelled || [splash pollCancellation]) {
+            cancelled = YES;
+            anonymationSuccess = NO;
+            break;
+        }
         const char* filename = [f cStringUsingEncoding:[NSString defaultCStringEncoding]];
         
         gdcm::Reader reader;
@@ -449,7 +483,7 @@ static NSString *templateDicomFile = nil;
         
         if( !reader.Read() )
         {
-            std::cerr << "Can't read file for anonymization." << std::endl;
+            recordFailure([originalForStaged objectForKey:f], NSLocalizedString(@"An input file is not a readable DICOM file.", nil));
             
             anonymationSuccess = NO;
             
@@ -463,7 +497,7 @@ static NSString *templateDicomFile = nil;
             ms.SetFromFile(file);
             if( !gdcm::Defs::GetIODNameFromMediaStorage(ms) )
             {
-                std::cerr << "The Media Storage Type is not supported for anonymization: " << ms << std::endl;
+                recordFailure([originalForStaged objectForKey:f], NSLocalizedString(@"An input DICOM storage type is not supported for anonymization.", nil));
                 
                 anonymationSuccess = NO;
                 
@@ -472,7 +506,7 @@ static NSString *templateDicomFile = nil;
             else
             {
                 NSStringEncoding encoding =
-                [NSString encodingForDICOMCharacterSet:[[DicomFile getEncodingArrayForFile:[producedFiles lastObject]] objectAtIndex: 0]];
+                [NSString encodingForDICOMCharacterSet:[[DicomFile getEncodingArrayForFile:f] objectAtIndex: 0]];
                 
                 std::vector< std::pair<gdcm::Tag, std::string> > replace_tags;
                 for (NSArray* replacingItem in tags)
@@ -480,8 +514,16 @@ static NSString *templateDicomFile = nil;
                     std::string newValue = "";
                     
                     DCMAttributeTag* tag = [replacingItem objectAtIndex:0];
-                    if ([replacingItem count] > 1)
-                        newValue = std::string( [[[replacingItem objectAtIndex:1] description] cStringUsingEncoding:encoding] );
+                    if ([replacingItem count] > 1) {
+                        const char *encoded = [[[replacingItem objectAtIndex:1] description] cStringUsingEncoding:encoding];
+                        if (!encoded) {
+                            [failedTags addObject:[NSString stringWithFormat:@"(%04X,%04X)", tag.group, tag.element]];
+                            recordFailure([originalForStaged objectForKey:f], NSLocalizedString(@"A replacement value cannot be represented in the input file's character set.", nil));
+                            anonymationSuccess = NO;
+                            continue;
+                        }
+                        newValue = std::string(encoded);
+                    }
                     
                     replace_tags.push_back( std::make_pair(gdcm::Tag(tag.group,tag.element),newValue) );                    
                 }
@@ -500,7 +542,11 @@ static NSString *templateDicomFile = nil;
                 std::vector< std::pair<gdcm::Tag, std::string> >::const_iterator it2 = replace_tags.begin();
                 for(; it2 != replace_tags.end(); ++it2)
                 {
-                    success = success && anon.Replace( it2->first, it2->second.c_str() );
+                    if (!anon.Replace(it2->first, it2->second.c_str())) {
+                        [failedTags addObject:[NSString stringWithFormat:@"(%04X,%04X)", it2->first.GetGroup(), it2->first.GetElement()]];
+                        recordFailure([originalForStaged objectForKey:f], NSLocalizedString(@"The DICOM anonymizer cannot replace one or more selected fields.", nil));
+                        success = false;
+                    }
                 }
                 
                 if (!success)
@@ -526,7 +572,7 @@ static NSString *templateDicomFile = nil;
                 
                 if( !writer.Write() )
                 {
-                    std::cerr << "Could not Write : " << outfilename << std::endl;
+                    recordFailure([originalForStaged objectForKey:f], NSLocalizedString(@"An anonymized file could not be written. Check available space and destination permissions.", nil));
                     if( strcmp(filename,outfilename) != 0 )
                     {
                         gdcm::System::RemoveFile( outfilename );
@@ -567,6 +613,7 @@ static NSString *templateDicomFile = nil;
             unlink([[producedFiles objectAtIndex:i] cStringUsingEncoding:[NSString defaultCStringEncoding]]);
             if (![[NSFileManager defaultManager] moveItemAtPath:[producedAnonFiles objectAtIndex:i] toPath:[producedFiles objectAtIndex:i] error:&error])
             {
+                recordFailure([originalForStaged objectForKey:[producedFiles objectAtIndex:i]], NSLocalizedString(@"An anonymized file could not be prepared for export.", nil));
                 anonymationSuccess = false;
                 break;
             }
@@ -596,10 +643,18 @@ static NSString *templateDicomFile = nil;
         else
         {
             NSMutableArray* dicomSeries = [NSMutableArray array];
+            NSMutableArray *dicomStudies = [NSMutableArray array];
+            NSUUID *anonymousBatch = [NSUUID UUID];
             
             for (int i = 0; i < [dicomImages count]; i++)
             {
-                DicomImage *image = [dicomImages objectAtIndex: i];
+                if ([splash pollCancellation]) {
+                    cancelled = YES;
+                    filenameTranslation = nil;
+                    break;
+                }
+                NSUInteger inputIndex = i;
+                DicomImage *image = [dicomImages objectAtIndex:inputIndex];
                 
                 @try
                 {
@@ -610,28 +665,20 @@ static NSString *templateDicomFile = nil;
                     
                     NSString* tempFilePath = [producedFiles objectAtIndex: i];
                     NSString* ext = [tempFilePath pathExtension];
-                    NSString* fileDirPath = nil;
-                    
-                    if( [image.series.study.patientID length] > 0)
-                    {
-                        fileDirPath = [dirPath stringByAppendingPathComponent: [NSString stringWithFormat: NSLocalizedString( @"Anonymized - %@", nil), [Anonymization cleanStringForFile:image.series.study.patientID]]];
-                    }
-                    else
-                    {
-                        fileDirPath = [dirPath stringByAppendingPathComponent: NSLocalizedString( @"Anonymized", nil)];
-                    }
-                    
-                    fileDirPath = [fileDirPath stringByAppendingPathComponent: [Anonymization cleanStringForFile: image.series.study.studyName]];
-                    
-                    fileDirPath = [fileDirPath stringByAppendingPathComponent: [Anonymization cleanStringForFile: [NSString stringWithFormat:@"%@ - %@", image.series.name, image.series.id]]];
-                    
+                    if (![dicomStudies containsObject:image.series.study])
+                        [dicomStudies addObject:image.series.study];
+                    NSString *relativePath = [HorosExportFolderNaming anonymousPathForBatch:anonymousBatch
+                        studyIndex:[dicomStudies indexOfObject:image.series.study] + 1
+                        seriesIndex:[dicomSeries indexOfObject:image.series] + 1];
+                    NSString *fileDirPath = [dirPath stringByAppendingPathComponent:relativePath];
+
                     @try
                     {
                         [[NSFileManager defaultManager] confirmDirectoryAtPath:fileDirPath];
                     }
                     @catch (NSException *exception)
                     {
-                        [self performSelectorOnMainThread: @selector(error:) withObject: exception.description waitUntilDone: NO];
+                        recordFailure([files objectAtIndex:i], NSLocalizedString(@"The export folder could not be created. Check destination permissions and available space.", nil));
                         
                         filenameTranslation = nil;
                         
@@ -651,29 +698,22 @@ static NSString *templateDicomFile = nil;
                         
                     } while ([[NSFileManager defaultManager] fileExistsAtPath:filePath]);
                     
-                    [[NSFileManager defaultManager] moveItemAtPath:tempFilePath toPath:filePath error:NULL];
-                    
-                    NSString* k = [filenameTranslation keyForObject:tempFilePath];
-                    
-                    if (k)
-                    {
-                        [filenameTranslation setObject:filePath forKey: k];
-                    }
-                    else
-                    {
-                        NSLog(@"Warning: anonymization file naming error: unknown original for %@ which should have changed to %@", tempFilePath, filePath);
-                        
+                    NSError *moveError = nil;
+                    if (![[NSFileManager defaultManager] moveItemAtPath:tempFilePath toPath:filePath error:&moveError]) {
+                        recordFailure([files objectAtIndex:inputIndex], NSLocalizedString(@"An anonymized file could not be moved to the export folder.", nil));
                         filenameTranslation = nil;
-                        
                         anonymationSuccess = NO;
-                        
                         break;
-
                     }
+                    
+                    [publishedFiles addObject:filePath];
+                    // Copies preserve input order; avoid scanning the whole mapping per file.
+                    [filenameTranslation setObject:filePath forKey:[files objectAtIndex:inputIndex]];
+
                 }
                 @catch (NSException * e)
                 {
-                    N2LogExceptionWithStackTrace(e);
+                    recordFailure([files objectAtIndex:i], NSLocalizedString(@"An anonymized file could not be exported.", nil));
                     
                     filenameTranslation = nil;
                     
@@ -687,10 +727,7 @@ static NSString *templateDicomFile = nil;
             
             
             
-            if( tempDirPath)
-            {
-                [[NSFileManager defaultManager] removeItemAtPath:tempDirPath error:NULL];
-            }
+
         }
     }
     
@@ -700,6 +737,8 @@ static NSString *templateDicomFile = nil;
     //////////////////////
     //////////////////////
     
+    cancelled = cancelled || [splash pollCancellation];
+    [[NSFileManager defaultManager] removeItemAtPath:tempDirPath error:NULL];
 	[splash close];
     
     //////////////////////
@@ -708,7 +747,30 @@ static NSString *templateDicomFile = nil;
     //////////////////////
     //////////////////////
 	
-	return [[filenameTranslation copy] autorelease];
+    if (!HorosAnonymizationOutputsComplete(files, filenameTranslation) || cancelled) {
+        filenameTranslation = nil;
+        NSUInteger remaining = 0;
+        for (NSString *path in publishedFiles)
+            if (![[NSFileManager defaultManager] removeItemAtPath:path error:NULL]) remaining++;
+        if (outError) {
+            if (cancelled && !remaining)
+                *outError = [NSError errorWithDomain:NSCocoaErrorDomain code:NSUserCancelledError userInfo:
+                    @{@"HorosAnonymizationFileResults": HorosAnonymizationFileResults(files, fileFailures, YES)}];
+            else {
+                NSMutableArray *details = [NSMutableArray arrayWithObject:NSLocalizedString(@"Anonymization did not produce a complete set of files. The original images have been preserved.", nil)];
+                [details addObjectsFromArray:[failureReasons.array subarrayWithRange:NSMakeRange(0, MIN((NSUInteger)6, failureReasons.count))]];
+                if (failedTags.count) {
+                    NSArray *shown = [failedTags.array subarrayWithRange:NSMakeRange(0, MIN((NSUInteger)8, failedTags.count))];
+                    [details addObject:[NSString stringWithFormat:NSLocalizedString(@"Fields not replaced: %@%@", nil), [shown componentsJoinedByString:@", "], failedTags.count > shown.count ? @", ..." : @""]];
+                }
+                if (remaining)
+                    [details addObject:NSLocalizedString(@"Some incomplete output files could not be removed. Do not use this export as a complete anonymized set.", nil)];
+                *outError = [NSError errorWithDomain:@"HorosAnonymization" code:3 userInfo:@{NSLocalizedDescriptionKey: [details componentsJoinedByString:@"\n\n"],
+                    @"HorosAnonymizationFileResults": HorosAnonymizationFileResults(files, fileFailures, cancelled)}];
+            }
+        }
+    }
+    return [[filenameTranslation copy] autorelease];
 }
 
 

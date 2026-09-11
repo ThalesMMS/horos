@@ -38,6 +38,7 @@
 #import "options.h"
 
 #import "MPRController.h"
+#import "Horos-Swift.h"
 #import "BrowserController.h"
 #import "Wait.h"
 #import "DICOMExport.h"
@@ -2378,6 +2379,13 @@ static float deg2rad = M_PI/180.0;
 				if( self.dcmBatchNumberOfFrames < 1)
 					self.dcmBatchNumberOfFrames = 1;
 				
+                // The hidden render view has window constraints unrelated to the selected
+                // MPR pane. Keep Current geometry stable while progress pumps AppKit layout.
+                HorosVRExportLayout *batchLayout = nil;
+                if( self.dcmFormat && resizeImage == 0)
+                    batchLayout = [[HorosVRExportLayout alloc] initWithView:curExportView.vrView pixelSize:0];
+                @try
+                {
 				for( int i = 0; i < self.dcmBatchNumberOfFrames; i++)
 				{
                     [curExportView updateViewMPR: NO];
@@ -2405,6 +2413,12 @@ static float deg2rad = M_PI/180.0;
 					if( [progress aborted])
 						break;
 				}
+                }
+                @finally
+                {
+                    [batchLayout restore];
+                    [batchLayout release];
+                }
 			}
 			
 			[curExportView.vrView endRenderImageWithBestQuality];
@@ -3097,6 +3111,10 @@ static float deg2rad = M_PI/180.0;
         }
     }
     
+    // Plugins supply their own items, so prepare after they had their turn.
+    if( toolbarItem)
+        [HorosToolbarPolicy prepareItem: toolbarItem];
+    
 	return toolbarItem;
 }
 
@@ -3260,6 +3278,27 @@ static float deg2rad = M_PI/180.0;
 
 -(void) addMoviePixList:(NSMutableArray*) pix :(NSData*) vData
 {
+    int next = maxMovieIndex + 1;
+    if( [HorosFourDSeriesGuard canStoreTimeAt: next capacity: MAX4D] == NO)
+    {
+        NSRunAlertPanel(NSLocalizedString(@"MPR", nil), @"%@", nil, nil, nil,
+                        [HorosFourDSeriesGuard capacityReasonAt: next capacity: MAX4D]);
+        return;
+    }
+    NSString *slices = [HorosFourDSeriesGuard reasonForInconsistentSlices: pix atTime: next];
+    if( slices)
+    {
+        NSRunAlertPanel(NSLocalizedString(@"MPR", nil), @"%@", nil, nil, nil, slices);
+        return;
+    }
+    HorosFourDTimeGeometry *reference = [HorosFourDSeriesGuard geometryFromPixList: pixList[0] volume: volumeData[0]];
+    HorosFourDTimeGeometry *candidate = [HorosFourDSeriesGuard geometryFromPixList: pix volume: vData];
+    NSString *reason = [HorosFourDSeriesGuard reconstructionRefusalComparing: candidate to: reference atTime: next];
+    if( reason)
+    {
+        NSRunAlertPanel(NSLocalizedString(@"MPR", nil), @"%@", nil, nil, nil, reason);
+        return;
+    }
 	self.maxMovieIndex++;
     
 	pixList[ maxMovieIndex] = pix;
@@ -3281,6 +3320,11 @@ static float deg2rad = M_PI/180.0;
 
 - (void) setCurMovieIndex: (int) m
 {
+	int previousMovieIndex = curMovieIndex;
+	int count = maxMovieIndex + 1;
+	m = (int)[HorosFourDSeriesGuard wrappedIndex: m count: count];
+	if( pixList[ m] == nil || [pixList[ m] count] == 0)
+		return;
 	curMovieIndex = m;
 	
     mprView1.pix.annotationsDictionary = [[pixList[ curMovieIndex] objectAtIndex: 0] annotationsDictionary];
@@ -3304,6 +3348,18 @@ static float deg2rad = M_PI/180.0;
 		[mprView1.vrView restoreFullDepthCapture];
 	
 	[self updateViewsAccordingToFrame: nil];
+
+	if( [HorosROITemporalStatistics cachedValuesRemainValidWithPreviousTimeIndex: previousMovieIndex
+																   currentTimeIndex: m
+																geometryUnchanged: YES] == NO)
+	{
+		MPRDCMView *views[ 3] = { mprView1, mprView2, mprView3 };
+		for( int v = 0; v < 3; v++)
+		{
+			for( ROI *r in [views[ v] curRoiList])
+				[r recompute];
+		}
+	}
 	
 	[self setTool: toolsMatrix];
 	
@@ -3321,11 +3377,7 @@ static float deg2rad = M_PI/180.0;
     
     if( thisTime - lastMovieTime > 1.0 / self.movieRate)
     {
-        val = self.curMovieIndex;
-        val ++;
-        
-		if( val < 0) val = 0;
-		if( val > self.maxMovieIndex) val = 0;
+        val = (short)[HorosFourDSeriesGuard nextIndex: self.curMovieIndex count: self.maxMovieIndex + 1];
 		
 		self.curMovieIndex = val;
         lastMovieTime = thisTime;

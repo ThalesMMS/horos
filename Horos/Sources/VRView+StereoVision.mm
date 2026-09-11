@@ -53,11 +53,13 @@
 dddd
 
 #import "VRView+StereoVision.h"
+#include "VRFramebufferCapture.h"
 
 
 #define USE3DCONNEXION 1
 
 #import "VRView.h"
+#import "Horos-Swift.h"
 #import "DCMCursor.h"
 #import "AppController.h"
 #import "DCMPix.h"
@@ -1245,8 +1247,9 @@ static void  updateRight(vtkObject*, unsigned long eid, void* clientdata, void *
                 break;
                 
             case t3DCut:
-                
-                if( fabs(mouseLoc.x - _previousLoc.x) > 5. || fabs(mouseLoc.y - _previousLoc.y) > 5.)
+            {
+                CGFloat scissorsThreshold = [HorosVTKRetinaGeometry scissorsDragThresholdForPointThreshold:5 scale:[HorosVTKRetinaGeometry displayScaleOfView:self]];
+                if( fabs(mouseLoc.x - _previousLoc.x) > scissorsThreshold || fabs(mouseLoc.y - _previousLoc.y) > scissorsThreshold)
                 {
                     double	*pp;
                     
@@ -1269,6 +1272,7 @@ static void  updateRight(vtkObject*, unsigned long eid, void* clientdata, void *
                     
                     _previousLoc = mouseLoc;
                 }
+            }
                 break;
                 
             case tRotate:
@@ -1432,13 +1436,14 @@ static void  updateRight(vtkObject*, unsigned long eid, void* clientdata, void *
                         
                         double pWC[ 2];
                         aCamera->GetWindowCenter( pWC);
-                        pWC[ 0] *= ([self frame].size.width/2.);
-                        pWC[ 1] *= ([self frame].size.height/2.);
+                        NSSize display = [HorosVTKRetinaGeometry displaySizeOfView:self];
+                        pWC[ 0] *= (display.width/2.);
+                        pWC[ 1] *= (display.height/2.);
                         
                         if( pWC[ 0] != xx || pWC[ 1] != yy)
                         {
                             aCamera->SetWindowCenter( 0, 0);
-                            [self panX: ([self frame].size.width/2.) -(pWC[ 0] - xx)*10000. Y: ([self frame].size.height/2.) -(pWC[ 1] - yy) *10000.];
+                            [self panX: (display.width/2.) -(pWC[ 0] - xx)*10000. Y: (display.height/2.) -(pWC[ 1] - yy) *10000.];
                         }
                     }
                     [self setNeedsDisplay:YES];
@@ -1774,9 +1779,6 @@ static void  updateRight(vtkObject*, unsigned long eid, void* clientdata, void *
     if (StereoVisionOn)
     {
         unsigned char	*buf = nil;
-        unsigned char  *leftBuf = nil;
-        unsigned char *rightBuf = nil;
-        long			i;
         
         [drawLock lock];
         
@@ -1863,83 +1865,22 @@ static void  updateRight(vtkObject*, unsigned long eid, void* clientdata, void *
          }
          else*/
         {
-            
-            NSRect size = [self bounds];
-            
-            *width = (long) size.size.width*2.0;
-            long leftWidth = (long) size.size.width;
-            long rightWidth = (long) size.size.width;
-            
-            *width/=4;
-            *width*=4;
-            *height = (long) size.size.height;
+            // The drawable is measured in pixels, not points. Reading [self bounds]
+            // and handing those numbers to glReadPixels captured the lower left
+            // quarter of a Retina window and declared it the whole image, so the
+            // export came out cropped and moved into the corner. Each VTK window
+            // knows the size of its own drawable, and the shared readback returns
+            // the two eyes side by side, tightly packed and top-down - which is
+            // what the interleave and the row flip that used to be here produced.
             *spp = 3;
             *bpp = 8;
             
-            //		[self getVTKRenderWindow]->MakeCurrent();
+            buf = HorosCopyVRStereoFramebuffer([self getVTKRenderWindow], [rightView getVTKRenderWindow], width, height);
             
-            buf = (unsigned char*) malloc( *width * *height * 4 * *bpp/8);
-            leftBuf = (unsigned char*) malloc( leftWidth * *height * 4 * *bpp/8);
-            rightBuf = (unsigned char*) malloc( rightWidth * *height * 4 * *bpp/8);
-            
-            if( buf)
-            {
-                [self getVTKRenderWindow]->MakeCurrent();
-                CGLContextObj cgl_ctx = (CGLContextObj) [[NSOpenGLContext currentContext] CGLContextObj];
-                glReadBuffer(GL_FRONT);
-                glReadPixels(0, 0, leftWidth, *height, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV, leftBuf);
-                [NSOpenGLContext clearCurrentContext];
-                
-                [rightView getVTKRenderWindow]->MakeCurrent();
-                cgl_ctx = (CGLContextObj) [[NSOpenGLContext currentContext] CGLContextObj];
-                glReadBuffer(GL_FRONT);
-                glReadPixels(0, 0, rightWidth, *height, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV, rightBuf);
-                
-                i = *width * *height;
-                
-                //	unsigned char	*t_argb = buf;
-                unsigned char	*t_rgb = buf;
-                unsigned char *left_argb = leftBuf;
-                unsigned char *right_argb = rightBuf;
-                
-                while( i-->0)
-                {
-                    if((i % *width) >= leftWidth)
-                    {
-                        *((int*) t_rgb) = *((int*) left_argb);
-                        t_rgb +=3;
-                        left_argb+=4;
-                    }
-                    else {
-                        *((int*) t_rgb) = *((int*) right_argb);
-                        t_rgb +=3;
-                        right_argb+=4;
-                    }
-                }
-                
-                long rowBytes = *width**spp**bpp/8;
-                
-                {
-                    unsigned char	*tempBuf = (unsigned char*) malloc( rowBytes);
-                    
-                    for( i = 0; i < *height/2; i++)
-                    {
-                        memcpy( tempBuf, buf + (*height - 1 - i)*rowBytes, rowBytes);
-                        memcpy( buf + (*height - 1 - i)*rowBytes, buf + i*rowBytes, rowBytes);
-                        memcpy( buf + i*rowBytes, tempBuf, rowBytes);
-                    }
-                    
-                    free( tempBuf);
-                }
-                
-                
-            }
             [NSOpenGLContext clearCurrentContext];
         }
         
         [drawLock unlock];
-        free(rightBuf);
-        free(leftBuf);
         return buf;
     }
     //if no stereo!
@@ -2031,53 +1972,17 @@ static void  updateRight(vtkObject*, unsigned long eid, void* clientdata, void *
         {
             int i;
             
-            NSRect size = [self bounds];
-            
-            *width = (long) size.size.width;
-            *width/=4;
-            *width*=4;
-            *height = (long) size.size.height;
+            // The same readback, sized by this window's drawable. It returns
+            // tightly packed top-down RGB, so the ARGB shuffle and the row flip
+            // that used to be here are gone; the logo below still lands on the
+            // bottom right of the finished image.
             *spp = 3;
             *bpp = 8;
             
-            [self getVTKRenderWindow]->MakeCurrent();
-            
-            buf = (unsigned char*) malloc( *width * *height * 4 * *bpp/8);
+            buf = HorosCopyVRFramebuffer([self getVTKRenderWindow], width, height);
             if( buf)
             {
-                CGLContextObj cgl_ctx = (CGLContextObj) [[NSOpenGLContext currentContext] CGLContextObj];
-                
-                glReadBuffer(GL_FRONT);
-                
-#if __BIG_ENDIAN__
-                glReadPixels(0, 0, *width, *height, GL_RGB, GL_UNSIGNED_BYTE, buf);
-#else
-                glReadPixels(0, 0, *width, *height, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV, buf);
-                i = *width * *height;
-                unsigned char	*t_argb = buf;
-                unsigned char	*t_rgb = buf;
-                while( i-->0)
-                {
-                    *((int*) t_rgb) = *((int*) t_argb);
-                    t_argb+=4;
-                    t_rgb+=3;
-                }
-#endif
-                
                 long rowBytes = *width**spp**bpp/8;
-                
-                {
-                    unsigned char	*tempBuf = (unsigned char*) malloc( rowBytes);
-                    
-                    for( i = 0; i < *height/2; i++)
-                    {
-                        memcpy( tempBuf, buf + (*height - 1 - i)*rowBytes, rowBytes);
-                        memcpy( buf + (*height - 1 - i)*rowBytes, buf + i*rowBytes, rowBytes);
-                        memcpy( buf + i*rowBytes, tempBuf, rowBytes);
-                    }
-                    
-                    free( tempBuf);
-                }
                 
                 //Add the small OsiriX logo at the bottom right of the image
                 NSImage				*logo = [NSImage imageNamed:@"SmallLogo.tif"];

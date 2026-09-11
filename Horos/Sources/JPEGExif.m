@@ -50,17 +50,26 @@
 		if( [format isEqualToString:@"tiff"]) type = @"public.tiff";
 		if( [format isEqualToString:@"jpeg"]) type = @"public.jpeg";
 		
-		CGImageDestinationRef dest = CGImageDestinationCreateWithURL((CFURLRef) url, (CFStringRef) type, 1, nil);
-		if ( dest)
-		{
-			NSMutableDictionary *newProps = [NSMutableDictionary dictionary];
+        // Finalize in memory before replacing the source file. An unfinished
+        // ImageIO file destination leaves temporary files and drops the EXIF.
+        NSMutableData *encoded = [NSMutableData data];
+        CGImageDestinationRef dest = type ? CGImageDestinationCreateWithData((CFMutableDataRef)encoded, (CFStringRef)type, 1, NULL) : NULL;
+        if (dest)
+        {
+            NSDictionary *newProps = @{(NSString*)kCGImagePropertyExifDictionary: exifDict ?: @{}};
+            CGImageDestinationAddImageFromSource(dest, source, 0, (CFDictionaryRef)newProps);
+            if (CGImageDestinationFinalize(dest))
+            {
+                NSError *error = nil;
+                if (![encoded writeToURL:url options:NSDataWritingAtomic error:&error])
+                    NSLog(@"Could not save image metadata: %@", error);
+            }
+            else
+                NSLog(@"Could not finalize image metadata for %@", url);
+            CFRelease(dest);
+        }
 
-			[newProps setObject: exifDict forKey: (NSString*) kCGImagePropertyExifDictionary];
-			CGImageDestinationAddImageFromSource(dest, source, 0, (CFDictionaryRef) newProps);
-			
-			CFRelease( dest);
-		}
-		
+
 		CFRelease( source);
 	}
 }

@@ -37,18 +37,19 @@
 
 #import "DCMTKFileFormat.h"
 
-#include "osconfig.h"
-#include "dcfilefo.h"
-#include "dcdeftag.h"
-#include "ofstd.h"
+#include "HorosDCMTKCompatibility.h"
+#include <dcmtk/config/osconfig.h>
+#include <dcmtk/dcmdata/dcfilefo.h>
+#include <dcmtk/dcmdata/dcdeftag.h>
+#include <dcmtk/ofstd/ofstd.h>
 
-#include "dctk.h"
-#include "dcdebug.h"
-#include "cmdlnarg.h"
-#include "ofconapp.h"
-#include "dcuid.h"       /* for dcmtk version name */
-#include "djdecode.h"    /* for dcmjpeg decoders */
-#include "dipijpeg.h"    /* for dcmimage JPEG plugin */
+#include <dcmtk/dcmdata/dctk.h>
+#include "HorosDCMTKCompatibility.h"
+#include <dcmtk/dcmdata/cmdlnarg.h>
+#include <dcmtk/ofstd/ofconapp.h>
+#include <dcmtk/dcmdata/dcuid.h>       /* for dcmtk version name */
+#include <dcmtk/dcmjpeg/djdecode.h>    /* for dcmjpeg decoders */
+#include <dcmtk/dcmjpeg/dipijpeg.h>    /* for dcmimage JPEG plugin */
 
 @implementation DCMTKFileFormat
 

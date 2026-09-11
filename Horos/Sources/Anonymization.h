@@ -54,6 +54,9 @@
 
 +(NSDictionary*)anonymizeFiles:(NSArray*)files dicomImages: (NSArray*) dicomImages toPath:(NSString*)dirPath withTags:(NSArray*)intags;
 
+// Returns nil and a diagnostic for any incomplete batch; cancellation uses NSUserCancelledError.
++(NSDictionary*)anonymizeFiles:(NSArray*)files dicomImages: (NSArray*) dicomImages toPath:(NSString*)dirPath withTags:(NSArray*)intags error:(NSError **)error;
+
 +(NSString*) templateDicomFile;
 
 @end

@@ -76,7 +76,10 @@
 - (void)drawRect:(NSRect)rect
 {
 	#define ROUNDED_CORNER_SIZE 5.0
-		
+	
+	// The placeholder outline follows the view, not the area needing redraw:
+	// since macOS 14 NSView no longer clips drawing to its bounds.
+	rect = self.bounds;
 	rect = NSMakeRect(rect.origin.x+2.0, rect.origin.y+2.0, rect.size.width-4.0, rect.size.height-4.0);
 	
 	NSBezierPath *borderFrame = [NSBezierPath bezierPathWithRoundedRect:rect cornerRadius:ROUNDED_CORNER_SIZE];
@@ -90,7 +93,10 @@
 	if(hasFocus)
 		[[[NSColor controlHighlightColor] colorWithAlphaComponent:0.5] set];
 	else
-		[[[NSColor whiteColor] colorWithAlphaComponent:0.5] set];
+		// The half-white wash was invisible over the light appearance's white
+		// control background and a bright block over the dark one. This is the
+		// semantic colour for a subtly marked area and reads in both.
+		[[NSColor unemphasizedSelectedContentBackgroundColor] set];
 	[borderFrame fill];
 	
 	[borderFrame setLineWidth:2.0];

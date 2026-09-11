@@ -16,12 +16,12 @@
 
 
 #undef verify
-#include "dsrdoc.h"
+#include "HorosStructuredReportBridge.h"
 
 /** \brief  DICOM  key object note */
 @interface KeyObjectReport : NSObject {
 	id _study;
-	DSRDocument *_doc;
+	HorosSRDocument *_doc;
 	NSArray *_keyImages;
 	NSString *_keyDescription;
 	int _title;

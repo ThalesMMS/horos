@@ -224,7 +224,7 @@ void DcmQueryRetrieveStoreContext::checkRequestAgainstDataset(
     DIC_UI sopClass;
     DIC_UI sopInstance;
     
-    if (!DU_findSOPClassAndInstanceInDataSet(dataSet, sopClass, sopInstance, uidPadding)) 
+    if (!DU_findSOPClassAndInstanceInDataSet(dataSet, sopClass, sizeof( sopClass), sopInstance, sizeof( sopInstance), uidPadding)) 
     {
         DcmQueryRetrieveOptions::errmsg("Bad image file: %s", fname);
         rsp->DimseStatus = STATUS_STORE_Error_CannotUnderstand;
@@ -250,7 +250,7 @@ void DcmQueryRetrieveStoreContext::callbackHandler(
     updateDisplay(progress);
 
     if (progress->state == DIMSE_StoreEnd) {
-		/*
+        // Validate command identity before acknowledging or indexing the dataset.
         if (!options_.ignoreStoreData_ && rsp->DimseStatus == STATUS_Success) {
             if ((imageDataSet)&&(*imageDataSet)) {
                 checkRequestAgainstDataset(req, NULL, *imageDataSet, rsp, correctUIDPadding);
@@ -258,7 +258,6 @@ void DcmQueryRetrieveStoreContext::callbackHandler(
                 checkRequestAgainstDataset(req, imageFileName, NULL, rsp, correctUIDPadding);
             }
         }
-		*/
         if (!options_.ignoreStoreData_ && rsp->DimseStatus == STATUS_Success) {
             if ((imageDataSet)&&(*imageDataSet))
 			{

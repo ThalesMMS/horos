@@ -136,7 +136,7 @@ DcmHashDictIterator::init(const DcmHashDict* d, OFBool atEnd)
     hindex = 0;
     iterating = OFFalse;
     if (dict != NULL) {
-        if (atEnd) {
+        if (atEnd || dict->size() == 0) {
             hindex = dict->highestBucket;
             if (dict->size() > 0) {
                 iter = dict->hashTab[hindex]->end();
@@ -144,10 +144,8 @@ DcmHashDictIterator::init(const DcmHashDict* d, OFBool atEnd)
             }
         } else {
             hindex = dict->lowestBucket;
-            if (dict->size() > 0) {
-                iter = dict->hashTab[hindex]->begin();
-                iterating = OFTrue;
-            }
+            iter = dict->hashTab[hindex]->begin();
+            iterating = OFTrue;
         }
     }
 }
@@ -160,6 +158,8 @@ DcmHashDictIterator::stepUp()
     while (hindex <= dict->highestBucket) {
         DcmDictEntryList* bucket = dict->hashTab[hindex];
         if (bucket == NULL) {
+            if (hindex == dict->highestBucket)
+                return; /* We reached the end of the dictionary */
             hindex++; // move on to next bucket
             iterating = OFFalse;
         } else {
@@ -171,6 +171,8 @@ DcmHashDictIterator::stepUp()
                 }
             }
             if (iter == bucket->end()) {
+                if (hindex == dict->highestBucket)
+                    return; /* We reached the end of the dictionary */
                 iterating = OFFalse;
                 hindex++;
             } else {

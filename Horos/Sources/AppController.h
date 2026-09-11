@@ -204,6 +204,8 @@ extern AppController* OsiriX;
 - (IBAction) setFixedTilingRows: (id) sender;
 - (IBAction) setFixedTilingColumns: (id) sender;
 - (void) initTilingWindows;
+- (void) buildTilingAreaMenu;
+- (IBAction) setTilingArea: (id) sender;
 - (IBAction) tileWindows:(id)sender;  /**< Tile open window */
 - (IBAction) tile3DWindows:(id)sender; /**< Tile 3D open window */
 - (void) tileWindows:(id)sender windows: (NSMutableArray*) viewersList display2DViewerToolbar: (BOOL) display2DViewerToolbar displayThumbnailsList: (BOOL) displayThumbnailsList;
@@ -299,6 +301,8 @@ extern AppController* OsiriX;
 - (void)playGrabSound;
 
 - (void)displayError:(NSString *)err;
+- (void)reportListenBindFailureForService:(NSString*)service port:(NSInteger)port errnoCode:(int)code;
 
+- (void)updateScreenParameters;
 @end
 

@@ -1,9 +1,12 @@
+#ifndef DECOMPRESS_APP
+#import "Horos-Swift.h"
+#endif
 /*=========================================================================
  This file is part of the Horos Project (www.horosproject.org)
  
  Horos is free software: you can redistribute it and/or modify
  it under the terms of the GNU Lesser General Public License as published by
- the Free Software Foundation, Êversion 3 of the License.
+ the Free Software Foundation, version 3 of the License.
  
  The Horos Project was based originally upon the OsiriX Project which at the time of
  the code fork was licensed as a LGPL project.  However, not all of the the source-code
@@ -15,24 +18,24 @@
  
  Horos is distributed in the hope that it will be useful, but
  WITHOUT ANY WARRANTY EXPRESS OR IMPLIED, INCLUDING ANY WARRANTY OF
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE OR USE. ÊSee the
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE OR USE. See the
  GNU Lesser General Public License for more details.
  
  You should have received a copy of the GNU Lesser General Public License
- along with Horos. ÊIf not, see http://www.gnu.org/licenses/lgpl.html
+ along with Horos. If not, see http://www.gnu.org/licenses/lgpl.html
  
  Prior versions of this file were published by the OsiriX team pursuant to
  the below notice and licensing protocol.
  ============================================================================
- Program: Ê OsiriX
- ÊCopyright (c) OsiriX Team
- ÊAll rights reserved.
- ÊDistributed under GNU - LGPL
- Ê
- ÊSee http://www.osirix-viewer.com/copyright.html for details.
- Ê Ê This software is distributed WITHOUT ANY WARRANTY; without even
- Ê Ê the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- Ê Ê PURPOSE.
+ Program:  OsiriX
+ Copyright (c) OsiriX Team
+ All rights reserved.
+ Distributed under GNU - LGPL
+ 
+ See http://www.osirix-viewer.com/copyright.html for details.
+   This software is distributed WITHOUT ANY WARRANTY; without even
+   the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+   PURPOSE.
  ============================================================================*/
 
 #import "DCMPix.h"
@@ -478,6 +481,11 @@ static inline void FillEdges( NSPointInt *p, long no, struct edge *edgeTable[])
         p2 = &p[ (i + 1) % n];
         if (p1->y == p2->y)
             continue;   /* Skip horiz. edges */
+        if (p1->y < 0 || p2->y < 0 || p1->y >= MAXVERTICAL || p2->y >= MAXVERTICAL)
+        {
+            N2LogStackTrace( @"ras_FillPolygon: vertex outside the edge table (%ld, %ld)", (long) p1->y, (long) p2->y);
+            continue;
+        }
         /* Find next vertex not level with p2 */
         for ( int j = (i + 2) % n; ; j = (j + 1) % n)
         {
@@ -576,6 +584,7 @@ static inline void DrawRuns(	struct edge *active,
                             float imean,
                             long orientation,
                             long stackNo,	// Only if X/Y orientation : for 3D VR scissor in any direction
+                            long sliceCount,
                             BOOL restore,
                             float *values,
                             float *locations)
@@ -586,6 +595,16 @@ static inline void DrawRuns(	struct edge *active,
     long start, end, ims = w * h;
     float *ivalues = nil;
     float *ilocations = nil;
+    long runLimit = (orientation == 0) ? h : w;
+    
+    if( orientation < 0 || orientation > 2)
+        return;
+    if( w <= 0 || h <= 0 || sliceCount <= 0 || runLimit <= 0)
+        return;
+    if( (orientation == 0 && (stackNo < 0 || stackNo >= w)) ||
+       (orientation == 1 && (stackNo < 0 || stackNo >= h)) ||
+       (orientation == 2 && (stackNo < 0 || stackNo >= sliceCount)) )
+        return;
     
     if( compute && orientation == 2) // standard orientation
     {
@@ -619,8 +638,8 @@ static inline void DrawRuns(	struct edge *active,
         // ** COMPUTE
         if( compute)
         {
-            start = xCoords[i];		if( start < 0) start = 0;		if( start >= w) start = w;
-            end = xCoords[i + 1];	if( end < 0) end = 0;			if( end >= w) end = w;
+            start = xCoords[i];		if( start < 0) start = 0;		if( start >= runLimit) start = runLimit;
+            end = xCoords[i + 1];	if( end < 0) end = 0;			if( end >= runLimit) end = runLimit - 1;	// inclusive run: never step into the next row
             
             switch( orientation)
             {
@@ -641,7 +660,7 @@ static inline void DrawRuns(	struct edge *active,
                     if( imin && val < *imin) *imin = val;
                     if( itotal) *itotal += val;
                     if( count) (*count)++;
-                    if( values) (*ivalues++) = val;
+                    if( ivalues) (*ivalues++) = val;
                     if( ilocations)
                     {
                         (*ilocations++) = start + xx++;
@@ -671,11 +690,11 @@ static inline void DrawRuns(	struct edge *active,
                     if( imin && val < *imin) *imin = val;
                     if( itotal) *itotal += val;
                     if( count) (*count)++;
-                    if( values) (*ivalues++) = val;
+                    if( ivalues) (*ivalues++) = val;
                     if( ilocations)
                     {
                         (*ilocations++) = start + xx++;
-                        (*ilocations++) = w;
+                        (*ilocations++) = curY;
                     }
                     
                     if( idev)
@@ -698,21 +717,21 @@ static inline void DrawRuns(	struct edge *active,
             {
                 if( i == 0)
                 {
-                    start = 0;			if( start < 0) start = 0;		if( start >= w) start = w;
-                    end = xCoords[i];	if( end < 0) end = 0;			if( end >= w) end = w;
+                    start = 0;			if( start < 0) start = 0;		if( start >= runLimit) start = runLimit;
+                    end = xCoords[i];	if( end < 0) end = 0;			if( end >= runLimit) end = runLimit;
                     i--;
                 }
                 else
                 {
-                    start = xCoords[i]+1;		if( start < 0) start = 0;		if( start >= w) start = w;
+                    start = xCoords[i]+1;		if( start < 0) start = 0;		if( start >= runLimit) start = runLimit;
                     
                     if( i == numCoords-1)
                     {
-                        end = w;
+                        end = runLimit;
                     }
                     else end = xCoords[i+1];
                     
-                    if( end < 0) end = 0;			if( end >= w) end = w;
+                    if( end < 0) end = 0;			if( end >= runLimit) end = runLimit;
                 }
                 
                 if( RGB == NO)
@@ -783,22 +802,37 @@ static inline void DrawRuns(	struct edge *active,
             else		// INSIDE
             {
                 float	*restorePtr = nil;
+                float	*restoreImage = nil;
                 
-                start = xCoords[i];		if( start < 0) start = 0;		if( start >= w) start = w;
-                end = xCoords[i + 1];	if( end < 0) end = 0;			if( end >= w) end = w;
+                start = xCoords[i];		if( start < 0) start = 0;		if( start >= runLimit) start = runLimit;
+                end = xCoords[i + 1];	if( end < 0) end = 0;			if( end >= runLimit) end = runLimit - 1;	// inclusive run: never step into the next row
+                
+                if( restore)
+                {
+                    // The original pixels come from a lazily loaded copy of the series. A missing
+                    // cache entry (allocation failure, source file removed) must leave the run untouched
+                    // instead of dereferencing a nil buffer or silently overwriting with newVal.
+                    long restoreIndex = (orientation == 2) ? stackNo : curY;
+                    
+                    if( restoreImageCache && restoreIndex >= 0 && restoreIndex < sliceCount)
+                        restoreImage = [restoreImageCache[ restoreIndex] fImage];
+                    
+                    if( restoreImage == nil)
+                        continue;
+                }
                 
                 switch( orientation)
                 {
-                    case 0:		curPix = &pix[ (curY * ims) + (start * w) + stackNo];		if( restore && restoreImageCache) restorePtr = &[restoreImageCache[ curY] fImage][(start * w) + stackNo];			break;
-                    case 1:		curPix = &pix[ (curY * ims) + start + stackNo *w];			if( restore && restoreImageCache) restorePtr = &[restoreImageCache[ curY] fImage][start + stackNo *w];				break;
-                    case 2:		curPix = &pix[ (curY * w) + start];							if( restore && restoreImageCache) restorePtr = &[restoreImageCache[ stackNo] fImage][(curY * w) + start];			break;
+                    case 0:		curPix = &pix[ (curY * ims) + (start * w) + stackNo];		if( restoreImage) restorePtr = &restoreImage[(start * w) + stackNo];			break;
+                    case 1:		curPix = &pix[ (curY * ims) + start + stackNo *w];			if( restoreImage) restorePtr = &restoreImage[start + stackNo *w];				break;
+                    case 2:		curPix = &pix[ (curY * w) + start];							if( restoreImage) restorePtr = &restoreImage[(curY * w) + start];			break;
                 }
                 
                 long x = end - start;
                 
                 if( x >= 0)
                 {
-                    if( restore && restoreImageCache)
+                    if( restoreImage)
                     {
                         if( RGB == NO)
                         {
@@ -972,11 +1006,13 @@ void ras_FillPolygon( NSPointInt *p,
         ilocations = locations;
     }
     
+    long maxY = (orientation == 2) ? h : s;
+    
     for (active = NULL; (active = UpdateActive(active, edgeTable, curY)) != NULL; curY++)
     {
-        if( active)
+        if( active && curY >= 0 && curY < maxY)
         {
-            DrawRuns(active, curY, pix, w, h, min, max, outside, newVal, addition, RGB, compute, imax, imin, count, itotal, idev, imean, orientation, stackNo, restore, ivalues, ilocations);
+            DrawRuns(active, curY, pix, w, h, min, max, outside, newVal, addition, RGB, compute, imax, imin, count, itotal, idev, imean, orientation, stackNo, s, restore, ivalues, ilocations);
             
             if( ivalues)
                 ivalues = values + *count;
@@ -1369,6 +1405,7 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
 @synthesize philipsFactor, patientsWeight;
 @synthesize halflife, radionuclideTotalDose;
 @synthesize radionuclideTotalDoseCorrected, acquisitionTime, acquisitionDate, rescaleType;
+@synthesize missingPixelsReason;
 @synthesize radiopharmaceuticalStartTime, SUVConverted;
 @synthesize hasSUV, decayFactor;
 @synthesize units, decayCorrection, displaySUVValue;
@@ -1485,13 +1522,6 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
         gSUVAcquisitionTimeField = 0;
 #endif
         
-        if( gUseVOILUT == YES && gUSEPAPYRUSDCMPIX == NO)
-        {
-            [[NSUserDefaults standardUserDefaults] setBool: NO forKey: @"UseVOILUT"];
-            gUseVOILUT = NO; // VOILUT is not supported with DCMFramework
-            
-            NSLog( @"**** VOILUT is not supported with DCMFramework -> It will be turned off");
-        }
     }
 }
 
@@ -2070,12 +2100,17 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
     BOOL isComputefImageRGB = isRGB;
     float *computedfImage = nil;
     
+    // Several paths below return without reaching the assignments at the end,
+    // and both callers read these before testing the result.
+    if( numberOfValues) *numberOfValues = 0;
+    if( locations) *locations = nil;
+    
     @try
     {
         if( [self thickSlabVRActivated])
             isComputefImageRGB = YES;
         else
-            computedfImage = [self computefImage];
+            computedfImage = [self computefImageForMeasurement];
         
         if( isComputefImageRGB)
             computedfImage = (float*) self.baseAddr;
@@ -2105,7 +2140,7 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                                 if( isComputefImageRGB)
                                 {
                                     unsigned char*  rgbPtr = (unsigned char*) &computedfImage[ (yy * width) + xx];
-                                    float val = rgbPtr[ 0] + rgbPtr[ 1] + rgbPtr[2] / 3;
+                                    float val = (rgbPtr[ 1] + rgbPtr[ 2] + rgbPtr[ 3]) / 3.;
                                     
                                     values[ count] = val;
                                     
@@ -2191,7 +2226,7 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                         {
                             unsigned char *rgbPtr = (unsigned char*) &computedfImage[ (pts[ 0].y * width) + pts[ 0].x];
                             
-                            float val = rgbPtr[ 0] + rgbPtr[ 1] + rgbPtr[2] / 3;
+                            float val = (rgbPtr[ 1] + rgbPtr[ 2] + rgbPtr[ 3]) / 3.;
                             
                             values[ count] = val;
                             
@@ -2351,12 +2386,15 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
     return result;
 }
 
-- (void) prepareRestore
+- (BOOL) prepareRestore
 {
     if( restoreImageCache)
         [self freeRestore];
     
-    restoreImageCache = (DCMPix**) malloc( [pixArray count] * sizeof(DCMPix*));
+    if( pixArray.count == 0)
+        return NO;
+    
+    restoreImageCache = (DCMPix**) calloc( [pixArray count], sizeof(DCMPix*));
     
     if( restoreImageCache)
     {
@@ -2364,12 +2402,22 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
         {
             DCMPix	*s = [pixArray objectAtIndex:i];
             
-            restoreImageCache[ i ] = [[DCMPix alloc] initWithPath: s.srcFile : i : pixArray.count : nil : s.frameNo : 0];
+            restoreImageCache[ i ] = [[DCMPix alloc] initWithPath: s.srcFile : i : pixArray.count : nil : s.frameNo : 0 isBonjour: NO imageObj: s.imageObj];
+            
+            if( restoreImageCache[ i] == nil)
+            {
+                NSLog( @"prepare Restore cache - FAILED: source image %d unavailable (%@)", i, s.srcFile);
+                [self freeRestore];
+                return NO;
+            }
         }
         
         NSLog( @"prepare Restore cache");
+        return YES;
     }
-    else NSLog( @"prepare Restore cache - FAILED");
+    
+    NSLog( @"prepare Restore cache - FAILED");
+    return NO;
 }
 
 - (void) freeRestore
@@ -2478,6 +2526,67 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
     return map;
 }
 
+// RTSTRUCT vertices use ROI coordinates: pixel (x, y) is sampled at (x+0.5, y+0.5).
+// Preserve fractional vertices and keep the empty texture border outside the image samples.
++ (unsigned char *)getMapFromRTSTRUCTROI:(ROI *)roi width:(int)imageWidth height:(int)imageHeight size:(NSSize *)size origin:(NSPoint *)origin
+{
+    NSArray *points = roi.points;
+    NSUInteger count = points.count;
+    if (count < 3 || imageWidth <= 0 || imageHeight <= 0 ||
+        imageWidth > INT_MAX-2 || imageHeight > INT_MAX-2 || count > SIZE_MAX / sizeof(NSPoint))
+        return NULL;
+    NSPoint *vertices = malloc(count * sizeof(NSPoint));
+    double *crossings = malloc(count * sizeof(double));
+    if (!vertices || !crossings) { free(vertices); free(crossings); return NULL; }
+    double minX = imageWidth, minY = imageHeight, maxX = 0, maxY = 0;
+    for (NSUInteger i = 0; i < count; i++)
+    {
+        vertices[i] = [[points objectAtIndex:i] point];
+        if (!isfinite(vertices[i].x) || !isfinite(vertices[i].y))
+        { free(vertices); free(crossings); return NULL; }
+        minX = fmin(minX, vertices[i].x); maxX = fmax(maxX, vertices[i].x);
+        minY = fmin(minY, vertices[i].y); maxY = fmax(maxY, vertices[i].y);
+    }
+    int firstX = (int)floor(fmax(0, fmin(imageWidth, minX)));
+    int firstY = (int)floor(fmax(0, fmin(imageHeight, minY)));
+    int lastX = (int)ceil(fmax(0, fmin(imageWidth, maxX))) - 1;
+    int lastY = (int)ceil(fmax(0, fmin(imageHeight, maxY))) - 1;
+    if (lastX < firstX || lastY < firstY)
+    { free(vertices); free(crossings); return NULL; }
+    size_t width = lastX-firstX+3, height = lastY-firstY+3;
+    if (height > SIZE_MAX / width)
+    { free(vertices); free(crossings); return NULL; }
+    unsigned char *map = calloc(width, height);
+    if (!map) { free(vertices); free(crossings); return NULL; }
+    for (int y = firstY; y <= lastY; y++)
+    {
+        double sampleY = y + 0.5;
+        NSUInteger n = 0;
+        for (NSUInteger i = 0, j = count-1; i < count; j = i++)
+        {
+            NSPoint a = vertices[j], b = vertices[i];
+            if ((a.y > sampleY) != (b.y > sampleY))
+                crossings[n++] = a.x + (sampleY-a.y) / (b.y-a.y) * (b.x-a.x);
+        }
+        qsort_b(crossings, n, sizeof(double), ^int(const void *a, const void *b) {
+            double x = *(const double *)a, z = *(const double *)b;
+            return (x > z) - (x < z);
+        });
+        // Even-odd fill; include the left edge and exclude the right edge at pixel centers.
+        for (NSUInteger i = 0; i+1 < n; i += 2)
+        {
+            int start = (int)ceil(fmax(firstX, fmin(lastX+1, crossings[i]-0.5)));
+            int end = (int)ceil(fmax(firstX, fmin(lastX+1, crossings[i+1]-0.5)));
+            if (end > start)
+                memset(map + (y-firstY+1)*width + start-firstX+1, 255, end-start);
+        }
+    }
+    free(vertices); free(crossings);
+    *size = NSMakeSize(width, height);
+    *origin = NSMakePoint(firstX-1, firstY-1);
+    return map;
+}
+
 - (void) fillROI:(ROI*) roi newVal :(float) newVal minValue :(float) minValue maxValue :(float) maxValue outside :(BOOL) outside orientationStack :(long) orientationStack stackNo :(long) stackNo restore :(BOOL) restore addition:(BOOL) addition;
 {
 #ifdef OSIRIX_VIEWER
@@ -2503,6 +2612,34 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
     BOOL				clip;
     
     [self CheckLoad];
+    
+    long planeWidth = (orientationStack == 0) ? height : width;
+    long planeHeight = (orientationStack == 2) ? height : (long)pixArray.count;
+#ifndef DECOMPRESS_APP
+    HorosVRScissorPlan *scissorPlan = [HorosVRScissorBounds planWithWidth:(int)width
+                                                                  height:(int)height
+                                                              sliceCount:(int)pixArray.count
+                                                             orientation:(int)orientationStack
+                                                                 stackNo:(int)stackNo
+                                                                 restore:restore
+                                                                clipMinX:clipMin.x
+                                                                clipMinY:clipMin.y
+                                                                clipMaxX:clipMax.x
+                                                                clipMaxY:clipMax.y];
+    if( scissorPlan.accepted == NO)
+    {
+        if( scissorPlan.reason.length)
+            NSLog( @"fillROI: %@", scissorPlan.reason);
+        return;
+    }
+    orientationStack = scissorPlan.orientation;
+    stackNo = scissorPlan.stackNo;
+    restore = scissorPlan.restore;
+    clipMin = NSMakePoint( scissorPlan.clipMinX, scissorPlan.clipMinY);
+    clipMax = NSMakePoint( scissorPlan.clipMaxX, scissorPlan.clipMaxY);
+    planeWidth = scissorPlan.planeWidth;
+    planeHeight = scissorPlan.planeHeight;
+#endif
     
     if( stackNo < 0 && restore)	{
         NSLog( @"error !!!! stackNo < 0 && restore");
@@ -2547,23 +2684,69 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
             long			textureUpLeftCornerX = roi.textureUpLeftCornerX;
             long			textureUpLeftCornerY = roi.textureUpLeftCornerY;
             unsigned char	*buf = roi.textureBuffer;
+            float			*restoreImage = nil;
+            
+            if( buf == nil || textWidth <= 0 || textHeight <= 0)
+            {
+                if( outside == NO)
+                    return;	// Empty brush: nothing inside to fill
+                
+                textWidth = 0;
+                textHeight = 0;
+            }
+            
+            if( restore)
+            {
+                if( restoreImageCache && stackNo >= 0 && stackNo < pixArray.count)
+                    restoreImage = [restoreImageCache[ stackNo] fImage];
+                
+                if( restoreImage == nil)
+                {
+                    NSLog( @"fillROI: original pixels unavailable for restore (stack %ld) - image left unchanged", stackNo);
+                    return;
+                }
+            }
+            
+#ifndef DECOMPRESS_APP
+            NSArray *insideTex = [HorosVRScissorBounds textureInsideColumns:(int)width
+                                                                      rows:(int)height
+                                                                   originX:(int)textureUpLeftCornerX
+                                                                   originY:(int)textureUpLeftCornerY
+                                                                     width:(int)textWidth
+                                                                    height:(int)textHeight];
+            long texX0 = [[insideTex objectAtIndex: 0] intValue];
+            long texY0 = [[insideTex objectAtIndex: 1] intValue];
+            long texW = [[insideTex objectAtIndex: 2] intValue];
+            long texH = [[insideTex objectAtIndex: 3] intValue];
+#else
+            long texX0 = textureUpLeftCornerX < 0 ? 0 : textureUpLeftCornerX;
+            long texY0 = textureUpLeftCornerY < 0 ? 0 : textureUpLeftCornerY;
+            long texW = textureUpLeftCornerX + textWidth - texX0;
+            long texH = textureUpLeftCornerY + textHeight - texY0;
+            if( texX0 + texW > width) texW = width - texX0;
+            if( texY0 + texH > height) texH = height - texY0;
+            if( texW < 0) texW = 0;
+            if( texH < 0) texH = 0;
+#endif
+            if( (texW <= 0 || texH <= 0) && outside == NO)
+                return;
             
             // *** INSIDE
             
             if( outside == NO)
             {
-                for( y = textureUpLeftCornerY; y < textureUpLeftCornerY + textHeight; y++)
+                for( y = texY0; y < texY0 + texH; y++)
                 {
                     if( isRGB)
                     {
                         
-                        unsigned char *rgbPtr = (unsigned char*) (fImage + textureUpLeftCornerX + y*width);
+                        unsigned char *rgbPtr = (unsigned char*) (fImage + texX0 + y*width);
                         unsigned char *fTempRestore = nil;
-                        if( restore) fTempRestore = (unsigned char*) &[restoreImageCache[ stackNo] fImage][textureUpLeftCornerX + y*width];
+                        if( restore) fTempRestore = (unsigned char*) &restoreImage[texX0 + y*width];
                         
-                        for( long x = textureUpLeftCornerX; x < textureUpLeftCornerX + textWidth; x++)
+                        for( long x = texX0; x < texX0 + texW; x++)
                         {
-                            if( *buf++)
+                            if( buf[ (y - textureUpLeftCornerY) * textWidth + (x - textureUpLeftCornerX) ])
                             {
                                 if( x >= clipMin.x && x < clipMax.x && y >= clipMin.y && y < clipMax.y)
                                 {
@@ -2588,17 +2771,18 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                                 }
                             }
                             rgbPtr += 4;
+                            if (restore) fTempRestore += 4;
                         }
                     }
                     else
                     {
-                        float *fTempImage = fImage + textureUpLeftCornerX + y*width;
+                        float *fTempImage = fImage + texX0 + y*width;
                         float *fTempRestore = nil;
-                        if( restore) fTempRestore = &[restoreImageCache[ stackNo] fImage][textureUpLeftCornerX + y*width];
+                        if( restore) fTempRestore = &restoreImage[texX0 + y*width];
                         
-                        for( long x = textureUpLeftCornerX; x < textureUpLeftCornerX + textWidth; x++)
+                        for( long x = texX0; x < texX0 + texW; x++)
                         {
-                            if( *buf++)
+                            if( buf[ (y - textureUpLeftCornerY) * textWidth + (x - textureUpLeftCornerX) ])
                             {
                                 if( x >= clipMin.x && x < clipMax.x && y >= clipMin.y && y < clipMax.y)
                                 {
@@ -2614,7 +2798,7 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                                 }
                             }
                             fTempImage++;
-                            fTempRestore++;
+                            if (restore) fTempRestore++;
                         }
                     }
                 }
@@ -2699,9 +2883,9 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
             
             switch( orientationStack)
             {
-                case 0:	yIm = pixArray.count;		xIm = width;	break;
-                case 1:	yIm = pixArray.count;		xIm = height;	break;
-                case 2:	yIm = height;				xIm = width;	break;
+                case 0:	yIm = planeHeight;		xIm = planeWidth;	break;
+                case 1:	yIm = planeHeight;		xIm = planeWidth;	break;
+                case 2:	yIm = planeHeight;		xIm = planeWidth;	break;
             }
             
             clip = NO;
@@ -2785,12 +2969,12 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
         
         switch( orientationStack)
         {
-            case 0:	yIm = pixArray.count;		xIm = width;	break;
-            case 1:	yIm = pixArray.count;		xIm = height;	break;
-            case 2:	yIm = height;				xIm = width;	break;
+            case 0:	yIm = planeHeight;		xIm = planeWidth;	break;
+            case 1:	yIm = planeHeight;		xIm = planeWidth;	break;
+            case 2:	yIm = planeHeight;		xIm = planeWidth;	break;
         }
         
-        if( roi) uplefty = downrighty = ptsInt[0].y;
+        if( ptsInt && no > 0) uplefty = downrighty = ptsInt[0].y;
         else
         {
             uplefty = 0;
@@ -2821,7 +3005,7 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                     case 2:		fTempImage = fImage + width*y;							break;
                 }
                 
-                for( long x = 0; x < width ; x++)
+                for( long x = 0; x < xIm ; x++)
                 {
                     unsigned char*  rgbPtr = (unsigned char*) fTempImage;
                     
@@ -2843,7 +3027,7 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                     case 2:		fTempImage = fImage + width*y;							break;
                 }
                 
-                for( long x = 0; x < width ; x++)
+                for( long x = 0; x < xIm ; x++)
                 {
                     unsigned char*  rgbPtr = (unsigned char*) fTempImage;
                     
@@ -2867,7 +3051,7 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                     case 2:		fTempImage = fImage + width*y;							break;
                 }
                 
-                for( long x = 0; x < width ; x++)
+                for( long x = 0; x < xIm ; x++)
                 {
                     if( *fTempImage >= minValue && *fTempImage <= maxValue) *fTempImage = newVal;
                     
@@ -2885,7 +3069,7 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                     case 2:		fTempImage = fImage + width*y;							break;
                 }
                 
-                for( long x = 0; x < width ; x++)
+                for( long x = 0; x < xIm ; x++)
                 {
                     if( *fTempImage >= minValue && *fTempImage <= maxValue) *fTempImage = newVal;
                     
@@ -2908,9 +3092,9 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
             
             switch( orientationStack)
             {
-                case 0:	yIm = pixArray.count;		xIm = width;	break;
-                case 1:	yIm = pixArray.count;		xIm = height;	break;
-                case 2:	yIm = height;				xIm = width;	break;
+                case 0:	yIm = planeHeight;		xIm = planeWidth;	break;
+                case 1:	yIm = planeHeight;		xIm = planeWidth;	break;
+                case 2:	yIm = planeHeight;		xIm = planeWidth;	break;
             }
             
             if( isRGB)
@@ -2967,7 +3151,7 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
     //		pix.maxValueOfSeries = 0;
     //	}
     
-    if( roi) free( ptsInt);
+    if( ptsInt) free( ptsInt);
 }
 
 - (void) fillROI:(ROI*) roi :(float) newVal :(float) minValue :(float) maxValue :(BOOL) outside :(long) orientationStack :(long) stackNo
@@ -3183,14 +3367,15 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
         
         for( long i = 0; i < count; i++)
         {
-            float temp = imean - values[ i];
-            temp *= temp;
-            idev += temp;
+            double delta = imean - (double) values[ i];
+            idev += delta * delta;
         }
         
-        *dev = idev;
-        *dev = *dev / (count-1);
-        *dev = sqrt(*dev);
+        // Keep the variance in double until after sqrt: intermediate Float
+        // overflow/underflow must not corrupt a representable deviation.
+        // Empty/single finite samples have zero displayed dispersion. Preserve
+        // an invalid result when non-finite source pixels made idev invalid.
+        *dev = count > 1 ? sqrt(idev / (count - 1)) : (isfinite(idev) ? 0 : NAN);
     }
     
     if( max) *max = imax;
@@ -3209,6 +3394,10 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
         *skewness = [DCMPix skewness: values length: count mean: imean];
     
     
+#ifndef DECOMPRESS_APP
+    roi.median = [HorosROIStatistics medianOfValues:values count:count];
+#endif
+
     if( values)
         free( values);
 }
@@ -3644,6 +3833,10 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
         //-------------------------received parameters
         self.srcFile = s;
         
+        // Without a database object (restore cache, plain file loading) there is nothing to read here;
+        // entering the block only raises and logs an exception per image.
+        if( iO)
+        {
         [iO.managedObjectContext lock];
         @try
         {
@@ -3674,6 +3867,7 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
         @finally
         {
             [iO.managedObjectContext unlock];
+        }
         }
         
         imID = pos;
@@ -4929,10 +5123,29 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
 
 - (void) computeTotalDoseCorrected
 {
+    // ADMIN and NONE mean the pixel values were not decay corrected back to the
+    // injection time, so the dose applies as injected. The load path used to
+    // reach this decision in checkSUV, after this method had already applied the
+    // exponential; the SUV panel calls this method on its own and never reached
+    // it, which made an edited ADMIN series read a different SUV than the same
+    // series read on load. The decision belongs here, where every caller sees it.
+    if( [decayCorrection isEqualToString: @"ADMIN"] || [decayCorrection isEqualToString: @"NONE"])
+    {
+        decayFactor = 1.0;
+        radionuclideTotalDoseCorrected = radionuclideTotalDose;
+        return;
+    }
+    
     float timebetween = -[radiopharmaceuticalStartTime timeIntervalSinceDate: acquisitionTime];
     
     if( halflife > 0 && timebetween > 0)
         radionuclideTotalDoseCorrected = radionuclideTotalDose * exp( -timebetween * logf( 2) / halflife);
+    else
+        // No usable correction. Leaving the previous number here would carry a
+        // dose computed from values the user just replaced, so refuse instead:
+        // zero is what a series that never reached this method already holds,
+        // and the SUV callers treat it as "no SUV" rather than dividing by it.
+        radionuclideTotalDoseCorrected = 0;
 }
 
 #ifndef OSIRIX_LIGHT
@@ -5053,11 +5266,14 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
             [NSException raise: @"RTStruct" format: @"StructureSetROISequence not found"];
         
         NSMutableDictionary *roiNames = [NSMutableDictionary dictionary];
+        NSMutableDictionary *roiFrames = [NSMutableDictionary dictionary];
         
         for ( DCMObject *sequenceItem in [roiSequence sequence])
         {
             [roiNames setValue: [sequenceItem attributeValueWithName: @"ROIName"]
                         forKey: [sequenceItem attributeValueWithName: @"ROINumber"]];
+            [roiFrames setValue: [sequenceItem attributeValueWithName: @"ReferencedFrameofReferenceUID"]
+                         forKey: [sequenceItem attributeValueWithName: @"ROINumber"]];
         }
         
         DCMSequenceAttribute *roiContourSequence = (DCMSequenceAttribute *)[dcmObject attributeWithName:@"ROIContourSequence"];
@@ -5088,6 +5304,7 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                 [[rgbArray objectAtIndex: 2] floatValue] * 65535 / 256.0 };
             
             NSString *roiName = [roiNames valueForKey: [sequenceItem attributeValueWithName: @"ReferencedROINumber"]];
+            NSString *roiFrameUID = [roiFrames valueForKey: [sequenceItem attributeValueWithName: @"ReferencedROINumber"]];
             
             NSLog( @"roiName = %@", roiName);
             DCMSequenceAttribute *contourSequence = (DCMSequenceAttribute *)[sequenceItem attributeWithName:@"ContourSequence"];
@@ -5097,12 +5314,15 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
             for ( DCMObject *contourItem in [contourSequence sequence])
             {
                 
-                //				DCMSequenceAttribute *contourImageSequence = (DCMSequenceAttribute*)[contourItem attributeWithName: @"ContourImageSequence"];
-                //				if ( contourImageSequence == nil) {
-                //					NSLog( @"contourImageSequence not found");
-                //					@throw;
-                //				}
-                
+                DCMSequenceAttribute *contourImageSequence = (DCMSequenceAttribute *)[contourItem attributeWithName: @"ContourImageSequence"];
+                NSMutableSet *contourImageUIDs = [NSMutableSet set];
+                for (DCMObject *reference in contourImageSequence.sequence)
+                {
+                    NSString *uid = [reference attributeValueWithName: @"ReferencedSOPInstanceUID"];
+                    if (uid.length)
+                        [contourImageUIDs addObject: uid];
+                }
+
                 NSString *contourType = [contourItem attributeValueWithName: @"ContourGeometricType"];
                 
                 if( [contourType isEqualToString: @"CLOSED_PLANAR"] == NO && [contourType isEqualToString: @"INTERPOLATED_PLANAR"] == NO && [contourType isEqualToString: @"POINT"] == NO)
@@ -5114,6 +5334,8 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                 ToolMode type = tCPolygon;
                 
                 NSArray *dcmPoints = [contourItem attributeArrayWithName: @"ContourData"];
+                if (dcmPoints.count < 3)
+                    continue;
                 
                 // Loop over all slices to determine if slice "contains" the ROI based on distance criterion of FIRST point
                 // This of course assumes that ALL the points in the contour are in the same slice.
@@ -5128,6 +5350,15 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                     if ( imgObject == nil)
                         [NSException raise: @"RTStruct" format: @"Error opening referenced image file"];
                     
+                    // Explicit contour references must not spill into other coplanar images.
+                    // Without image references, retain geometric matching within the ROI's frame.
+                    if (contourImageSequence.sequence.count &&
+                        ![contourImageUIDs containsObject: [imgObject attributeValueWithName: @"SOPInstanceUID"]])
+                        continue;
+                    if (roiFrameUID.length &&
+                        ![roiFrameUID isEqualToString: [imgObject attributeValueWithName: @"FrameofReferenceUID"]])
+                        continue;
+
                     NSArray *pixSpacings = [imgObject attributeArrayWithName: @"PixelSpacing"];
                     NSArray *position = [imgObject attributeArrayWithName: @"ImagePositionPatient"];
                     
@@ -5135,8 +5366,9 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                     float posY = [[position objectAtIndex: 1] floatValue];
                     float posZ = [[position objectAtIndex: 2] floatValue];
                     
-                    pixSpacingX = [[pixSpacings objectAtIndex: 0] floatValue];
-                    pixSpacingY = [[pixSpacings objectAtIndex: 1] floatValue];
+                    // DICOM PixelSpacing is row spacing, then column spacing.
+                    pixSpacingX = [[pixSpacings objectAtIndex: 1] floatValue];
+                    pixSpacingY = [[pixSpacings objectAtIndex: 0] floatValue];
                     
                     if ( pixSpacingX == 0.0f || pixSpacingY == 0.0f) continue;  // Bad slice?
                     
@@ -5171,37 +5403,25 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                     
                     if ( distToSlice < distCriterion)
                     {
-                        float sliceCoords[ 2 ];
-                        
-                        sliceCoords[ 0 ] = temp[ 0 ] * orients[ 0 ] + temp[ 1 ] * orients[ 1 ] + temp[ 2 ] * orients[ 2 ];
-                        sliceCoords[ 1 ] = temp[ 0 ] * orients[ 3 ] + temp[ 1 ] * orients[ 4 ] + temp[ 2 ] * orients[ 5 ];
-                        sliceCoords[ 0 ] *= pixSpacingXrecip;
-                        sliceCoords[ 1 ] *= pixSpacingYrecip;
-                        
                         int numPoints = [[contourItem attributeValueWithName: @"NumberofContourPoints"] intValue];
+                        if (numPoints <= 0 || dcmPoints.count / 3 != (NSUInteger)numPoints || dcmPoints.count % 3 != 0)
+                            continue;
                         NSMutableArray *pointsArray = [NSMutableArray arrayWithCapacity: numPoints];
-                        
-                        [pointsArray addObject: [MyPoint point:NSMakePoint( sliceCoords[ 0 ], sliceCoords[ 1 ])]];
-                        
-                        if( numPoints > 1)
+
+                        // Use the same pixel-center convention as convertPixX:pixY:toDICOMCoords:.
+                        // ImagePositionPatient is the center of the first pixel, at ROI (0.5, 0.5).
+                        for (unsigned int pointIndex = 0; pointIndex < numPoints; pointIndex++)
                         {
-                            // Convert rest of points in contour to sliceCoord space
-                            for ( unsigned int pointIndex = 1; pointIndex < numPoints; pointIndex++)
-                            {
-                                temp[ 0 ] = [[dcmPoints objectAtIndex: 3 * pointIndex] floatValue] - posX;
-                                temp[ 1 ] = [[dcmPoints objectAtIndex: 3 * pointIndex + 1] floatValue] - posY;
-                                temp[ 2 ] = [[dcmPoints objectAtIndex: 3 * pointIndex + 2] floatValue] - posZ;
-                                
-                                sliceCoords[ 0 ] = temp[ 0 ] * orients[ 0 ] + temp[ 1 ] * orients[ 1 ] + temp[ 2 ] * orients[ 2 ];
-                                sliceCoords[ 1 ] = temp[ 0 ] * orients[ 3 ] + temp[ 1 ] * orients[ 4 ] + temp[ 2 ] * orients[ 5 ];
-                                sliceCoords[ 0 ] *= pixSpacingXrecip;
-                                sliceCoords[ 1 ] *= pixSpacingYrecip;
-                                [pointsArray addObject: [MyPoint point:NSMakePoint( sliceCoords[ 0 ], sliceCoords[ 1 ])]];
-                            }
+                            temp[0] = [[dcmPoints objectAtIndex: 3 * pointIndex] floatValue] - posX;
+                            temp[1] = [[dcmPoints objectAtIndex: 3 * pointIndex + 1] floatValue] - posY;
+                            temp[2] = [[dcmPoints objectAtIndex: 3 * pointIndex + 2] floatValue] - posZ;
+                            float x = (temp[0] * orients[0] + temp[1] * orients[1] + temp[2] * orients[2]) * pixSpacingXrecip + 0.5f;
+                            float y = (temp[0] * orients[3] + temp[1] * orients[4] + temp[2] * orients[5]) * pixSpacingYrecip + 0.5f;
+                            [pointsArray addObject: [MyPoint point: NSMakePoint(x, y)]];
                         }
-                        else
+                        if (numPoints == 1)
                             type = t2DPoint;
-                        
+
                         ROI *roi = [[[ROI alloc] initWithType: type
                                                              : pixSpacingX
                                                              : pixSpacingY
@@ -5236,7 +5456,10 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                             {
                                 NSSize s;
                                 NSPoint o;
-                                unsigned char* texture = [DCMPix getMapFromPolygonROI: roi size: &s origin: &o];
+                                unsigned char* texture = [DCMPix getMapFromRTSTRUCTROI: roi
+                                    width: [[imgObject attributeValueWithName: @"Columns"] intValue]
+                                    height: [[imgObject attributeValueWithName: @"Rows"] intValue]
+                                    size: &s origin: &o];
                                 
                                 if( texture)
                                 {
@@ -5388,65 +5611,141 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
 #endif
 }
 
+
+// A metadata value is whatever class the parser chose for the value
+// representation the file declared. A file that declares OB where the standard
+// says DS hands back NSData, and asking NSData for floatValue is an unrecognised
+// selector: the process dies without naming the attribute that did it. Measured
+// through the framework itself, on an object whose window centre and width are
+// stored as OB:
+//
+//     WindowCenter    NSConcreteMutableData   floatValue=NO
+//
+// A value that cannot answer for a number is not turned into one. It is named,
+// and the attribute is treated as absent.
+static id horosNumberValue( DCMObject *dcmObject, NSString *name, NSString *file)
+{
+    id value = [dcmObject attributeValueWithName: name];
+    
+    if( value == nil || [value respondsToSelector: @selector(floatValue)])
+        return value;
+    
+    NSLog( @"---- %@: %@ is stored as %@, which is not a number; the attribute is ignored",
+          [file lastPathComponent], name, NSStringFromClass( [value class]));
+    
+    return nil;
+}
+
+// The same promise, for the attributes whose ivars are declared NSString*. A
+// value parsed as NSData assigned to one of them is a lie that surfaces later,
+// where it is interpolated into a string or sent -floatValue: the reports carry
+// -[NSMutableData floatValue] and -[NSString initWithString:nil] from exactly
+// that. A number is text a person can read, so it is turned into text; bytes
+// this cannot name are refused, with the tag named.
+static NSString* horosStringValue( DCMObject *dcmObject, NSString *name, NSString *file)
+{
+    id value = [dcmObject attributeValueWithName: name];
+    
+    if( value == nil || [value isKindOfClass: [NSString class]])
+        return value;
+    
+    if( [value isKindOfClass: [NSNumber class]])
+        return [value stringValue];
+    
+    NSLog( @"---- %@: %@ is stored as %@, which is not text; the attribute is ignored",
+          [file lastPathComponent], name, NSStringFromClass( [value class]));
+    
+    return nil;
+}
+
+// And for the ivars declared NSNumber*.
+static NSNumber* horosNumberObject( DCMObject *dcmObject, NSString *name, NSString *file)
+{
+    id value = horosNumberValue( dcmObject, name, file);
+    
+    if( value == nil || [value isKindOfClass: [NSNumber class]])
+        return value;
+    
+    return [NSNumber numberWithDouble: [value doubleValue]];
+}
+
+// The same for an attribute that carries several numbers: an element of the array
+// is whatever class the value representation produced, so a position stored as OB
+// gives three NSData where three numbers are wanted.
+static double horosNumberInArray( NSArray *values, NSUInteger index, NSString *name, NSString *file)
+{
+    if( values.count <= index)
+        return 0;
+    
+    id value = [values objectAtIndex: index];
+    if( [value respondsToSelector: @selector(doubleValue)])
+        return [value doubleValue];
+    
+    NSLog( @"---- %@: %@ is stored as %@, which is not a number; the attribute is ignored",
+          [file lastPathComponent], name, NSStringFromClass( [value class]));
+    
+    return 0;
+}
+
 - (void) dcmFrameworkLoad0x0018: (DCMObject*) dcmObject
 {
-    if( [dcmObject attributeValueWithName:@"PatientsWeight"]) patientsWeight = [[dcmObject attributeValueWithName:@"PatientsWeight"] floatValue];
+    if( [dcmObject attributeValueWithName:@"PatientsWeight"]) patientsWeight = [horosNumberValue( dcmObject, @"PatientsWeight", self.srcFile) floatValue];
     
-    if( [dcmObject attributeValueWithName:@"SliceThickness"]) sliceThickness = [[dcmObject attributeValueWithName:@"SliceThickness"] doubleValue];
-    if( [dcmObject attributeValueWithName:@"SpacingBetweenSlices"]) spacingBetweenSlices = [[dcmObject attributeValueWithName:@"SpacingBetweenSlices"] doubleValue];
+    if( [dcmObject attributeValueWithName:@"SliceThickness"]) sliceThickness = [horosNumberValue( dcmObject, @"SliceThickness", self.srcFile) doubleValue];
+    if( [dcmObject attributeValueWithName:@"SpacingBetweenSlices"]) spacingBetweenSlices = [horosNumberValue( dcmObject, @"SpacingBetweenSlices", self.srcFile) doubleValue];
     if( [dcmObject attributeValueWithName:@"RepetitionTime"])
     {
         [repetitiontime release];
-        repetitiontime = [[dcmObject attributeValueWithName:@"RepetitionTime"] retain];
+        repetitiontime = [horosStringValue( dcmObject, @"RepetitionTime", self.srcFile) retain];
     }
     if( [dcmObject attributeValueWithName:@"EchoTime"])
     {
         [echotime release];
-        echotime = [[dcmObject attributeValueWithName:@"EchoTime"] retain];
+        echotime = [horosStringValue( dcmObject, @"EchoTime", self.srcFile) retain];
     }
     if( [dcmObject attributeValueWithName:@"FlipAngle"])
     {
         [flipAngle release];
-        flipAngle = [[dcmObject attributeValueWithName:@"FlipAngle"] retain];
+        flipAngle = [horosStringValue( dcmObject, @"FlipAngle", self.srcFile) retain];
     }
     if( [dcmObject attributeValueWithName:@"ViewPosition"])
     {
         [viewPosition release];
-        viewPosition = [[dcmObject attributeValueWithName:@"ViewPosition"] retain];
+        viewPosition = [horosStringValue( dcmObject, @"ViewPosition", self.srcFile) retain];
     }
     if( [dcmObject attributeValueWithName:@"PositionerPrimaryAngle"])
     {
         [positionerPrimaryAngle release];
-        positionerPrimaryAngle = [[dcmObject attributeValueWithName:@"PositionerPrimaryAngle"] retain];
+        positionerPrimaryAngle = [horosNumberObject( dcmObject, @"PositionerPrimaryAngle", self.srcFile) retain];
     }
     if( [dcmObject attributeValueWithName:@"PositionerSecondaryAngle"])
     {
         [positionerSecondaryAngle release];
-        positionerSecondaryAngle = [[dcmObject attributeValueWithName:@"PositionerSecondaryAngle"] retain];
+        positionerSecondaryAngle = [horosNumberObject( dcmObject, @"PositionerSecondaryAngle", self.srcFile) retain];
     }
     if( [dcmObject attributeValueWithName:@"EstimatedRadiographicMagnificationFactor"])
-        estimatedRadiographicMagnificationFactor = [[dcmObject attributeValueWithName:@"EstimatedRadiographicMagnificationFactor"] doubleValue];
+        estimatedRadiographicMagnificationFactor = [horosNumberValue( dcmObject, @"EstimatedRadiographicMagnificationFactor", self.srcFile) doubleValue];
     if( [dcmObject attributeValueWithName:@"PatientPosition"])
     {
         [patientPosition release];
-        patientPosition = [[dcmObject attributeValueWithName:@"PatientPosition"] retain];
+        patientPosition = [horosStringValue( dcmObject, @"PatientPosition", self.srcFile) retain];
     }
-    if( [dcmObject attributeValueWithName:@"RecommendedDisplayFrameRate"]) cineRate = [[dcmObject attributeValueWithName:@"RecommendedDisplayFrameRate"] floatValue];
-    if( !cineRate && [dcmObject attributeValueWithName:@"CineRate"]) cineRate = [[dcmObject attributeValueWithName:@"CineRate"] floatValue];
+    if( [dcmObject attributeValueWithName:@"RecommendedDisplayFrameRate"]) cineRate = [horosNumberValue( dcmObject, @"RecommendedDisplayFrameRate", self.srcFile) floatValue];
+    if( !cineRate && [dcmObject attributeValueWithName:@"CineRate"]) cineRate = [horosNumberValue( dcmObject, @"CineRate", self.srcFile) floatValue];
     if (!cineRate && [dcmObject attributeValueWithName:@"FrameDelay"])
     {
-        if( [[dcmObject attributeValueWithName:@"FrameDelay"] floatValue] > 0)
-            cineRate = 1000. / [[dcmObject attributeValueWithName:@"FrameDelay"] floatValue];
+        if( [horosNumberValue( dcmObject, @"FrameDelay", self.srcFile) floatValue] > 0)
+            cineRate = 1000. / [horosNumberValue( dcmObject, @"FrameDelay", self.srcFile) floatValue];
     }
     if (!cineRate && [dcmObject attributeValueWithName:@"FrameTime"])
     {
-        if( [[dcmObject attributeValueWithName:@"FrameTime"] floatValue] > 0)
-            cineRate = 1000. / [[dcmObject attributeValueWithName:@"FrameTime"] floatValue];
+        if( [horosNumberValue( dcmObject, @"FrameTime", self.srcFile) floatValue] > 0)
+            cineRate = 1000. / [horosNumberValue( dcmObject, @"FrameTime", self.srcFile) floatValue];
     }
     if (!cineRate && [dcmObject attributeValueWithName:@"FrameTimeVector"])
     {
-        if( [[dcmObject attributeValueWithName:@"FrameTimeVector"] floatValue] > 0)
-            cineRate = 1000. / [[dcmObject attributeValueWithName:@"FrameTimeVector"] floatValue];
+        if( [horosNumberValue( dcmObject, @"FrameTimeVector", self.srcFile) floatValue] > 0)
+            cineRate = 1000. / [horosNumberValue( dcmObject, @"FrameTimeVector", self.srcFile) floatValue];
     }
     
     if ( gUseShutter)
@@ -5461,10 +5760,10 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                 {
                     shutterEnabled = YES;
                     
-                    shutterRect.origin.x = [[dcmObject attributeValueWithName:@"ShutterLeftVerticalEdge"] floatValue];
-                    shutterRect.size.width = [[dcmObject attributeValueWithName:@"ShutterRightVerticalEdge"] floatValue] - shutterRect.origin.x;
-                    shutterRect.origin.y = [[dcmObject attributeValueWithName:@"ShutterUpperHorizontalEdge"] floatValue];
-                    shutterRect.size.height = [[dcmObject attributeValueWithName:@"ShutterLowerHorizontalEdge"] floatValue] - shutterRect.origin.y;
+                    shutterRect.origin.x = [horosNumberValue( dcmObject, @"ShutterLeftVerticalEdge", self.srcFile) floatValue];
+                    shutterRect.size.width = [horosNumberValue( dcmObject, @"ShutterRightVerticalEdge", self.srcFile) floatValue] - shutterRect.origin.x;
+                    shutterRect.origin.y = [horosNumberValue( dcmObject, @"ShutterUpperHorizontalEdge", self.srcFile) floatValue];
+                    shutterRect.size.height = [horosNumberValue( dcmObject, @"ShutterLowerHorizontalEdge", self.srcFile) floatValue] - shutterRect.origin.y;
                 }
                 else if( [shutter isEqualToString:@"CIRCULAR"])
                 {
@@ -5478,7 +5777,7 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                         shutterCircular.y = [[centerArray objectAtIndex:1] intValue];
                     }
                     
-                    shutterCircular_radius = [[dcmObject attributeValueWithName:@"RadiusofCircularShutter"] floatValue];
+                    shutterCircular_radius = [horosNumberValue( dcmObject, @"RadiusofCircularShutter", self.srcFile) floatValue];
                 }
                 else if( [shutter isEqualToString:@"POLYGONAL"])
                 {
@@ -5510,9 +5809,9 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
     NSArray *ipp = [dcmObject attributeArrayWithName:@"ImagePositionPatient"];
     if( ipp && [ipp count] >= 3)
     {
-        originX = [[ipp objectAtIndex:0] doubleValue];
-        originY = [[ipp objectAtIndex:1] doubleValue];
-        originZ = [[ipp objectAtIndex:2] doubleValue];
+        originX = horosNumberInArray( ipp, 0, @"ImagePositionPatient", self.srcFile);
+        originY = horosNumberInArray( ipp, 1, @"ImagePositionPatient", self.srcFile);
+        originZ = horosNumberInArray( ipp, 2, @"ImagePositionPatient", self.srcFile);
         isOriginDefined = YES;
     }
     else
@@ -5520,9 +5819,9 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
         NSArray *ipv = [dcmObject attributeArrayWithName:@"ImagePositionVolume"];
         if( ipv)
         {
-            originX = [[ipv objectAtIndex:0] doubleValue];
-            originY = [[ipv objectAtIndex:1] doubleValue];
-            originZ = [[ipv objectAtIndex:2] doubleValue];
+            originX = horosNumberInArray( ipv, 0, @"ImagePositionVolume", self.srcFile);
+            originY = horosNumberInArray( ipv, 1, @"ImagePositionVolume", self.srcFile);
+            originZ = horosNumberInArray( ipv, 2, @"ImagePositionVolume", self.srcFile);
             isOriginDefined = YES;
         }
     }
@@ -5532,7 +5831,7 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
     if( iop)
     {
         for ( int j = 0; j < iop.count; j++)
-            orientation[ j ] = [[iop objectAtIndex:j] doubleValue];
+            orientation[ j ] = horosNumberInArray( iop, j, @"ImageOrientationPatient", self.srcFile);
     }
     else
     {
@@ -5540,61 +5839,72 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
         if( iov)
         {
             for ( int j = 0; j < iov.count; j++)
-                orientation[ j ] = [[iov objectAtIndex:j] doubleValue];
+                orientation[ j ] = horosNumberInArray( iov, j, @"ImageOrientationVolume", self.srcFile);
         }
     }
     
     if( [dcmObject attributeValueWithName:@"ImageLaterality"])
     {
         [laterality release];
-        laterality = [[dcmObject attributeValueWithName:@"ImageLaterality"] retain];
+        laterality = [horosStringValue( dcmObject, @"ImageLaterality", self.srcFile) retain];
     }
     if( laterality == nil)
     {
         [laterality release];
-        laterality = [[dcmObject attributeValueWithName:@"Laterality"] retain];
+        laterality = [horosStringValue( dcmObject, @"Laterality", self.srcFile) retain];
     }
     
-    self.frameofReferenceUID = [dcmObject attributeValueWithName: @"FrameofReferenceUID"];
+    // Drawn over the image, so it has to be text.
+    self.frameofReferenceUID = horosStringValue( dcmObject, @"FrameofReferenceUID", self.srcFile);
 }
 
 - (void) dcmFrameworkLoad0x0028: (DCMObject*) dcmObject
 {
     // Group 0x0028
     
-    if( [dcmObject attributeValueWithName:@"PixelRepresentation"]) fIsSigned = [[dcmObject attributeValueWithName:@"PixelRepresentation"] intValue];
-    if( [dcmObject attributeValueWithName:@"BitsAllocated"]) bitsAllocated = [[dcmObject attributeValueWithName:@"BitsAllocated"] intValue];
+    if( [dcmObject attributeValueWithName:@"PixelRepresentation"]) fIsSigned = [horosNumberValue( dcmObject, @"PixelRepresentation", self.srcFile) intValue];
+    if( [dcmObject attributeValueWithName:@"BitsAllocated"]) bitsAllocated = [horosNumberValue( dcmObject, @"BitsAllocated", self.srcFile) intValue];
     
-    short __bitsStored = [[dcmObject attributeValueWithName:@"BitsStored"] intValue];
+    // This method is also called for nested items - pixel measures, pixel value
+    // transformation, the functional groups - which carry no BitsStored of
+    // their own, and -intValue on a nil attribute is 0. Assigning that wiped
+    // the value the enclosing object had established. Only take one that is
+    // actually there.
+    if( [dcmObject attributeValueWithName:@"BitsStored"])
+        self->bitsStored = [horosNumberValue( dcmObject, @"BitsStored", self.srcFile) intValue];
     
-    if (__bitsStored != 0 && self->numberOfFrames > 1)
+    // DICOM requires 1 <= BitsStored <= BitsAllocated, and files exist that omit
+    // it or put it outside that range. The sign extension in CheckLoad computes
+    // 2^(bitsAllocated - bitsStored); on a 16 bit image a missing BitsStored
+    // made that 2^16, which does not fit in the short it was stored in, became
+    // zero, and the next line divided the pixels by it. Falling back to the
+    // allocated width is what "every bit of the field is significant" means, and
+    // it makes that difference zero so the extension is skipped entirely.
+    if( bitsAllocated > 0 && (self->bitsStored <= 0 || self->bitsStored > bitsAllocated))
     {
-        self->bitsStored = __bitsStored;
+        NSLog( @"*** BitsStored %d is out of range for BitsAllocated %d in %@: reading %d bits", (int) self->bitsStored, (int) bitsAllocated, self.srcFile, (int) bitsAllocated);
+        self->bitsStored = bitsAllocated;
     }
-    else if (self->numberOfFrames <= 1)
-    {
-        self->bitsStored = __bitsStored;
-    }
-        
+    
     if( bitsStored == 8 && bitsAllocated == 16 && [[dcmObject attributeValueWithName:@"PhotometricInterpretation"] isEqualToString:@"RGB"])
         bitsAllocated = 8;
     
-    if ([dcmObject attributeValueWithName:@"RescaleIntercept"]) offset = [[dcmObject attributeValueWithName:@"RescaleIntercept"] floatValue];
+    if ([dcmObject attributeValueWithName:@"RescaleIntercept"]) offset = [horosNumberValue( dcmObject, @"RescaleIntercept", self.srcFile) floatValue];
     if ([dcmObject attributeValueWithName:@"RescaleSlope"])
     {
-        slope = [[dcmObject attributeValueWithName:@"RescaleSlope"] floatValue];
+        slope = [horosNumberValue( dcmObject, @"RescaleSlope", self.srcFile) floatValue];
         if( slope == 0) slope = 1.0;
     }
     
     // image size
     if( [dcmObject attributeValueWithName:@"Rows"])
     {
-        height = [[dcmObject attributeValueWithName:@"Rows"] intValue];
+        height = [horosNumberValue( dcmObject, @"Rows", self.srcFile) intValue];
     }
     
     if( [dcmObject attributeValueWithName:@"Columns"])
     {
-        width =  [[dcmObject attributeValueWithName:@"Columns"] intValue];
+        width =  [horosNumberValue( dcmObject, @"Columns", self.srcFile) intValue];
     }
     
 #ifdef OSIRIX_VIEWER
@@ -5634,8 +5944,8 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
     if( shutterRect.size.height == 0) shutterRect.size.height = height;
     
     //window level & width
-    if ([dcmObject attributeValueWithName:@"WindowCenter"] && isRGB == NO) savedWL = (float)[[dcmObject attributeValueWithName:@"WindowCenter"] floatValue];
-    if ([dcmObject attributeValueWithName:@"WindowWidth"] && isRGB == NO) savedWW =  (float) [[dcmObject attributeValueWithName:@"WindowWidth"] floatValue];
+    if ([dcmObject attributeValueWithName:@"WindowCenter"] && isRGB == NO) savedWL = (float)[horosNumberValue( dcmObject, @"WindowCenter", self.srcFile) floatValue];
+    if ([dcmObject attributeValueWithName:@"WindowWidth"] && isRGB == NO) savedWW =  (float) [horosNumberValue( dcmObject, @"WindowWidth", self.srcFile) floatValue];
     if(  savedWW < 0) savedWW =-savedWW;
     
     if( [[dcmObject attributeValueWithName:@"RescaleType"] isEqualToString: @"US"] == NO)
@@ -5649,7 +5959,7 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
     }
     //planar configuration
     if( [dcmObject attributeValueWithName:@"PlanarConfiguration"])
-        fPlanarConf = [[dcmObject attributeValueWithName:@"PlanarConfiguration"] intValue];
+        fPlanarConf = [horosNumberValue( dcmObject, @"PlanarConfiguration", self.srcFile) intValue];
     
     //pixel Spacing
     if( pixelSpacingFromUltrasoundRegions == NO)
@@ -5657,26 +5967,26 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
         NSArray *pixelSpacing = [dcmObject attributeArrayWithName:@"PixelSpacing"];
         if(pixelSpacing.count >= 2)
         {
-            pixelSpacingY = [[pixelSpacing objectAtIndex:0] doubleValue];
-            pixelSpacingX = [[pixelSpacing objectAtIndex:1] doubleValue];
+            pixelSpacingY = horosNumberInArray( pixelSpacing, 0, @"PixelSpacing", self.srcFile);
+            pixelSpacingX = horosNumberInArray( pixelSpacing, 1, @"PixelSpacing", self.srcFile);
         }
         else if(pixelSpacing.count >= 1)
         {
-            pixelSpacingY = [[pixelSpacing objectAtIndex:0] doubleValue];
-            pixelSpacingX = [[pixelSpacing objectAtIndex:0] doubleValue];
+            pixelSpacingY = horosNumberInArray( pixelSpacing, 0, @"PixelSpacing", self.srcFile);
+            pixelSpacingX = horosNumberInArray( pixelSpacing, 0, @"PixelSpacing", self.srcFile);
         }
         else
         {
             NSArray *pixelSpacing = [dcmObject attributeArrayWithName:@"ImagerPixelSpacing"];
             if(pixelSpacing.count >= 2)
             {
-                pixelSpacingY = [[pixelSpacing objectAtIndex:0] doubleValue];
-                pixelSpacingX = [[pixelSpacing objectAtIndex:1] doubleValue];
+                pixelSpacingY = horosNumberInArray( pixelSpacing, 0, @"PixelSpacing", self.srcFile);
+                pixelSpacingX = horosNumberInArray( pixelSpacing, 1, @"PixelSpacing", self.srcFile);
             }
             else if(pixelSpacing.count >= 1)
             {
-                pixelSpacingY = [[pixelSpacing objectAtIndex:0] doubleValue];
-                pixelSpacingX = [[pixelSpacing objectAtIndex:0] doubleValue];
+                pixelSpacingY = horosNumberInArray( pixelSpacing, 0, @"PixelSpacing", self.srcFile);
+                pixelSpacingX = horosNumberInArray( pixelSpacing, 0, @"PixelSpacing", self.srcFile);
             }
         }
     }
@@ -5786,7 +6096,17 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
     }
     
     //PhotoInterpret
-    if ([[dcmObject attributeValueWithName:@"PhotometricInterpretation"] rangeOfString:@"PALETTE"].location != NSNotFound)
+    // -rangeOfString: sent to nil answers {0, 0}, and 0 is not NSNotFound, so an
+    // object that states no Photometric Interpretation was read as though it
+    // said PALETTE. This method is also called for the nested items of an
+    // enhanced object - pixel measures, the plane position, the frame's VOI LUT
+    // - and none of those carries one, so the first nested item turned isRGB on
+    // for good. Window Center and Width are read a few lines above under
+    // "isRGB == NO", so an enhanced object, whose window lives in
+    // FrameVOILUTSequence and nowhere else, ended up with no window at all and
+    // one computed from its own pixels instead.
+    NSString *photometricInterpretation = horosStringValue( dcmObject, @"PhotometricInterpretation", self.srcFile);
+    if( photometricInterpretation.length && [photometricInterpretation rangeOfString:@"PALETTE"].location != NSNotFound)
     {
         // palette conversions done by dcm Object
         isRGB = YES;
@@ -5814,8 +6134,159 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
 }
 
 #ifndef OSIRIX_LIGHT
+#ifndef DECOMPRESS_APP
+// The table the object carries instead of a window.
+//
+// PS 3.3 C.11.2: a VOI LUT Sequence is how the object says its values are
+// meant to be shown, and Window Center and Width are the alternative. Nothing
+// here read it - the parsing lived on a path that no longer runs - so an
+// object whose only windowing instruction is its table was shown with a
+// window Horos computed for itself.
+//
+// The table's input is the output of the modality LUT, so it is only applied
+// where that is the identity; with a rescale in the way the index would be
+// the wrong value, and a wrong picture is worse than an unwindowed one.
+- (void) applyVOILUTFrom:(DCMObject*) dcmObject to:(unsigned short*) samples
+{
+    if( samples == nil || VOILUTApplied || width <= 0 || height <= 0)
+        return;
+
+    if( slope != 1.0 || offset != 0.0)
+        return;
+
+    DCMAttribute *attribute = [dcmObject attributeWithName: @"VOILUTSequence"];
+    if( [attribute isKindOfClass: [DCMSequenceAttribute class]] == NO)
+        return;
+
+    NSArray *items = [(DCMSequenceAttribute*) attribute sequence];
+    if( [items count] == 0)
+        return;
+
+    DCMObject *item = [items objectAtIndex: 0];
+    HorosVOILookupTable *lut = [[[HorosVOILookupTable alloc]
+                                 initWithDescriptor: [item attributeArrayWithName: @"LUTDescriptor"]
+                                 data: [item attributeValueWithName: @"LUTData"]
+                                 pixelRepresentationIsSigned: fIsSigned > 0] autorelease];
+    if( lut == nil)
+    {
+        NSLog( @"---- %@ carries a VOI LUT this cannot read; its window is used instead",
+              [self.srcFile lastPathComponent]);
+        return;
+    }
+
+    if( VOILUT_table) free( VOILUT_table);
+    VOILUT_table = malloc( lut.entries * sizeof( unsigned int));
+    if( VOILUT_table == nil)
+        return;
+
+    [lut.table getBytes: VOILUT_table length: lut.entries * sizeof( unsigned int)];
+    VOILUT_first = (int) lut.firstMapped;
+    VOILUT_number = (unsigned int) lut.entries;
+    VOILUT_depth = (unsigned int) lut.depth;
+
+    [self setVOILUT: VOILUT_first
+             number: VOILUT_number
+              depth: VOILUT_depth
+              table: VOILUT_table
+              image: samples
+           isSigned: fIsSigned > 0];
+
+    if( VOILUTApplied)
+    {
+        // The values are the table's output now, and the object's Window
+        // Center and Width describe its input, so they no longer say anything
+        // about what is on screen.
+        savedWL = lut.windowCenter;
+        savedWW = lut.windowWidth;
+        fIsSigned = 0;
+    }
+}
+#endif
+
+// A frame shorter than the picture it has to fill leaves the rest black.
+// Saying so on the image is the difference between an examination that is
+// dark and a frame that arrived incomplete; only the log said it before.
+- (void) reportShortFrame:(long) carried of:(long) needed
+{
+#ifndef DECOMPRESS_APP
+    if( carried < needed && self.missingPixelsReason == nil)
+        self.missingPixelsReason = [HorosMissingPixelsReason reasonForShortFrame: carried of: needed];
+#endif
+}
+
+#ifndef DECOMPRESS_APP
+// A frame of the video an instance carries whole.
+//
+// Transfer syntaxes 1.2.840.10008.1.2.4.100 and up put the entire stream in
+// the Pixel Data element - one fragment for the lot, not one fragment per
+// frame - so asking the framework for a frame of it hands back the compressed
+// stream for every index, and the colour conversion after that reads a
+// compressed stream as though it were pixels. Nothing said the frames were
+// not frames.
+//
+// Returns nil, with a sentence for the viewer to draw over the empty frame,
+// when the stream is of a codec this does not decode, when it cannot be
+// decoded, or when it decodes to a different size than the object states.
+- (NSData*) videoFrame:(int) index ofStreamInAttribute:(DCMPixelDataAttribute*) pixelAttr reason:(NSString**) reason
+{
+    NSString *syntax = pixelAttr.transferSyntax.transferSyntax;
+
+    if( [HorosH264StreamDecoder handlesTransferSyntax: syntax] == NO)
+    {
+        if( reason) *reason = [HorosMissingPixelsReason reasonForUndecodableVideoStream: syntax];
+        return nil;
+    }
+
+    // One decoder per file: the frames of a multi-frame object are loaded by
+    // one DCMPix each, and a decoder built for a single frame would have no
+    // reference pictures to decode a predicted one from.
+    HorosH264StreamDecoder *decoder = [HorosH264StreamDecoder cachedDecoderForKey: self.srcFile
+                                                                   streamProvider: ^NSData * { return [pixelAttr encapsulatedStream]; }];
+    if( decoder == nil)
+    {
+        if( reason) *reason = [HorosMissingPixelsReason reasonForUndecodableVideoStream: syntax];
+        return nil;
+    }
+
+    if( decoder.width != width || decoder.height != height)
+    {
+        if( reason) *reason = [HorosMissingPixelsReason reasonForVideoSizeMismatch: decoder.width
+                                                                                by: decoder.height
+                                                                     expectedWidth: width
+                                                                                by: height];
+        return nil;
+    }
+
+    NSData *frame = [decoder rgbFrameAtIndex: index];
+
+    if( frame == nil && reason)
+        *reason = [HorosMissingPixelsReason reasonForUndecodableVideoStream: syntax];
+
+    return frame;
+}
+#endif
+
 - (BOOL)loadDICOMDCMFramework
 {
+#ifndef DECOMPRESS_APP
+    // Isolated IVUS gate: an unloadable ultrasound cine crashed thumbnail
+    // initialisation and then every subsequent database open. Return a
+    // diagnosis instead of decoding; the manufacturer is not consulted.
+    if (self.srcFile.length)
+    {
+        HorosIVUSImportAssessment *ivus = [HorosIVUSImportTriage assessPath: self.srcFile];
+        if (ivus.appliesToFile && ivus.thumbnailCompatible == NO)
+        {
+            NSLog( @"------ loadDICOMDCMFramework: %@ not loaded (%@)",
+                  [self.srcFile lastPathComponent],
+                  ivus.recordedError.length ? ivus.recordedError
+                      : @"IVUS/US object the thumbnail stack cannot load");
+            notAbleToLoadImage = YES;
+            return NO;
+        }
+    }
+#endif
+
     // Memory test: DCMFramework requires a lot of memory...
     unsigned long long fileSize = [[[NSFileManager defaultManager] attributesOfItemAtPath:self.srcFile error:NULL] fileSize];
     fileSize *= 1.5;
@@ -5892,7 +6363,7 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
         return NO;
     }
     
-    self.SOPClassUID = [dcmObject attributeValueWithName:@"SOPClassUID"];
+    self.SOPClassUID = horosStringValue( dcmObject, @"SOPClassUID", self.srcFile);
     self.referencedSOPInstanceUID = [dcmObject attributeValueWithName:@"ReferencedSOPInstanceUID"];
     //-----------------------common----------------------------------------------------------
     
@@ -6014,8 +6485,18 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
         width = 128;
         isRGB = NO;
         
-        for( int i = 0; i < 128*128; i++)
-            fImage[ i ] = i%2;
+        // What was here filled the frame with alternating zeroes and ones: on
+        // screen, a picture of vertical stripes. An MR spectrum arrived as a
+        // 128 x 128 striped image with nothing to say it was a spectrum. The
+        // object is kept and indexed, which is right - it just has no picture,
+        // and the frame says so instead of inventing one.
+        if( fImage)
+            memset( fImage, 0, 128 * 128 * 4);
+#ifndef DECOMPRESS_APP
+        self.missingPixelsReason = [HorosMissingPixelsReason reasonForNonImageStorage: SOPClassUID];
+#endif
+        NSLog( @"---- %@ is not an image storage class (%@); it is shown empty",
+              [self.srcFile lastPathComponent], SOPClassUID);
         
 #ifdef OSIRIX_VIEWER
         [self loadCustomImageAnnotationsPapyLink:-1 DCMLink:dcmObject];
@@ -6089,17 +6570,25 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                             NSArray *pixelSpacing = [pixelMeasureObject attributeArrayWithName:@"PixelSpacing"];
                             if(pixelSpacing.count >= 2)
                             {
-                                pixelSpacingY = [[pixelSpacing objectAtIndex:0] doubleValue];
-                                pixelSpacingX = [[pixelSpacing objectAtIndex:1] doubleValue];
+                                pixelSpacingY = horosNumberInArray( pixelSpacing, 0, @"PixelSpacing", self.srcFile);
+                                pixelSpacingX = horosNumberInArray( pixelSpacing, 1, @"PixelSpacing", self.srcFile);
                             }
                             else if(pixelSpacing.count == 1)
                             {
-                                pixelSpacingY = [[pixelSpacing objectAtIndex:0] doubleValue];
-                                pixelSpacingX = [[pixelSpacing objectAtIndex:0] doubleValue];
+                                pixelSpacingY = horosNumberInArray( pixelSpacing, 0, @"PixelSpacing", self.srcFile);
+                                pixelSpacingX = horosNumberInArray( pixelSpacing, 0, @"PixelSpacing", self.srcFile);
                             }
                         }
                     }
                 }
+                
+                // An enhanced object puts Window Center and Width here, not at
+                // the top level, and nothing read this sequence: the window the
+                // acquisition chose was thrown away and one computed from the
+                // data put in its place. PS 3.3 C.7.6.16.2.10.
+                DCMSequenceAttribute *frameVOISequence = (DCMSequenceAttribute *)[sequenceItem attributeWithName:@"FrameVOILUTSequence"];
+                if( [frameVOISequence isKindOfClass: [DCMSequenceAttribute class]] && [[frameVOISequence sequence] count])
+                    [self dcmFrameworkLoad0x0028: [[frameVOISequence sequence] objectAtIndex: 0]];
                 
                 DCMSequenceAttribute *pixelTransformationSequence = (DCMSequenceAttribute *)[sequenceItem attributeWithName:@"PixelValueTransformationSequence"];
                 DCMObject *pixelTransformationSequenceObject = [[pixelTransformationSequence sequence] objectAtIndex:0];
@@ -6182,26 +6671,15 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                         //  This sequence has only one item, comprising Origin (DICOM spec 2015a)
                         if ((object = [[seq sequence] objectAtIndex:0]))
                         {
-                            //It seems @brizolara didn't solve this entirely - restoring original behavior for non multi-frame datasets and adding working around for multi-frame
-                            if( numberOfFrames <= 1)
-                            {
-                                [self dcmFrameworkLoad0x0020:object];
-                                [self dcmFrameworkLoad0x0028:object];
-                            }
-                            else
-                            {
-                                [self dcmFrameworkLoad0x0020:object];
-                                [self dcmFrameworkLoad0x0028:object];
-                                
-                                NSArray *ipp = [dcmObject attributeArrayWithName:@"ImagePositionPatient"];
-                                if( ipp && [ipp count] >= 3)
-                                {
-                                    originX = [[ipp objectAtIndex:0] doubleValue];
-                                    originY = [[ipp objectAtIndex:1] doubleValue];
-                                    originZ = [[ipp objectAtIndex:2] doubleValue];
-                                    isOriginDefined = YES;
-                                }
-                            }
+                            // -dcmFrameworkLoad0x0020: has just read this frame's
+                            // own ImagePositionPatient out of the item and set
+                            // isOriginDefined. What followed read the attribute
+                            // again from dcmObject - the whole object, not the
+                            // frame - and overwrote it, so in a legacy converted
+                            // enhanced object, which does carry one at the top
+                            // level, every frame was placed where the first one is.
+                            [self dcmFrameworkLoad0x0020:object];
+                            [self dcmFrameworkLoad0x0028:object];
                         }
                     }
                     
@@ -6220,6 +6698,14 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                     if ((seq = (DCMSequenceAttribute*)[sequenceItem attributeWithName:@"PixelValueTransformationSequence"]) && [seq isKindOfClass:[DCMSequenceAttribute class]])
                     {
                         if ((object = [[seq sequence] objectAtIndex:0]))
+                            [self dcmFrameworkLoad0x0028:object];
+                    }
+                    
+                    // After the shared one, so a frame that states its own
+                    // window keeps it.
+                    if ((seq = (DCMSequenceAttribute*)[sequenceItem attributeWithName:@"FrameVOILUTSequence"]) && [seq isKindOfClass:[DCMSequenceAttribute class]])
+                    {
+                        if ([[seq sequence] count] && (object = [[seq sequence] objectAtIndex:0]))
                             [self dcmFrameworkLoad0x0028:object];
                     }
                     
@@ -6327,7 +6813,7 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
 #pragma mark *SUV
         
         // Get values needed for SUV calcs:
-        if( [dcmObject attributeValueWithName:@"PatientsWeight"]) patientsWeight = [[dcmObject attributeValueWithName:@"PatientsWeight"] floatValue];
+        if( [dcmObject attributeValueWithName:@"PatientsWeight"]) patientsWeight = [horosNumberValue( dcmObject, @"PatientsWeight", self.srcFile) floatValue];
         else patientsWeight = 0.0;
         
         [units release];
@@ -6337,7 +6823,7 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
         decayCorrection = [[dcmObject attributeValueWithName:@"DecayCorrection"] retain];
         
         //	if( [dcmObject attributeValueWithName:@"DecayFactor"])
-        //		decayFactor = [[dcmObject attributeValueWithName:@"DecayFactor"] floatValue];
+        //		decayFactor = [horosNumberValue( dcmObject, @"DecayFactor", self.srcFile) floatValue];
         
         decayFactor = 1.0;
         
@@ -6403,9 +6889,9 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
             NSArray *ipp = [detectorInformation attributeArrayWithName:@"ImagePositionPatient"];
             if( ipp && [ipp count] >= 3)
             {
-                originX = [[ipp objectAtIndex:0] doubleValue];
-                originY = [[ipp objectAtIndex:1] doubleValue];
-                originZ = [[ipp objectAtIndex:2] doubleValue];
+                originX = horosNumberInArray( ipp, 0, @"ImagePositionPatient", self.srcFile);
+                originY = horosNumberInArray( ipp, 1, @"ImagePositionPatient", self.srcFile);
+                originZ = horosNumberInArray( ipp, 2, @"ImagePositionPatient", self.srcFile);
                 isOriginDefined = YES;
             }
             
@@ -6429,7 +6915,7 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                 if( equalZero == NO)
                 {
                     for ( int j = 0; j < iop.count; j++)
-                        orientation[ j ] = [[iop objectAtIndex:j] doubleValue];
+                        orientation[ j ] = horosNumberInArray( iop, j, @"ImageOrientationPatient", self.srcFile);
                 }
                 else // doesnt the root Image Orientation contains valid data? if not use the normal vector
                 {
@@ -6474,7 +6960,7 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
         
 #pragma mark READ PIXEL DATA
         
-        maxFrame = [[dcmObject attributeValueWithName:@"NumberofFrames"] intValue];
+        maxFrame = [horosNumberValue( dcmObject, @"NumberofFrames", self.srcFile) intValue];
         if( maxFrame == 0) maxFrame = 1;
         if( pixArray == nil) maxFrame = 1;
         //pixelAttr contains the whole PixelData attribute of every frames. Hence needs to be before the loop
@@ -6506,7 +6992,18 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
             
             //get PixelData
             short *oImage = nil;
-            NSData *pixData = [pixelAttr decodeFrameAtIndex:imageNb];
+            NSData *pixData = nil;
+            NSString *videoFailure = nil;
+            BOOL carriesAVideoStream = NO;
+
+#ifndef DECOMPRESS_APP
+            carriesAVideoStream = [HorosH264StreamDecoder isVideoTransferSyntax: pixelAttr.transferSyntax.transferSyntax];
+            if( carriesAVideoStream)
+                pixData = [self videoFrame: (int) imageNb ofStreamInAttribute: pixelAttr reason: &videoFailure];
+#endif
+
+            if( carriesAVideoStream == NO)
+                pixData = [pixelAttr decodeFrameAtIndex:imageNb];
             if( [pixData length] > 0)
             {
                 oImage =  malloc( [pixData length]);	//pointer to a memory zone where each pixel of the data has a short value reserved
@@ -6516,18 +7013,29 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                     NSLog( @"----- Major memory problems 1...");
             }
             
-            if( oImage == nil) //there was no data for this frame -> create empty image
+            if( oImage == nil) // there was no data for this frame
             {
-                //NSLog(@"image size: %d", ( height * width * 2));
-                oImage = malloc( height * width * 2);
+                // What was here filled the frame with a ramp of 0..width-1 repeated
+                // on every row. On screen that is a picture of bands, which is what
+                // the reports of "lines instead of the examination" describe, and
+                // nothing said the pixels were missing: an empty frame was shown as
+                // though it were an image. An empty frame is empty, and is named.
+                // Three bytes per pixel, not two: a colour object keeps its
+                // colour photometric interpretation when a frame of it is
+                // empty, and the RGB path below then reads height*width*3
+                // bytes out of this buffer. At two it read a third of a frame
+                // of whatever followed the allocation, and drew it - a band of
+                // coloured noise above the sentence saying the frame is empty.
+                oImage = calloc( height * width, 3);
                 if( oImage)
                 {
-                    long yo = 0;
-                    for( unsigned long i = 0 ; i < height * width; i++)
-                    {
-                        oImage[ i] = yo++;
-                        if( yo>= width) yo = 0;
-                    }
+#ifndef DECOMPRESS_APP
+                    self.missingPixelsReason = videoFailure ? videoFailure
+                                                            : [HorosMissingPixelsReason reasonForEmptyFrame: (int) imageNb];
+#endif
+                    NSLog( @"---- %@ frame %d carries no pixels; it is shown empty%@%@",
+                          [self.srcFile lastPathComponent], (int) imageNb,
+                          videoFailure ? @": " : @"", videoFailure ?: @"");
                 }
                 else
                     NSLog( @"----- Major memory problems 2...");
@@ -6559,19 +7067,50 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                 isRGB = YES;
             }
             
+            // A colour photometric interpretation on an object that carries one
+            // sample per pixel is usually a header contradicting itself, and
+            // reading three bytes where there is one turns a grey ultrasound into
+            // the green and purple picture the reports describe.
+            //
+            // PALETTE COLOR is the exception, and the standard requires it: its
+            // samples are indices, one per pixel, and the frame has already been
+            // looked up into three bytes per pixel before it gets here. Asking the
+            // header alone therefore read every palette image as grey. What
+            // settles it is the frame: three samples per pixel are there, or they
+            // are not.
+            int samplesPerPixel = [[dcmObject attributeValueWithName: @"SamplesperPixel"] intValue];
+            BOOL frameCarriesThreeSamples = (long) [pixData length] >= (long) height * (long) width * 3L;
+            if( isRGB && samplesPerPixel == 1 && frameCarriesThreeSamples == NO)
+            {
+                NSLog( @"---- %@ says %@ and carries one sample per pixel; it is read as grey",
+                      [self.srcFile lastPathComponent], colorspace);
+                isRGB = NO;
+            }
+            
             if (isRGB == YES)
             {
                 unsigned char   *ptr, *tmpImage;
                 int loop = (int) height * (int) width;
-                tmpImage = malloc (loop * 4L);
+                // Zeroed: both conversions below shorten the loop to what the
+                // frame actually carries, so a short frame - an empty one above
+                // all, where the loop is zero - left the rest of this buffer as
+                // whatever malloc returned, and it was drawn as a band of
+                // colour over the sentence explaining that there is no frame.
+                tmpImage = calloc (loop, 4L);
                 ptr = tmpImage;
                 
-                if( bitsAllocated > 8)
+                // What a sample is stored in, which is not always what the object
+                // declares: files exist that say BitsAllocated 16 and pack bytes,
+                // and files that say 16 and mean it. Reading the wrong one gives
+                // either a picture of noise or half a picture, and the length
+                // settles it.
+                if( (long) [pixData length] >= (long) height * width * 3 * 2)
                 {
                     if( [pixData length] < height*width*2*3)
                     {
                         NSLog( @"************* [pixData length] < height*width*2*3");
                         loop = [pixData length]/6;
+                        [self reportShortFrame: [pixData length] of: (long) height * width * 6];
                     }
                     
                     // RGB_FFF
@@ -6591,6 +7130,7 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                     {
                         NSLog( @"************* [pixData length] < height*width*3");
                         loop = [pixData length]/3;
+                        [self reportShortFrame: [pixData length] of: (long) height * width * 3];
                     }
                     
                     // RGB_888
@@ -6613,7 +7153,11 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
             {
                 if( fIsSigned && bitsAllocated != bitsStored) //We have to move the signing bit
                 {
-                    if( bitsAllocated == 16)
+                    // A shift of 16 or more, or a negative one, is not a sign
+                    // extension of anything; the load clamps bitsStored so this
+                    // cannot happen, and the bound stays here because this is
+                    // where dividing by the wrong number crashed.
+                    if( bitsAllocated == 16 && bitsStored > 0 && bitsStored < bitsAllocated)
                     {
                         short *bufPtr = (short*) oImage, *tmpImage;
                         long loop;//, totSize;
@@ -6623,9 +7167,12 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                         short *ptr = tmpImage;
                         
                         loop = height * width;
-                        short div = pow( 2, shift);
+                        // 2^15 does not fit in a short either, and pow returns a
+                        // double whose conversion is undefined when it does not
+                        // fit. One bit shifted left is exact.
+                        const int divisor = 1 << shift;
                         while( loop-- > 0)
-                            *ptr++ = ((short)(*(bufPtr++) << shift))/div;
+                            *ptr++ = ((short)(*(bufPtr++) << shift))/divisor;
                         
                         free(oImage);
                         oImage =  (short*) tmpImage;
@@ -6641,7 +7188,11 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                     int			loop, totSize;
                     
                     totSize = (int) ((int) height * (int) width * 2L);
-                    tmpImage = malloc( totSize);
+                    // Zeroed: the copy below stops at the length of the frame,
+                    // and a frame shorter than the image - an empty one most of
+                    // all - left the rest of this buffer as whatever malloc
+                    // returned, which is drawn.
+                    tmpImage = calloc( totSize, 1);
                     
                     bufPtr = (unsigned char*) oImage;
                     ptr    = tmpImage;
@@ -6651,6 +7202,7 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                     if( [pixData length] < loop)
                     {
                         NSLog( @"************* [pixData length] < height * width");
+                        [self reportShortFrame: [pixData length] of: loop];
                         loop = [pixData length];
                     }
                     
@@ -6718,7 +7270,19 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                     {
                         memcpy( fImage, oImage, height * width * sizeof( float));
                         
-                        if( slope != 1.0 || offset != 0 || [[NSUserDefaults standardUserDefaults] boolForKey: @"32bitDICOMAreAlwaysIntegers"])
+                        // Pixel Data (7fe0,0010) holds integers. Floating point
+                        // pixels have their own attributes - Float Pixel Data
+                        // (7fe0,0008) and Double Float Pixel Data (7fe0,0009) - and
+                        // an object that carries Pixel Data has to state Pixel
+                        // Representation, which floating point pixels do not have.
+                        // Copying the words into a float buffer and calling them
+                        // floats made every ordinary value a denormal: a 64x64
+                        // unsigned ramp from 0 to 4000000 arrived as one flat grey,
+                        // which is the "all zeros" the reports describe. It only
+                        // came out right when a rescale happened to be present.
+                        BOOL statesIntegers = ([dcmObject attributeValueWithName: @"PixelRepresentation"] != nil);
+                        
+                        if( statesIntegers || slope != 1.0 || offset != 0 || [[NSUserDefaults standardUserDefaults] boolForKey: @"32bitDICOMAreAlwaysIntegers"])
                         {
                             unsigned int *usint = (unsigned int*) oImage;
                             int *sint = (int*) oImage;
@@ -6753,6 +7317,11 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                     src16.rowBytes = width*2;
                     dstf.rowBytes = width*sizeof(float);
                     
+#ifndef DECOMPRESS_APP
+                    if( gUseVOILUT && [pixData length] >= (long) height * width * 2)
+                        [self applyVOILUTFrom: dcmObject to: (unsigned short*) oImage];
+#endif
+                    
                     src16.data = oImage;
                     
                     if( fExternalOwnedImage)
@@ -6767,6 +7336,7 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                         if( bitsAllocated == 16 && [pixData length] < height*width*2)
                         {
                             NSLog( @"************* [pixData length] < height * width");
+                            [self reportShortFrame: [pixData length] of: (long) height * width * 2];
                             
                             if( [pixData length] == height*width) // 8 bits??
                             {
@@ -6849,6 +7419,37 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
 #pragma mark *after loading a frame
             
         }//end of if ([dcmObject attributeValueWithName:@"PixelData"])
+        else
+        {
+            // Nothing above ran, so nothing filled fImage: an object with no
+            // Pixel Data element at all left whatever the view had drawn last
+            // on screen, under this object's annotations. A Hardcopy record and
+            // a structured document both arrive that way. Give it an empty
+            // frame of the size it declares, and a sentence saying why.
+#ifndef DECOMPRESS_APP
+            self.missingPixelsReason = [HorosMissingPixelsReason reasonForAbsentPixelData];
+#endif
+            NSLog( @"---- %@ carries no Pixel Data element; it is shown empty",
+                  [self.srcFile lastPathComponent]);
+            
+            if( fImage == nil && width > 0 && height > 0 && (long) width * height < 1024L*1024L*64L)
+            {
+                if( fExternalOwnedImage)
+                {
+                    // The buffer belongs to the series' volume and holds
+                    // whatever was last written into it. Adopting it without
+                    // clearing drew that memory as this object's picture -
+                    // black and white noise, under the sentence saying the
+                    // object has no picture. The browser's thumbnail path,
+                    // which allocates its own, was black all along, which is
+                    // why this only showed in the viewer.
+                    fImage = fExternalOwnedImage;
+                    memset( fImage, 0, (long) width * height * sizeof( float));
+                }
+                else
+                    fImage = calloc( (long) width * height, sizeof( float));
+            }
+        }
         
         if( pixelSpacingY != 0)
         {
@@ -6908,6 +7509,9 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
         @try
         {
             [cachedDCMFrameworkFiles removeAllObjects];
+#ifndef DECOMPRESS_APP
+            [HorosH264StreamDecoder purgeCache];
+#endif
         }
         @catch (NSException * e)
         {
@@ -7534,7 +8138,11 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                         //   - This portion tells OsiriX which view is active for the image.  This allows OsiriX to determine whether the
                         //	   image is axial, sagittal, or coronal.
                         // Grab orientations for i, j, and k axes based on either qform or sform matrices.
-                        int icod, jcod, kcod;
+                        // Valid orientation codes are 1..6, so 0 is "not stated". A
+                        // NIfTI may legally carry neither qform nor sform, and then
+                        // neither call below runs; without this the axial/sagittal/
+                        // coronal decision further down read the stack.
+                        int icod = 0, jcod = 0, kcod = 0;
                         if(qform_code > 0)
                         {
                             nifti_mat44_to_orientation(nifti_imagedata->qto_xyz, &icod, &jcod, &kcod);
@@ -7544,12 +8152,18 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                             nifti_mat44_to_orientation(nifti_imagedata->sto_xyz, &icod, &jcod, &kcod);
                         }
                         
+                        // A slice advances by the spacing between slices,
+                        // pixdim[3], which is in sliceInterval here - not by the
+                        // in-plane spacing. With 0.5 mm pixels and 3 mm slices the
+                        // stack came out six times too short, and every reformat
+                        // and measurement along it with it. A volume with cubic
+                        // voxels hides this, which is why it lasted.
                         if(jcod == NIFTI_A2P || jcod == NIFTI_P2A)
                         {
                             // This is axial by default, so set originZ.
                             originX = 0;
                             originY = 0;
-                            originZ = frameNo * pixelSpacingX;
+                            originZ = frameNo * sliceInterval;
                             
                             isOriginDefined = YES;
                         }
@@ -7558,7 +8172,7 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                             if(icod == NIFTI_A2P || icod == NIFTI_P2A)
                             {
                                 // This is sagittal by default, so set originX.
-                                originX = frameNo * pixelSpacingX;
+                                originX = frameNo * sliceInterval;
                                 originY = 0;
                                 originZ = 0;
                                 
@@ -7568,7 +8182,7 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                             {
                                 // This is coronal by default, so set originY.
                                 originX = 0;
-                                originY = frameNo * pixelSpacingX;
+                                originY = frameNo * sliceInterval;
                                 originZ = 0;
                                 
                                 isOriginDefined = YES;
@@ -8067,18 +8681,45 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
             NSLog(@"not able to load the image : %@", self.srcFile);
             
             if( fExternalOwnedImage)
+            {
+                // The buffer is the series' volume, and the slice of it this
+                // object was given is the size the database recorded for the
+                // image. Calling the frame 128 by 128 anyway made the view read
+                // four times what the slice holds, and what it read was the
+                // frames beside it: a band of noise under the sentence saying
+                // the image could not be read. The frame stays the size the
+                // buffer is.
                 fImage = fExternalOwnedImage;
+                
+                if( savedWidthInDB > 0 && savedWidthInDB != OsirixDicomImageSizeUnknown &&
+                    savedHeightInDB > 0 && savedHeightInDB != OsirixDicomImageSizeUnknown)
+                {
+                    width = savedWidthInDB;
+                    height = savedHeightInDB;
+                }
+                
+                if( width <= 0) width = 1;
+                if( height <= 0) height = 1;
+            }
             else
+            {
                 fImage = malloc( 128 * 128 * 4);
+                height = 128;
+                width = 128;
+            }
             
-            height = 128;
-            width = 128;
             oImage = nil;
             isRGB = NO;
             notAbleToLoadImage = YES;
             
-            for( int i = 0; i < 128*128; i++)
-                fImage[ i ] = i;
+            // And what was here filled it with 0, 1, 2, ... - a gradient, which
+            // is the picture the reports of "gradient instead of the study"
+            // describe. A frame that could not be read is empty and says so.
+            if( fImage)
+                memset( fImage, 0, (long) width * height * 4);
+#ifndef DECOMPRESS_APP
+            self.missingPixelsReason = [HorosMissingPixelsReason reasonForUnreadableFrame];
+#endif
         }
         
         if( isRGB)	// COMPUTE ALPHA MASK = ALPHA = R+G+B/3
@@ -9842,18 +10483,28 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
     return fResult;
 }
 
-- (float*)computefImage
+// What a measurement reads. A thick slab is the image the ROI was drawn on, so a
+// measurement follows it; a convolution filter is *presentation* -- sharpening
+// does not change what the scanner recorded -- so a measurement must not read
+// through it. -getROIValue::: used to call -computefImage and therefore reported
+// means, minima and maxima of the sharpened pixels (#374, A216).
+//
+// -applyConvolutionOnSourceImage is the separate, deliberate operation that does
+// change the pixels; measurements follow that one, because the user asked for it.
+- (float*)computefImageForMeasurement
 {
-    float *result;
-    
     thickSlabVRActivated = NO;
     
     // = STACK IMAGES thickslab
     if( stackMode > 0 && stack >= 1 && [pixArray count] > 1)
-    {
-        result = [self computeThickSlab];
-    }
-    else result = fImage;
+        return [self computeThickSlab];
+    
+    return fImage;
+}
+
+- (float*)computefImage
+{
+    float *result = [self computefImageForMeasurement];
     
     if( convolution)
         result = [self applyConvolutionOnImage: result RGB: NO];
@@ -10160,6 +10811,17 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
     float ratio;
     
     [self CheckLoad];
+    
+    // A frame that never established a size - Enhanced objects that omit Rows
+    // or arrive with zero - used to divide that zero into PREVIEWSIZE here,
+    // which is the SIGFPE the Bruker import crash reports die on. No picture
+    // is better than taking the process down while drawing a series icon.
+    if( width < 1 || height < 1)
+    {
+        NSLog( @"---- thumbnail: %@ has no usable image size (%d x %d)",
+              [self.srcFile lastPathComponent], (int) width, (int) height);
+        return nil;
+    }
     
     if( (float) width / PREVIEWSIZE > (float) height / PREVIEWSIZE) ratio = (float) width / PREVIEWSIZE;
     else ratio = (float) height / PREVIEWSIZE;
@@ -10526,8 +11188,8 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
     
     if( [self.decayCorrection isEqualToString: @"NONE"] || [self.decayCorrection isEqualToString: @"ADMIN"])
     {
-        decayFactor = 1.0;
-        radionuclideTotalDoseCorrected = radionuclideTotalDose;
+        // computeTotalDoseCorrected now owns this case for load and edit alike.
+        [self computeTotalDoseCorrected];
     }
     else
     {
@@ -10697,10 +11359,14 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                                     
                                     else if([level isEqualToString:@"study"])
                                     {
+                                        // This replaced the patient's name with the
+                                        // literal word "PatientName", so a custom
+                                        // annotation asking for the name showed that
+                                        // word instead of the value. Hiding the name
+                                        // is a preference of its own, HIDEPATIENTNAME,
+                                        // which hides the browser's column; it does not
+                                        // substitute a string here.
                                         value = [imageObj valueForKeyPath:[NSString stringWithFormat:@"series.study.%@", fieldName]];
-                                        
-                                        if( [fieldName isEqualToString:@"name"])
-                                            value = @"PatientName";
                                     }
                                     
                                     if( value == nil)
@@ -10794,9 +11460,6 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                                         value = [self getDICOMFieldValueForGroup:[[field objectForKey:@"group"] intValue] element:[[field objectForKey:@"element"] intValue] DCMLink:dcmObject];
                                     else
                                         value = nil;
-                                    
-                                    if( [[field objectForKey:@"group"] intValue] == 0x0010 && [[field objectForKey:@"element"] intValue] == 0x0010)
-                                        value = @"PatientName";
                                     
                                     if( [[field objectForKey:@"group"] intValue] == 0x0002 && [[field objectForKey:@"element"] intValue] == 0x0010)
                                         value = [BrowserController compressionString: value];

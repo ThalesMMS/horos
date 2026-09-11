@@ -60,6 +60,18 @@
 + (void)setAllowsAnyHTTPSCertificate:(BOOL)allow forHost:(NSString*)host;
 @end
 
+@interface NSObject (HorosDICOMVerificationBridge)
++ (BOOL)verifyDICOMServer:(NSDictionary*)server;
+@end
+
+@interface NSObject (HorosDICOMwebEditorBridge)
++ (NSDictionary*)editNode:(NSDictionary*)node;
+@end
+
+@interface NSObject (HorosNodeFormatterBridge)
+- (id)initWithField:(NSString*)field;
+@end
+
 @implementation OSILocationsPreferencePanePref
 
 @synthesize WADOPort, WADOhttps, WADOTransferSyntax, WADOUrl, WADOUsername, WADOPassword, testingNodes;
@@ -94,12 +106,6 @@
 	
 	for( int x = 0; x < [serverList count]; x++)
 	{
-		int value = [[[serverList objectAtIndex: x] valueForKey:@"Port"] intValue];
-		if( value < 1) value = 1;
-		if( value > 131072) value = 131072;
-		[[serverList objectAtIndex: x] setValue: [NSNumber numberWithInt: value] forKey: @"Port"];		
-		[[serverList objectAtIndex: x] setValue: [[serverList objectAtIndex: x] valueForKey:@"AETitle"] forKey:@"AETitle"];
-		
         if( [[serverList objectAtIndex: x] valueForKey:@"Activated"] == nil)
             [[serverList objectAtIndex: x] setValue: [NSNumber numberWithBool: YES] forKey: @"Activated"];
         
@@ -166,136 +172,24 @@
 
 - (int) echoAddress: (NSString*) address port:(int) port AET:(NSString*) aet
 {
-	NSTask* theTask = [[[NSTask alloc]init]autorelease];
-	
-	[theTask setLaunchPath: [[[NSBundle mainBundle] resourcePath] stringByAppendingString:@"/echoscu"]];
-
-	[theTask setEnvironment:[NSDictionary dictionaryWithObject:[[[NSBundle mainBundle] resourcePath] stringByAppendingString:@"/dicom.dic"] forKey:@"DCMDICTPATH"]];
-	[theTask setLaunchPath:[[[NSBundle mainBundle] resourcePath] stringByAppendingString:@"/echoscu"]];
-
-	NSArray *args = [NSArray arrayWithObjects: address, [NSString stringWithFormat:@"%d", port], @"-aet", [[NSUserDefaults standardUserDefaults] stringForKey: @"AETITLE"], @"-aec", aet, @"-to", [[NSUserDefaults standardUserDefaults] stringForKey:@"DICOMTimeout"], @"-ta", [[NSUserDefaults standardUserDefaults] stringForKey:@"DICOMTimeout"], @"-td", [[NSUserDefaults standardUserDefaults] stringForKey:@"DICOMTimeout"], @"-d", nil];
-	
-	NSLog( @"%@", [args description]);
-	
-	[theTask setArguments:args];
-	[theTask launch];
-	[theTask waitUntilExit];
-	
-	return [theTask terminationStatus];
+    return [[self class] echoServer: @{ @"Address": address ?: @"", @"Port": @(port),
+                                      @"AETitle": aet ?: @"" }] ? 0 : -1;
 }
 
 + (BOOL) echoServer:(NSDictionary*)serverParameters
 {
-    @try
-    {
-        NSString *address = [serverParameters objectForKey:@"Address"];
-        NSNumber *port = [serverParameters objectForKey:@"Port"];
-        NSString *aet = [serverParameters objectForKey:@"AETitle"];
-        
-        NSTask* theTask = [[[NSTask alloc] init] autorelease];
-        
-        [theTask setLaunchPath:[[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"/echoscu"]];
-        
-        [theTask setEnvironment:[NSDictionary dictionaryWithObject:[[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"/dicom.dic"] forKey:@"DCMDICTPATH"]];
-        [theTask setLaunchPath:[[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"/echoscu"]];
-            
-        NSMutableArray *args = [NSMutableArray array];
-        [args addObject:address];
-        [args addObject:[NSString stringWithFormat:@"%d", [port intValue]]];
-        [args addObject:@"-aet"]; // set my calling AE title
-        [args addObject:[[NSUserDefaults standardUserDefaults] stringForKey: @"AETITLE"]];
-        [args addObject:@"-aec"]; // set called AE title of peer
-        [args addObject:aet];
-        [args addObject:@"-to"]; // timeout for connection requests
-        [args addObject:[[NSUserDefaults standardUserDefaults] stringForKey:@"DICOMTimeout"]];
-        [args addObject:@"-ta"]; // timeout for ACSE messages
-        [args addObject:[[NSUserDefaults standardUserDefaults] stringForKey:@"DICOMTimeout"]];
-        [args addObject:@"-td"]; // timeout for DIMSE messages
-        [args addObject:[[NSUserDefaults standardUserDefaults] stringForKey:@"DICOMTimeout"]];
-        
-        [DDKeychain lockTmpFiles];
-        
-        if([[serverParameters objectForKey:@"TLSEnabled"] boolValue])
+    @try {
+        Class queryClass = NSClassFromString(@"DCMTKQueryNode");
+        if( ![queryClass respondsToSelector:@selector(verifyDICOMServer:)])
         {
-            // TLS support. Options listed here http://support.dcmtk.org/docs/echoscu.html
-            
-            if([[serverParameters objectForKey:@"TLSAuthenticated"] boolValue])
-            {
-                [args addObject:@"--enable-tls"]; // use authenticated secure TLS connection
-
-                [DICOMTLS generateCertificateAndKeyForServerAddress:address port: [port intValue] AETitle:aet]; // export certificate/key from the Keychain to the disk
-                [args addObject:[DICOMTLS keyPathForServerAddress:address port:[port intValue] AETitle:aet]]; // [p]rivate key file
-                [args addObject:[DICOMTLS certificatePathForServerAddress:address port:[port intValue] AETitle:aet]]; // [c]ertificate file: string
-                
-                [args addObject:@"--use-passwd"];
-                [args addObject: [DICOMTLS TLS_PRIVATE_KEY_PASSWORD]];
-            }
-            else
-                [args addObject:@"--anonymous-tls"]; // use secure TLS connection without certificate
-            
-            // key and certificate file format options:
-            [args addObject:@"--pem-keys"];
-            
-            //ciphersuite options:
-            for (NSDictionary *suite in [serverParameters objectForKey:@"TLSCipherSuites"])
-            {
-                if ([[suite objectForKey:@"Supported"] boolValue])
-                {
-                    [args addObject:@"--cipher"]; // add ciphersuite to list of negotiated suites
-                    [args addObject:[suite objectForKey:@"Cipher"]];
-                }
-            }
-
-            if([[serverParameters objectForKey:@"TLSUseDHParameterFileURL"] boolValue])
-            {
-                [args addObject:@"--dhparam"]; // read DH parameters for DH/DSS ciphersuites
-                [args addObject:[serverParameters objectForKey:@"TLSDHParameterFileURL"]];
-            }
-
-            // peer authentication options:
-            TLSCertificateVerificationType verification = [[serverParameters objectForKey:@"TLSCertificateVerification"] intValue];
-            if(verification==RequirePeerCertificate)
-                [args addObject:@"--require-peer-cert"]; //verify peer certificate, fail if absent (default)
-            else if(verification==VerifyPeerCertificate)
-                [args addObject:@"--verify-peer-cert"]; //verify peer certificate if present
-            else //IgnorePeerCertificate
-                [args addObject:@"--ignore-peer-cert"]; //don't verify peer certificate	
-            
-            // certification authority options:
-            if(verification==RequirePeerCertificate || verification==VerifyPeerCertificate)
-            {
-                [DDKeychain KeychainAccessExportTrustedCertificatesToDirectory:TLS_TRUSTED_CERTIFICATES_DIR];
-                NSArray *trustedCertificates = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:TLS_TRUSTED_CERTIFICATES_DIR error:nil];
-            
-                //[args addObject:@"--add-cert-dir"]; // add certificates in d to list of certificates  .... needs to use OpenSSL & rename files (see http://forum.dicom-cd.de/viewtopic.php?p=3237&sid=bd17bd76876a8fd9e7fdf841b90cf639 )
-                for (NSString *cert in trustedCertificates)
-                {
-                    [args addObject:@"--add-cert-file"];
-                    [args addObject:[TLS_TRUSTED_CERTIFICATES_DIR stringByAppendingPathComponent:cert]];
-                }
-            }
-            
-            // pseudo random generator options.
-            // see http://www.mevis-research.de/~meyer/dcmtk/docs_352/dcmtls/randseed.txt
-            [DDKeychain generatePseudoRandomFileToPath:TLS_SEED_FILE];
-            [args addObject:@"--seed"]; // seed random generator with contents of f
-            [args addObject:TLS_SEED_FILE];		
+            NSLog(@"DICOM verification unavailable: application query stack is missing");
+            return NO;
         }
-            
-        [theTask setArguments:args];
-        [theTask launch];
-        [theTask waitUntilExit];
-
-        [DDKeychain unlockTmpFiles];
-        
-        if( [theTask terminationStatus] == 0) return YES;
-        else return NO;
+        return [queryClass verifyDICOMServer:serverParameters];
+    } @catch( NSException *exception) {
+        N2LogException(exception);
+        return NO;
     }
-    @catch (NSException *exception) {
-        N2LogException( exception);
-    }
-    
-    return NO;
 }
 
 - (void) enableControls: (BOOL) val
@@ -306,6 +200,11 @@
 
 - (void) mainViewDidLoad
 {
+    for (NSString *field in @[@"Address", @"AETitle", @"Port"]) {
+        NSTableColumn *column = [[dicomNodes tableView] tableColumnWithIdentifier:field];
+        id formatter = [[[NSClassFromString(@"HorosDICOMNodeFormatter") alloc] initWithField:field] autorelease];
+        [[column dataCell] setFormatter:formatter];
+    }
 	NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
 	
 	stringEncoding = [[defaults stringForKey:@"STRINGENCODING"] retain];
@@ -472,6 +371,23 @@
 		NSRunInformationalAlertPanel( NSLocalizedString( @"URL download Succeeded", nil), NSLocalizedString( @"It works !", nil), NSLocalizedString( @"OK", nil), nil, nil);
 }
 
+- (IBAction) editDICOMweb:(id)sender
+{
+    NSInteger row = [[dicomNodes tableView] selectedRow];
+    if (row < 0 || row >= [[dicomNodes arrangedObjects] count]) return;
+    NSMutableDictionary *node = [[dicomNodes arrangedObjects] objectAtIndex:row];
+    NSNumber *previousMode = [[node objectForKey:@"retrieveMode"] retain];
+    NSDictionary *edited = [NSClassFromString(@"HorosDICOMwebNodeEditor") editNode:node];
+    if (edited) {
+        [node setDictionary:edited];
+        [[NSUserDefaults standardUserDefaults] setObject:[dicomNodes arrangedObjects] forKey:@"SERVERS"];
+    }
+    else if (previousMode) [node setObject:previousMode forKey:@"retrieveMode"];
+    [previousMode release];
+    [[dicomNodes tableView] reloadData];
+    [self resetTest];
+}
+
 - (IBAction) editWADO: (id) sender
 {
 	NSMutableDictionary *aServer = [[dicomNodes arrangedObjects] objectAtIndex: [[dicomNodes tableView] selectedRow]];
@@ -508,8 +424,12 @@
         if( WADOPassword)
             [aServer setObject: WADOPassword forKey: @"WADOPassword"];
 		
-		// disable TLS
-		[aServer setObject:[NSNumber numberWithBool:NO] forKey:@"TLSEnabled"];
+		// TLSEnabled used to be cleared here. It is not a WADO setting: it secures
+		// the DIMSE association this node is queried over, and a node still answers
+		// C-FIND on that association whatever it retrieves with. Saving the WADO
+		// sheet therefore turned a TLS only node into one that could no longer be
+		// queried, and threw away its authentication and certificate settings.
+		// WADO has its own transport switch, WADOhttps, edited on this same sheet.
 		
 		[[NSUserDefaults standardUserDefaults] setObject: [dicomNodes arrangedObjects] forKey: @"SERVERS"];
 	}
@@ -1006,11 +926,19 @@
 	if (value != nil)
 	{
 		float retrieveMode = [value intValue]; // this should be the tag of the retrieve mode
-		if (retrieveMode==2)
+		if (retrieveMode==2 || retrieveMode==3)
 			return [NSNumber numberWithInt:0];
 		return [NSNumber numberWithInt:1];
 	}
 	return [NSNumber numberWithInt:1];
 }
 
+@end
+
+// DICOMweb is query/retrieve only; STOW is not implemented.
+@interface NotDICOMwebValueTransformer : NSValueTransformer @end
+@implementation NotDICOMwebValueTransformer
++ (Class)transformedValueClass { return NSNumber.class; }
++ (BOOL)allowsReverseTransformation { return NO; }
+- (id)transformedValue:(id)value { return @([value intValue] != 3); }
 @end

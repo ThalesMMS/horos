@@ -35,7 +35,9 @@
  Ê Ê PURPOSE.
  ============================================================================*/
 
+#include "HorosDICOMGlobalAbort.h"
 #import "QueryController.h"
+#import "Horos-Swift.h"
 #import "WaitRendering.h"
 #import "QueryFilter.h"
 #import "AppController.h"
@@ -64,16 +66,17 @@
 #import "DicomFile.h"
 #import "N2Debug.h"
 
-#include "osconfig.h"
+#include "HorosDCMTKCompatibility.h"
+#include <dcmtk/config/osconfig.h>
 
-#include "dcvrsl.h"
-#include "ofcast.h"
-#include "ofstd.h"
-#include "dctk.h"
-#include "dcuid.h"
+#include <dcmtk/dcmdata/dcvrsl.h>
+#include <dcmtk/ofstd/ofcast.h>
+#include <dcmtk/ofstd/ofstd.h>
+#include <dcmtk/dcmdata/dctk.h>
+#include <dcmtk/dcmdata/dcuid.h>
 
-#define INCLUDE_CSTDIO
-#include "ofstdinc.h"
+#include <cstdio>
+#include <dcmtk/ofstd/ofstdinc.h>
 
 #include "url.h"
 
@@ -250,10 +253,8 @@ extern "C"
 				[dictionary setObject: [object valueForKey:@"port"] forKey:@"port"];
 				[dictionary setObject: [object valueForKey:@"transferSyntax"] forKey:@"transferSyntax"];
 				
-				FILE * pFile = fopen ("/tmp/kill_all_storescu", "r");
-				if( pFile)
-					fclose (pFile);
-				else
+				BOOL globalAbort = HorosDICOMGlobalAbortRequested();
+                if (!globalAbort)
 					[object move: dictionary];
 			}
 			
@@ -325,10 +326,8 @@ extern "C"
                 [dictionary setObject: [object valueForKey:@"transferSyntax"] forKey:@"transferSyntax"];
                 [dictionary setObject: [[object extraParameters] valueForKey: @"retrieveMode"] forKey: @"retrieveMode"];
                  
-                FILE * pFile = fopen ("/tmp/kill_all_storescu", "r");
-                if( pFile)
-                    fclose (pFile);
-                else
+                BOOL globalAbort = HorosDICOMGlobalAbortRequested();
+                if (!globalAbort)
                     [object move: dictionary retrieveMode: [[[object extraParameters] valueForKey: @"retrieveMode"] intValue]];
             }
             @catch( NSException *e) {
@@ -346,8 +345,80 @@ extern "C"
     }
 }
 
+// The same study can come back from more than one node, and now from more than
+// one query; keep one copy, the one that reports the most images.
++ (void) mergeStudies:(NSArray*) found into:(NSMutableArray*) studies
+{
+    NSArray *uidArray = [studies valueForKey: @"uid"];
+    
+    for( NSUInteger x = 0 ; x < [found count] ; x++)
+    {
+        DCMTKStudyQueryNode *s = [found objectAtIndex: x];
+        
+        if( s)
+        {
+            NSUInteger index = [uidArray indexOfObject: [s valueForKey:@"uid"]];
+            
+            if( index == NSNotFound) // not found
+            {
+                [studies addObject: s];
+                uidArray = [studies valueForKey: @"uid"];
+            }
+            else 
+            {
+                if( [[studies objectAtIndex: index] valueForKey: @"numberImages"] && [s valueForKey: @"numberImages"])
+                {
+                    if( [[[studies objectAtIndex: index] valueForKey: @"numberImages"] intValue] < [[s valueForKey: @"numberImages"] intValue])
+                        [studies replaceObjectAtIndex: index withObject: s];
+                }
+            }
+        }
+    }
+}
+
 + (NSMutableArray*) queryStudiesForFilters:(NSDictionary*) filters servers: (NSArray*) serversList showErrors: (BOOL) showErrors
 {
+    // A field holding several patient identifiers is a list, not a value: DICOM
+    // has no list, so it becomes one query per identifier and the union of what
+    // they find.
+    NSString *patientIDFilter = [filters valueForKey: PatientID];
+    NSString *patientIDKey = PatientID;
+    if( patientIDFilter == nil)
+    {
+        patientIDFilter = [filters valueForKey: @"patientID"];
+        patientIDKey = @"patientID";
+    }
+    
+    if( [HorosPatientIdentifierList namesSeveralIdentifiers: patientIDFilter])
+    {
+        NSArray *identifiers = [HorosPatientIdentifierList identifiersInText: patientIDFilter];
+        NSMutableArray *combined = [NSMutableArray array];
+        
+        NSLog( @"---- patient identifier list: %@", [HorosPatientIdentifierList summaryForText: patientIDFilter]);
+        
+        for( NSString *identifier in identifiers)
+        {
+            if( [NSThread currentThread].isCancelled)
+            {
+                NSLog( @"---- patient identifier list: cancelled after %d of %d", (int) [identifiers indexOfObject: identifier], (int) identifiers.count);
+                break;
+            }
+            
+            NSMutableDictionary *one = [[filters mutableCopy] autorelease];
+            [one removeObjectForKey: PatientID];
+            [one removeObjectForKey: @"patientID"];
+            [one setObject: identifier forKey: patientIDKey];
+            
+            NSArray *found = [QueryController queryStudiesForFilters: one servers: serversList showErrors: showErrors];
+            
+            NSLog( @"---- patient identifier \"%@\": %d stud%@", identifier, (int) found.count, found.count == 1? @"y" : @"ies");
+            
+            [QueryController mergeStudies: found into: combined];
+        }
+        
+        return combined;
+    }
+    
 	QueryArrayController *qm = nil;
 	NSMutableArray *studies = [NSMutableArray array];
 	
@@ -470,28 +541,7 @@ extern "C"
                 if( studiesForThisNode == nil)
                     NSLog( @"queryStudiesForFilters failed for this node: %@", [server valueForKey: @"Description"]);
                 
-                NSArray *uidArray = [studies valueForKey: @"uid"];
-                
-                for( NSUInteger x = 0 ; x < [studiesForThisNode count] ; x++)
-                {
-                    DCMTKStudyQueryNode *s = [studiesForThisNode objectAtIndex: x];
-                    
-                    if( s)
-                    {
-                        NSUInteger index = [uidArray indexOfObject: [s valueForKey:@"uid"]];
-                        
-                        if( index == NSNotFound) // not found
-                            [studies addObject: s];
-                        else 
-                        {
-                            if( [[studies objectAtIndex: index] valueForKey: @"numberImages"] && [s valueForKey: @"numberImages"])
-                            {
-                                if( [[[studies objectAtIndex: index] valueForKey: @"numberImages"] intValue] < [[s valueForKey: @"numberImages"] intValue])
-                                    [studies replaceObjectAtIndex: index withObject: s];
-                            }
-                        }
-                    }
-                }
+                [QueryController mergeStudies: studiesForThisNode into: studies];
             }
             
             [qm release];
@@ -551,15 +601,21 @@ extern "C"
     
     NSMutableArray *studies = [QueryController queryStudiesForFilters: filters servers: serversList showErrors: showErrors];
     
-    if( usePatientName)
+    NSCalendar *birthDateCalendar = usePatientBirthDate ? [[[NSCalendar alloc] initWithCalendarIdentifier:NSCalendarIdentifierGregorian] autorelease] : nil;
+    // Validate returned identity as well as sending query filters. A PACS can
+    // return broader results, including when an identifier contains wildcards.
+    for( NSInteger x = (NSInteger)studies.count - 1; x >= 0; x--)
     {
-        for( int x = (long)[studies count]-1 ; x >= 0 ; x--)
-        {
-            DCMTKStudyQueryNode *s = [studies objectAtIndex: x];
-            
-            if( [[DicomFile NSreplaceBadCharacter: s.name] isEqualToString: study.name] == NO)
-                    [studies removeObjectAtIndex: x];
-        }
+        DCMTKStudyQueryNode *s = [studies objectAtIndex: x];
+        BOOL matchesPatient = YES;
+        if( usePatientID && ![s.patientID isEqualToString: study.patientID])
+            matchesPatient = NO;
+        if( usePatientBirthDate && (!s.dateOfBirth || ![birthDateCalendar isDate:s.dateOfBirth inSameDayAsDate:study.dateOfBirth]))
+            matchesPatient = NO;
+        if( usePatientName && ![[DicomFile NSreplaceBadCharacter: s.name] isEqualToString: study.name])
+            matchesPatient = NO;
+        if( !matchesPatient)
+            [studies removeObjectAtIndex: x];
     }
     
 	return studies;
@@ -582,6 +638,8 @@ extern "C"
 
 + (BOOL) echoServer:(NSDictionary*)serverParameters
 {
+    if ([serverParameters[@"retrieveMode"] intValue] == DICOMwebRetrieveMode)
+        return [DCMTKQueryNode verifyDICOMServer:serverParameters];
 	@try
 	{
 		NSString *address = [serverParameters objectForKey:@"Address"];
@@ -656,7 +714,8 @@ extern "C"
 			}
 			
 			// peer authentication options:
-			TLSCertificateVerificationType verification = (TLSCertificateVerificationType)[[serverParameters objectForKey:@"TLSCertificateVerification"] intValue];
+			// An unrecognised value must not mean "do not check the peer".
+			TLSCertificateVerificationType verification = (TLSCertificateVerificationType)[HorosTLSVerificationPolicy normalise: [[serverParameters objectForKey:@"TLSCertificateVerification"] intValue]];
 			if(verification==RequirePeerCertificate)
 				[args addObject:@"--require-peer-cert"]; //verify peer certificate, fail if absent (default)
 			else if(verification==VerifyPeerCertificate)
@@ -1840,52 +1899,56 @@ extern "C"
 	return nil;
 }
 
+// How much of one row is already here. Four places used to work this out, each
+// reading a remote total of zero as 0% and more files locally than the node
+// reports as 100%. HorosLocalCompleteness keeps those apart; this is the only
+// place that reads the two counts.
+- (HorosLocalCompleteness*) localCompletenessForItem: (id) item
+{
+    if ([item isKindOfClass:[DCMTKQueryNode class]] && [item retrieveInventory]) {
+        [item refreshRetrieveInventory];
+        HorosRetrieveInventory *inventory = [item retrieveInventory];
+        BOOL current = [inventory matchesReportedCount:[[item valueForKey:@"numberImages"] integerValue]];
+        HorosLocalCompleteness *value = [[[HorosLocalCompleteness alloc] initWithLocalCount:current ? inventory.importedCount : inventory.localUniqueCount
+            remoteCount:current ? @(inventory.expectedCount) : nil] autorelease];
+        value.inventoryDetail = [NSString stringWithFormat:@"%@%@\nInventory queried: %@\nManifest: %@",
+            inventory.inventoryConfirmed && !current ? @"The remote count changed; retrieve again to refresh the inventory.\n" : @"",
+            inventory.summary, inventory.queriedAt, inventory.path];
+        return value;
+    }
+    NSArray *local = nil;
+    
+    if( [item isMemberOfClass: [DCMTKStudyQueryNode class]] == YES)
+        local = [self localStudy: item context: nil];
+    else if( [item isMemberOfClass: [DCMTKSeriesQueryNode class]] == YES)
+        local = [self localSeries: item context: nil];
+    else
+        return nil;
+    
+    NSInteger localFiles = 0;
+    if( [local count] > 0)
+        localFiles = [[[local objectAtIndex: 0] valueForKey: @"rawNoFiles"] integerValue];
+    
+    // A node answers with a number, but the value has arrived as a string often
+    // enough elsewhere in this file to be worth not assuming.
+    id total = [item valueForKey: @"numberImages"];
+    NSNumber *remote = nil;
+    if( [total respondsToSelector: @selector( integerValue)])
+        remote = [NSNumber numberWithInteger: [total integerValue]];
+    
+    return [[[HorosLocalCompleteness alloc] initWithLocalCount: localFiles remoteCount: remote] autorelease];
+}
+
 - (NSString *)outlineView:(NSOutlineView *)ov toolTipForCell:(NSCell *)cell rect:(NSRectPointer)rect tableColumn:(NSTableColumn *)tableColumn item:(id)item mouseLocation:(NSPoint)mouseLocation;
 {
 	@try
 	{
-		if( [[tableColumn identifier] isEqualToString: @"name"])
+		if( [[tableColumn identifier] isEqualToString: @"name"] || [[tableColumn identifier] isEqualToString: @"localCompleteness"])
 		{
-			if( [item isMemberOfClass:[DCMTKStudyQueryNode class]] == YES)
-			{
-				NSArray *studyArray;
-				
-				studyArray = [self localStudy: item context: nil];
-				
-				if( [studyArray count] > 0)
-				{
-					float localFiles = [[[studyArray objectAtIndex: 0] valueForKey: @"rawNoFiles"] floatValue];
-					float totalFiles = [[item valueForKey:@"numberImages"] floatValue];
-					float percentage = 0;
-					
-					if( totalFiles != 0.0)
-						percentage = localFiles / totalFiles;
-					if( percentage > 1.0) percentage = 1.0;
-					
-					return [NSString stringWithFormat:@"%@\n%d%% (%d/%d)", [cell title], (int)(percentage*100), (int)localFiles, (int)totalFiles];
-				}
-			}
+			HorosLocalCompleteness *completeness = [self localCompletenessForItem: item];
 			
-			if( [item isMemberOfClass:[DCMTKSeriesQueryNode class]] == YES)
-			{
-				NSArray *seriesArray;
-				
-				seriesArray = [self localSeries: item context: nil];
-				
-				if( [seriesArray count] > 0)
-				{
-					float localFiles = [[[seriesArray objectAtIndex: 0] valueForKey: @"rawNoFiles"] floatValue];
-					float totalFiles = [[item valueForKey:@"numberImages"] floatValue];
-					float percentage = 0;
-					
-					if( totalFiles != 0.0)
-						percentage = localFiles / totalFiles;
-						
-					if(percentage > 1.0) percentage = 1.0;
-					
-					return [NSString stringWithFormat:@"%@\n%d%% (%d/%d)", [cell title], (int)(percentage*100), (int)localFiles, (int)totalFiles];
-				}
-			}
+			if( completeness)
+				return [NSString stringWithFormat: @"%@\n%@", [cell title], completeness.explanation];
 		}
 	}
 	@catch ( NSException *e)
@@ -1934,43 +1997,15 @@ extern "C"
                     [cell setDrawsBackground: NO];
             }
             
-			if( [item isMemberOfClass:[DCMTKStudyQueryNode class]] == YES)
-			{
-				NSArray	*studyArray = [self localStudy: item context: nil];
-				
-				if( [studyArray count] > 0)
-				{
-					float percentage = 0;
-					
-					if( [[item valueForKey:@"numberImages"] floatValue] != 0.0)
-						percentage = [[[studyArray objectAtIndex: 0] valueForKey: @"rawNoFiles"] floatValue] / [[item valueForKey:@"numberImages"] floatValue];
-						
-					if(percentage > 1.0) percentage = 1.0;
-
-					[(ImageAndTextCell *)cell setImage:[NSImage pieChartImageWithPercentage:percentage]];
-				}
-				else [(ImageAndTextCell *)cell setImage: nil];
-			}
-			else if( [item isMemberOfClass:[DCMTKSeriesQueryNode class]] == YES)
-			{
-				NSArray	*seriesArray;
-				
-				seriesArray = [self localSeries: item context: nil];
-				
-				if( [seriesArray count] > 0)
-				{
-					float percentage = 0;
-					
-					if( [[item valueForKey:@"numberImages"] floatValue] != 0.0)
-						percentage = [[[seriesArray objectAtIndex: 0] valueForKey: @"rawNoFiles"] floatValue] / [[item valueForKey:@"numberImages"] floatValue];
-						
-					if(percentage > 1.0) percentage = 1.0;
-					
-					[(ImageAndTextCell *)cell setImage:[NSImage pieChartImageWithPercentage:percentage]];
-				}
-				else [(ImageAndTextCell *)cell setImage: nil];
-			}
-			else [(ImageAndTextCell *)cell setImage: nil];
+			HorosLocalCompleteness *completeness = [self localCompletenessForItem: item];
+			
+			// A pie is a proportion. When the node did not say how many it holds
+			// there is no proportion to draw, and drawing an empty one said the
+			// study was here and none of it had arrived.
+			if( completeness && completeness.localCount > 0 && completeness.remoteCountIsKnown)
+				[(ImageAndTextCell *)cell setImage: [NSImage pieChartImageWithPercentage: completeness.fraction]];
+			else
+				[(ImageAndTextCell *)cell setImage: nil];
 			
 			[cell setFont: [NSFont boldSystemFontOfSize:13]];
 			[cell setLineBreakMode: NSLineBreakByTruncatingMiddle];
@@ -2062,6 +2097,13 @@ extern "C"
                 
                 else NSLog( @"***** unknown class in QueryController outlineView: %@", [item class]);
             }
+            else if( [[tableColumn identifier] isEqualToString: @"localCompleteness"])
+            {
+                HorosLocalCompleteness *completeness = [self localCompletenessForItem: item];
+                
+                if( completeness)
+                    return completeness.text;
+            }
             else if ( [[tableColumn identifier] isEqualToString: @"Button"] == NO && [tableColumn identifier] != nil)
             {
                 if( [item isMemberOfClass:[DCMTKStudyQueryNode class]] || [item isMemberOfClass:[DCMTKSeriesQueryNode class]])
@@ -2119,6 +2161,35 @@ extern "C"
 	
 	if( [s count])
 	{
+		// Completeness is not a property of the node - it is the node compared
+		// against the local database - so it is sorted by comparing the rows
+		// themselves rather than a key on them.
+		if( [[[s objectAtIndex: 0] key] isEqualToString: @"localCompleteness"])
+		{
+			BOOL ascending = [[s objectAtIndex: 0] ascending];
+			NSSortDescriptor *byCompleteness = [[[NSSortDescriptor alloc] initWithKey: @"self"
+																		   ascending: ascending
+																		  comparator: ^NSComparisonResult( id a, id b)
+			{
+				HorosLocalCompleteness *first = [self localCompletenessForItem: a];
+				HorosLocalCompleteness *second = [self localCompletenessForItem: b];
+				
+				if( first == nil || second == nil)
+					return NSOrderedSame;
+				
+				return [first compare: second];
+			}] autorelease];
+			
+			NSMutableArray *sortArray = [NSMutableArray arrayWithObject: byCompleteness];
+			if( [s count] > 1)
+			{
+				NSMutableArray *lastObjects = [NSMutableArray arrayWithArray: s];
+				[lastObjects removeObjectAtIndex: 0];
+				[sortArray addObjectsFromArray: lastObjects];
+			}
+			return sortArray;
+		}
+		
 		if( [[[s objectAtIndex: 0] key] isEqualToString:@"date"])
 		{
 			NSMutableArray *sortArray = [NSMutableArray arrayWithObject: [s objectAtIndex: 0]];
@@ -3088,6 +3159,12 @@ extern "C"
 			totalFiles = 1;
 	}
 	
+    HorosRetrieveInventory *inventory = [item retrieveInventory];
+    if ([inventory matchesReportedCount:[[item valueForKey:@"numberImages"] integerValue]]) {
+        [item refreshRetrieveInventory];
+        localFiles = (int)inventory.importedCount;
+        totalFiles = (int)inventory.expectedCount;
+    }
 	if( localFiles < totalFiles)
 	{
 		NSString *stringID = [QueryController stringIDForStudy: item];
@@ -3589,7 +3666,9 @@ extern "C"
 					if( [array count])
 						localNumber = [[[array objectAtIndex: 0] valueForKey: @"rawNoFiles"] intValue];
 					
-					if( localNumber < [[item valueForKey:@"numberImages"] intValue] || [[item valueForKey:@"numberImages"] intValue] == 0)
+                    HorosRetrieveInventory *inventory = [item retrieveInventory];
+                    if (inventory) [item refreshRetrieveInventory];
+					if( inventory ? (![inventory matchesReportedCount:[[item valueForKey:@"numberImages"] integerValue]] || !inventory.isComplete) : (localNumber < [[item valueForKey:@"numberImages"] intValue] || [[item valueForKey:@"numberImages"] intValue] == 0))
 					{
 						NSString *stringID = [QueryController stringIDForStudy: item];
 			
@@ -3762,9 +3841,22 @@ extern "C"
 	
     [NSThread currentThread].name = NSLocalizedString( @"Retrieving images...", nil);
     
-	if( [[AppController sharedAppController] isStoreSCPRunning] == NO)
+	// This used to refuse every retrieval whenever the listener was off, and to
+	// return in silence. A WADO retrieval is a C-FIND and then plain HTTP GETs,
+	// so nothing listens for it; a user who runs no SCP was blocked from the one
+	// method that would have worked, with only an NSLog to say so. Refuse only a
+	// batch in which nothing could succeed, and say it where it can be seen.
+	NSMutableArray *retrieveModes = [NSMutableArray array];
+	for( DCMTKQueryNode *node in array)
+		[retrieveModes addObject: [NSNumber numberWithInt: [HorosRetrieveListenerRequirement retrieveModeForServer: [node extraParameters] ? [node extraParameters] : @{}]]];
+	if( [[AppController sharedAppController] isStoreSCPRunning] == NO &&
+	    [HorosRetrieveListenerRequirement listenerRequiredForEveryRetrieveMode: retrieveModes])
 	{
-		NSLog( @"----- isStoreSCPRunning == NO, cannot retrieve");
+		NSLog( @"----- isStoreSCPRunning == NO, and every node in this retrieve needs the listener");
+		[DCMTKQueryNode performSelectorOnMainThread: @selector( errorMessage:) withObject:
+			@[NSLocalizedString( @"Retrieve Failed", nil),
+			  NSLocalizedString( @"These nodes retrieve with C-MOVE, which requires the DICOM Listener. Activate it in Preferences - Listener, or use C-GET or WADO.", nil),
+			  NSLocalizedString( @"OK", nil)] waitUntilDone: NO];
 		return;
 	}
 	
@@ -3874,6 +3966,7 @@ extern "C"
 		int i = 0;
 		for( NSDictionary *d in moveArray)
 		{
+            if ([NSThread currentThread].isCancelled) break;
 			DCMTKQueryNode *object = [d objectForKey: @"query"];
 			
 			NSString *status = nil;
@@ -3899,10 +3992,8 @@ extern "C"
 			
 			@try
 			{
-				FILE * pFile = fopen ("/tmp/kill_all_storescu", "r");
-				if( pFile)
-					fclose (pFile);
-				else
+				BOOL globalAbort = HorosDICOMGlobalAbortRequested();
+                if (!globalAbort)
 				{
 					if( allowNonCMOVE)
 						[object move: d retrieveMode: [[d objectForKey: @"retrieveMode"] intValue]];
@@ -3925,9 +4016,8 @@ extern "C"
 			[NSThread currentThread].progress = (float) ++i / (float) [moveArray count];
 			if( [NSThread currentThread].isCancelled)
 			{
-				[[NSFileManager defaultManager] createFileAtPath: @"/tmp/kill_all_storescu" contents: [NSData data] attributes: nil];
-				[NSThread sleepForTimeInterval: 3];
-				unlink( "/tmp/kill_all_storescu");
+                // move: has observed this worker's cancellation. Do not broadcast
+                // an abort to unrelated retrievals or another application instance.
 				break;
 			}
 		}
@@ -3951,10 +4041,8 @@ extern "C"
 		
 		if( [[self window] isVisible])
 		{
-			FILE * pFile = fopen( "/tmp/kill_all_storescu", "r");
-			if( pFile)
-				fclose (pFile);
-			else
+			BOOL globalAbort = HorosDICOMGlobalAbortRequested();
+                if (!globalAbort)
 			{
 				for( id item in array)
 					[item setShowErrorMessage: YES];
@@ -4459,6 +4547,21 @@ extern "C"
 	
 	[self setBirthDate: nil];
     
+    // The percentage already existed in the tooltip and as a pie next to the
+    // name; what was missing was a value that can be compared and sorted. Added
+    // here rather than in the nib so it joins the header context menu and the
+    // saved column order below.
+    if( [outlineView tableColumnWithIdentifier: @"localCompleteness"] == nil)
+    {
+        NSTableColumn *completenessColumn = [[[NSTableColumn alloc] initWithIdentifier: @"localCompleteness"] autorelease];
+        [[completenessColumn headerCell] setStringValue: NSLocalizedString( @"Local", nil)];
+        [completenessColumn setWidth: 110];
+        [completenessColumn setMinWidth: 60];
+        [completenessColumn setEditable: NO];
+        [completenessColumn setSortDescriptorPrototype: [[[NSSortDescriptor alloc] initWithKey: @"localCompleteness" ascending: YES] autorelease]];
+        [outlineView addTableColumn: completenessColumn];
+    }
+    
     // build table header context menu
     if( [[outlineView autosaveName] length] == 0)
     {
@@ -4623,7 +4726,7 @@ extern "C"
 	for( NSUInteger i = 0 ; i < [servers count]; i++)
 	{
 		if( [[savedServer objectForKey:@"AETitle"] isEqualToString: [[servers objectAtIndex:i] objectForKey:@"AETitle"]] && 
-			[[savedServer objectForKey:@"AddressAndPort"] isEqualToString: [NSString stringWithFormat:@"%@:%@", [[servers objectAtIndex:i] valueForKey:@"Address"], [[servers objectAtIndex:i] valueForKey:@"Port"]]])
+			[[savedServer objectForKey:@"AddressAndPort"] isEqualToString: [HorosDicomNodeConfiguration addressForServer:[servers objectAtIndex:i]]])
 			{
 				return [servers objectAtIndex:i];
 			}
@@ -4649,7 +4752,7 @@ extern "C"
 		
 		if( server && ([[server valueForKey:@"QR"] boolValue] == YES || [server valueForKey:@"QR"] == nil ))
 		{
-			[sourcesArray addObject: [NSMutableDictionary dictionaryWithObjectsAndKeys:[[savedArray objectAtIndex: i] valueForKey:@"activated"], @"activated", [server valueForKey:@"Description"], @"name", [server valueForKey:@"AETitle"], @"AETitle", [NSString stringWithFormat:@"%@:%@", [server valueForKey:@"Address"], [server valueForKey:@"Port"]], @"AddressAndPort", server, @"server", nil]];
+			[sourcesArray addObject: [NSMutableDictionary dictionaryWithObjectsAndKeys:[[savedArray objectAtIndex: i] valueForKey:@"activated"], @"activated", [server valueForKey:@"Description"], @"name", [server valueForKey:@"AETitle"], @"AETitle", [HorosDicomNodeConfiguration addressForServer:server], @"AddressAndPort", server, @"server", nil]];
 			
 			[serversArray removeObject: server];
 		}
@@ -4661,7 +4764,7 @@ extern "C"
 		
 		if( ([[server valueForKey:@"QR"] boolValue] == YES || [server valueForKey:@"QR"] == nil ))
 		
-			[sourcesArray addObject: [NSMutableDictionary dictionaryWithObjectsAndKeys:[NSNumber numberWithBool: NO], @"activated", [server valueForKey:@"Description"], @"name", [server valueForKey:@"AETitle"], @"AETitle", [NSString stringWithFormat:@"%@:%@", [server valueForKey:@"Address"], [server valueForKey:@"Port"]], @"AddressAndPort", server, @"server", nil]];
+			[sourcesArray addObject: [NSMutableDictionary dictionaryWithObjectsAndKeys:[NSNumber numberWithBool: NO], @"activated", [server valueForKey:@"Description"], @"name", [server valueForKey:@"AETitle"], @"AETitle", [HorosDicomNodeConfiguration addressForServer:server], @"AddressAndPort", server, @"server", nil]];
 	}
 	
 	[sourcesTable reloadData];
@@ -4734,7 +4837,7 @@ extern "C"
 		}
     }
 	
-	dcmDataDict.unlock();
+	dcmDataDict.wrunlock();
 	
 	return array;
 }
@@ -4745,10 +4848,7 @@ extern "C"
     {
         if ([keyPath isEqualToString: @"values.KeepQRWindowOnTop"])
         {
-            if( [[NSUserDefaults standardUserDefaults] boolForKey: @"KeepQRWindowOnTop"])
-                [[self window] setLevel: NSFloatingWindowLevel];
-            else
-                [[self window] setLevel: NSNormalWindowLevel];
+            [HorosFullScreenWindowSupport applyLevel: [self window] keepOnTop: [[NSUserDefaults standardUserDefaults] boolForKey: @"KeepQRWindowOnTop"]];
         }
         
         if( [keyPath isEqualToString: @"values.SERVERS"])
@@ -4764,7 +4864,13 @@ extern "C"
 	{
 		if( [[DCMNetServiceDelegate DICOMServersList] count] == 0)
 		{
-			NSRunCriticalAlertPanel(NSLocalizedString(@"DICOM Query & Retrieve",nil),NSLocalizedString( @"No DICOM locations available. See Preferences to add DICOM locations.",nil),NSLocalizedString( @"OK",nil), nil, nil);
+			// On the next turn of the run loop, for the reason given below where
+			// the listener is warned about: this window is built during
+			// -applicationDidFinishLaunching:, and a modal panel raised from
+			// inside it stops the launch.
+			dispatch_async( dispatch_get_main_queue(), ^{
+				NSRunCriticalAlertPanel(NSLocalizedString(@"DICOM Query & Retrieve",nil),NSLocalizedString( @"No DICOM locations available. See Preferences to add DICOM locations.",nil),NSLocalizedString( @"OK",nil), nil, nil);
+			});
 		}
 		
 		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(observeDatabaseAddNotification:) name:OsirixAddToDBNotification object:nil];
@@ -4803,11 +4909,31 @@ extern "C"
 			currentQueryController = self;
 			[[self window] setTitle: NSLocalizedString( @"DICOM Query/Retrieve", nil)];
 
-			if( [[AppController sharedAppController] isStoreSCPRunning] == NO)
-				NSRunCriticalAlertPanel(NSLocalizedString( @"DICOM Query & Retrieve",nil), NSLocalizedString( @"Retrieve cannot work if the DICOM Listener is not activated. See Preferences - Listener.",nil),NSLocalizedString( @"OK",nil), nil, nil);
+			// Only the nodes that retrieve with C-MOVE are affected;
+			// a WADO node works with the listener off, and used to be warned
+			// about anyway.
+			//
+			// The panel is raised on the next turn of the run loop rather than
+			// here. -applicationDidFinishLaunching: builds this window when the
+			// Q&R window was open at quit, and a modal panel raised from inside
+			// it stops the launch: sampling the main thread eleven seconds in
+			// found it still at
+			//   main -> applicationDidFinishLaunching: -> initAutoQuery:
+			//        -> NSRunCriticalAlertPanel -> runModalForWindow:
+			// with no window on screen to explain it. Deferring lets the launch
+			// finish first, and the panel then appears over a running
+			// application.
+			if( [[AppController sharedAppController] isStoreSCPRunning] == NO &&
+			    [HorosRetrieveListenerRequirement listenerRequiredForServers: [[NSUserDefaults standardUserDefaults] objectForKey: @"SERVERS"]])
+				dispatch_async( dispatch_get_main_queue(), ^{
+					NSRunCriticalAlertPanel(NSLocalizedString( @"DICOM Query & Retrieve",nil), NSLocalizedString( @"Retrieve from a node set to C-MOVE cannot work if the DICOM Listener is not activated. See Preferences - Listener. Nodes set to C-GET or WADO are not affected.",nil),NSLocalizedString( @"OK",nil), nil, nil);
+				});
             
-            if( [[NSUserDefaults standardUserDefaults] boolForKey: @"KeepQRWindowOnTop"])
-                [[self window] setLevel: NSFloatingWindowLevel];
+            // Declare the window as its own full-screen primary: the nib does not,
+            // so the Format - Fullscreen command used to do nothing here.
+            [HorosFullScreenWindowSupport enablePrimaryFullScreen: [self window]];
+            
+            [HorosFullScreenWindowSupport applyLevel: [self window] keepOnTop: [[NSUserDefaults standardUserDefaults] boolForKey: @"KeepQRWindowOnTop"]];
             
             [[NSUserDefaultsController sharedUserDefaultsController] addObserver:self forValuesKey:@"KeepQRWindowOnTop" options:NSKeyValueObservingOptionInitial context:NULL];
             
@@ -4889,6 +5015,7 @@ extern "C"
     [[NSUserDefaultsController sharedUserDefaultsController] removeObserver:self forValuesKey:@"KeepQRWindowOnTop"];
     
 	[[NSNotificationCenter defaultCenter] removeObserver:self name:OsirixAddToDBNotification object:nil];
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:NSApplicationDidChangeScreenParametersNotification object:nil];
 
 	NSLog( @"dealloc QueryController");
 	
@@ -4929,6 +5056,21 @@ extern "C"
 	[super dealloc];
 }
 
+- (void) screenParametersChanged:(NSNotification *)notification
+{
+    [HorosWindowSizeLimits applyMinimumSize: designedMinimumSize toWindow: [self window]];
+}
+
+- (IBAction) fullScreenMenu:(id) sender
+{
+    [HorosFullScreenWindowSupport toggleFullScreen: [self window]];
+}
+
+- (void) windowDidExitFullScreen:(NSNotification *)notification
+{
+    [HorosFullScreenWindowSupport applyLevel: [self window] keepOnTop: [[NSUserDefaults standardUserDefaults] boolForKey: @"KeepQRWindowOnTop"]];
+}
+
 - (void) windowDidBecomeKey:(NSNotification *)notification
 {
 	if( performingCFind)
@@ -4940,6 +5082,14 @@ extern "C"
 - (void)windowDidLoad
 {
     [super windowDidLoad];
+    
+    // The nib fixes a minimum designed for a large display. Kept as it is, a
+    // smaller or differently scaled screen cannot show the whole window: the
+    // height stops being adjustable and AppKit displaces the origin to preserve
+    // the requested size.
+    designedMinimumSize = [[self window] minSize];
+    [HorosWindowSizeLimits applyMinimumSize: designedMinimumSize toWindow: [self window]];
+    [[NSNotificationCenter defaultCenter] addObserver: self selector: @selector(screenParametersChanged:) name: NSApplicationDidChangeScreenParametersNotification object: nil];
     
 	id searchCell = [searchFieldName cell];
 

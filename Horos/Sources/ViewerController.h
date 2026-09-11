@@ -43,6 +43,7 @@
 #import "DCMView.h" // added for ToolMode enum
 
 @class DCMView;
+@class HorosMPROpenDecision;
 @class OpacityTransferView;
 @class ColorTransferView;
 @class MyPoint;
@@ -656,6 +657,7 @@ enum
 - (void) setROIToolTag:(ToolMode) roitype;
 - (void) changeImageData:(NSMutableArray*)f :(NSMutableArray*)d :(NSData*) v :(BOOL) applyTransition;
 - (ViewerController*) copyViewerWindow;
+- (IBAction) exportCroppedSeries: (id) sender;
 - (void) copyVolumeData: (NSData**) vD andDCMPix: (NSMutableArray **) newPixList forMovieIndex: (int) v;
 - (IBAction) loadSerie:(id) sender;
 - (IBAction) loadPatient:(id) sender;
@@ -737,6 +739,9 @@ enum
 - (IBAction) MoviePlayStop:(id) sender;
 - (void) MovieStop:(id) sender;
 - (BOOL)isPlaying4D;
+- (NSString *)fourDReconstructionRefusalReason;
+- (NSString *)fourDFusionRefusalReason;
+- (BOOL) refuseFourDFusionWithTitle: (NSString *) title;
 - (void) checkEverythingLoaded;
 - (BOOL) isEverythingLoaded;
 + (BOOL) areLoadingViewers;
@@ -900,6 +905,10 @@ enum
 - (IBAction) roiDeleteGeneratedROIs:(id) sender;
 - (ROI*)selectedROI;
 - (NSMutableArray*) selectedROIs;
+- (IBAction) generateGeometryFromSelectedLine:(id) sender;
+- (IBAction) measureBetweenSelectedSlices:(id) sender;
+- (void) increaseFontSize:(id) sender;
+- (void) decreaseFontSize:(id) sender;
 - (ViewerController*) registeredViewer;
 - (void) setRegisteredViewer: (ViewerController*) viewer;
 - (void)setMode:(long)mode toROIGroupWithID:(NSTimeInterval)groupID;
@@ -1071,6 +1080,8 @@ enum
 /** Returns the MPRController for this ViewerController; creating one if necessary */
 
 - (MPRController *)openMPRViewer;
+/** The geometry every reconstruction door agrees about (#374, A205). */
+- (HorosMPROpenDecision*) reconstructionOpeningDecision;
 - (IBAction)mprViewer:(id)sender;
 
 /** Action to open the CPRViewer */

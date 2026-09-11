@@ -35,6 +35,7 @@
      PURPOSE.
  ============================================================================*/
 
+#import "Horos-Swift.h"
 #import "options.h"
 
 #import "N3Geometry.h"
@@ -134,15 +135,29 @@ extern int splitPosition[ 3];
 
 - (void)drawRect:(NSRect)r
 {
-    _processingRequest = YES;
-	[self _sendNewRequestIfNeeded];
-    _processingRequest = NO;
-    [super drawRect:r];
+	NSString *name = [NSString stringWithFormat:@"transverse-%ld", (long)self.sectionType];
+	HorosCPRRenderDecision *decision = [HorosCPRRenderLifecycle beginDrawNamed:name];
+	if( decision.accepted == NO)
+	{
+		NSLog(@"CPR draw skipped: %@", decision.diagnosis);
+		return;
+	}
+	_processingRequest = YES;
+	@try
+	{
+		[self _sendNewRequestIfNeeded];
+		[super drawRect:r];
+	}
+	@finally
+	{
+		_processingRequest = NO;
+		[HorosCPRRenderLifecycle endDrawNamed:name];
+	}
 }
 
 - (void)setNeedsDisplay:(BOOL)flag
 {
-    if (_processingRequest == NO) {
+    if ([HorosCPRRenderLifecycle shouldDisplaySynchronouslyWhileDrawing:_processingRequest]) {
         [super setNeedsDisplay:flag];
     }
 }

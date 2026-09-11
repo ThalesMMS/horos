@@ -106,7 +106,7 @@
 -(NSComparisonResult)compare:(DataNodeIdentifier*)dni {
 	NSInteger selfSortValue = [self sortValue], dniSortValue = [dni sortValue];
     if (selfSortValue != dniSortValue)
-        return selfSortValue > dniSortValue;
+        return selfSortValue < dniSortValue ? NSOrderedAscending : NSOrderedDescending;
     return [self.description caseInsensitiveCompare:dni.description];
 }
 
@@ -169,7 +169,11 @@
 -(BOOL)isEqualToDataNodeIdentifier:(DataNodeIdentifier*)dni {
     if (![dni isKindOfClass:[LocalDatabaseNodeIdentifier class]])
         return NO;
-    if ([[DicomDatabase baseDirPathForPath:self.location] isEqualToString:[DicomDatabase baseDirPathForPath:dni.location]])
+    // Databases resolve their paths on open (e.g. /var -> /private/var).
+    // Compare the same canonical form so mounted caches keep their source identity.
+    NSString *left = [[[DicomDatabase baseDirPathForPath:self.location] stringByResolvingSymlinksInPath] precomposedStringWithCanonicalMapping];
+    NSString *right = [[[DicomDatabase baseDirPathForPath:dni.location] stringByResolvingSymlinksInPath] precomposedStringWithCanonicalMapping];
+    if (left && right && [left isEqualToString:right])
         return YES;
     return [super isEqualToDataNodeIdentifier:dni];
 }

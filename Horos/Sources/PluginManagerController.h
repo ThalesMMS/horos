@@ -77,6 +77,7 @@
     IBOutlet NSBox *NOTvalidatedInHorosBox;
     IBOutlet NSTextField *protectedModeLabel;
     
+    NSError *osirixCatalogError, *horosCatalogError;
     NSMutableDictionary *downloadingPlugins;
 }
 

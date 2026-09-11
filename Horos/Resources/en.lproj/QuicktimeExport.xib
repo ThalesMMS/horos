@@ -85,6 +85,7 @@
                 </popUpButton>
             </subviews>
             <constraints>
+                <constraint firstItem="6" firstAttribute="top" secondItem="5" secondAttribute="top" constant="6" id="movie-format-top"/>
                 <constraint firstAttribute="bottom" secondItem="15" secondAttribute="bottom" constant="6" id="7wd-tx-fcs"/>
                 <constraint firstAttribute="trailing" secondItem="16" secondAttribute="trailing" constant="20" id="EIk-Yp-qoO"/>
                 <constraint firstAttribute="bottom" secondItem="14" secondAttribute="bottom" constant="10" id="Hcv-kE-Stv"/>

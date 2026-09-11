@@ -66,7 +66,11 @@ static NSString *DCM_Verification = @"1.2.840.10008.1.1";
 	/***/
 	static NSString *EnhancedCTImageStorage = @"1.2.840.10008.5.1.4.1.1.2.1";
 	/***/
+	static NSString *LegacyConvertedEnhancedCTImageStorage = @"1.2.840.10008.5.1.4.1.1.2.2";
+	/***/
 	static NSString *EnhancedPETImageStorage = @"1.2.840.10008.5.1.4.1.1.130";
+	/***/
+	static NSString *LegacyConvertedEnhancedPETImageStorage = @"1.2.840.10008.5.1.4.1.1.128.1";
 	/***/
 	static NSString *UltrasoundMultiframeImageStorageRetired = @"1.2.840.10008.5.1.4.1.1.3";
 	/***/
@@ -75,6 +79,8 @@ static NSString *DCM_Verification = @"1.2.840.10008.1.1";
 	static NSString *MRImageStorage = @"1.2.840.10008.5.1.4.1.1.4";
 	/***/
 	static NSString *EnhancedMRImageStorage = @"1.2.840.10008.5.1.4.1.1.4.1";
+	/***/
+	static NSString *LegacyConvertedEnhancedMRImageStorage = @"1.2.840.10008.5.1.4.1.1.4.4";
 	/***/
 	static NSString *NuclearMedicineImageStorageRetired = @"1.2.840.10008.5.1.4.1.1.5";
 	/***/
@@ -264,6 +270,11 @@ static NSString *DCM_Verification = @"1.2.840.10008.1.1";
 	
 	//Printing
 	static NSString *BasicGrayscalePrintManagementMetaSOPClassUID = @"1.2.840.10008.5.1.1.9";
+	// Retired, still produced by printers and modality workstations. These are
+	// picture classes: an instance carries Rows, Columns and Pixel Data like any
+	// other image, and one that does not says so for itself.
+	static NSString *HardcopyGrayscaleImageStorage = @"1.2.840.10008.5.1.1.29";
+	static NSString *HardcopyColorImageStorage = @"1.2.840.10008.5.1.1.30";
 	static NSString *BasicColorPrintManagementMetaSOPClassUID = @".2.840.10008.5.1.1.18";
 	
 	//some misc UIDs that I'm not using yet
@@ -515,6 +526,11 @@ static NSString *DCM_Verification = @"1.2.840.10008.1.1";
     return [sopClassUID isEqualToString:[DCMAbstractSyntaxUID enhancedMRImageStorage]]
         || [sopClassUID isEqualToString:UltrasoundMultiframeImageStorage]
         || [sopClassUID isEqualToString:EnhancedCTImageStorage]
+        // Legacy Converted Enhanced holds the same enhanced multi-frame IOD; it
+        // says only that the frames were gathered from single frame originals.
+        || [sopClassUID isEqualToString:LegacyConvertedEnhancedCTImageStorage]
+        || [sopClassUID isEqualToString:LegacyConvertedEnhancedMRImageStorage]
+        || [sopClassUID isEqualToString:LegacyConvertedEnhancedPETImageStorage]
         || [sopClassUID isEqualToString:MultiframeSingleBitSecondaryCaptureImageStorage]
         || [sopClassUID isEqualToString:MultiframeGrayscaleByteSecondaryCaptureImageStorage]
         || [sopClassUID isEqualToString:MultiframeGrayscaleWordSecondaryCaptureImageStorage]
@@ -577,11 +593,14 @@ static NSString *DCM_Verification = @"1.2.840.10008.1.1";
 		    DigitalIntraoralXRayImageStorageForProcessing ,
 		    CTImageStorage ,
 		    EnhancedCTImageStorage ,
+		    LegacyConvertedEnhancedCTImageStorage ,
 			EnhancedPETImageStorage,
+		    LegacyConvertedEnhancedPETImageStorage ,
 		    UltrasoundMultiframeImageStorageRetired ,
 		    UltrasoundMultiframeImageStorage ,
 		    MRImageStorage ,
 		    EnhancedMRImageStorage ,
+		    LegacyConvertedEnhancedMRImageStorage ,
 		    NuclearMedicineImageStorageRetired ,
 		    UltrasoundImageStorageRetired ,
             EnhancedUSVolumeStorage,
@@ -597,6 +616,8 @@ static NSString *DCM_Verification = @"1.2.840.10008.1.1";
 		    NuclearMedicineImageStorage ,
 		    VisibleLightDraftImageStorage ,
 			VideoEndoscopicImageStorage,
+			VideoMicroscopicImageStorage,
+			VideoPhotographicImageStorage,
 		    VisibleLightMultiFrameDraftImageStorage ,
 		    VisibleLightEndoscopicImageStorage ,
 		    VisibleLightMicroscopicImageStorage ,
@@ -622,6 +643,8 @@ static NSString *DCM_Verification = @"1.2.840.10008.1.1";
             PhilipsMRSyntheticImageStorage,
             PhilipsPerfusionImageStorage,
             BreastTomosynthesisImageStorage,
+            HardcopyGrayscaleImageStorage,
+            HardcopyColorImageStorage,
 			nil];
 		
 		@try 

@@ -40,10 +40,11 @@
 
 #undef verify
 
-#include "osconfig.h" 
-#include "ofstdinc.h"
-#include "dviface.h"
-#include "dvpssp.h"
+#include "HorosDCMTKCompatibility.h"
+#include <dcmtk/config/osconfig.h>
+#include <dcmtk/ofstd/ofstdinc.h>
+#include <dcmtk/dcmpstat/dviface.h>
+#include <dcmtk/dcmpstat/dvpssp.h>
 
 /** \brief DCMTK based PrintSCU Not in use */
 @interface DCMTKPrintSCU : DCMTKServiceClassUser {

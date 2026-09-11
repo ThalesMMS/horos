@@ -191,6 +191,13 @@ typedef enum AsyncSocketError AsyncSocketError;
 {
 	CFSocketNativeHandle theNativeSocket4;
 	CFSocketNativeHandle theNativeSocket6;
+	// CFStream takes over an accepted descriptor only once its read stream has
+	// been opened. Until then the descriptor is ours to close, and nothing else
+	// will: a connection reset between accepting and opening left it behind.
+	BOOL theNativeSocketIsOurs;
+	// CFReadStreamOpen on a reset connection opens a second descriptor that
+	// Close/Release do not free. Remember it only when open fails.
+	CFSocketNativeHandle theCFStreamCopiedNative;
 	
 	CFSocketRef theSocket4;            // IPv4 accept or connect socket
 	CFSocketRef theSocket6;            // IPv6 accept or connect socket
@@ -220,6 +227,9 @@ typedef enum AsyncSocketError AsyncSocketError;
 	
 	long theUserData;
 }
+
+// errno of the last failed accept/bind, or 0 after a successful listen.
++ (int)lastBindErrno;
 
 - (id)init;
 - (id)initWithDelegate:(id)delegate;

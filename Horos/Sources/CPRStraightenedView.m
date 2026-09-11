@@ -35,6 +35,7 @@
      PURPOSE.
  ============================================================================*/
 
+#import "Horos-Swift.h"
 #import "options.h"
 
 #import "CPRStraightenedView.h"
@@ -101,6 +102,7 @@ extern int splitPosition[ 3];
 
 @property (nonatomic, readwrite, retain) CPRVolumeData *curvedVolumeData; // the volume data that was generated
 @property (nonatomic, readwrite, retain) CPRStraightenedGeneratorRequest *lastRequest;
+@property (nonatomic, retain) HorosCPRStraightenedSession *straightenedSession;
 @property (nonatomic, readwrite, assign) BOOL drawAllNodes;
 @property (nonatomic, readwrite, retain) NSMutableDictionary *mousePlanePointsInPix;
 
@@ -150,6 +152,7 @@ extern int splitPosition[ 3];
 @synthesize curvedVolumeData = _curvedVolumeData;
 @synthesize clippingRangeMode = _clippingRangeMode;
 @synthesize lastRequest = _lastRequest;
+@synthesize straightenedSession = _straightenedSession;
 @synthesize drawAllNodes = _drawAllNodes;
 @dynamic orangePlane;
 @dynamic purplePlane;
@@ -249,6 +252,8 @@ extern int splitPosition[ 3];
     _displayInfo = nil;
     [_lastRequest release];
     _lastRequest = nil;
+    [_straightenedSession release];
+    _straightenedSession = nil;
     [_planes release];
     _planes = nil;
     [_slabThicknesses release];
@@ -402,19 +407,36 @@ extern int splitPosition[ 3];
 {
 	if( rect.size.width > 10)
 	{
+		HorosCPRRenderDecision *decision = [HorosCPRRenderLifecycle beginDrawNamed:@"straightened"];
+		if( decision.accepted == NO)
+		{
+			NSLog(@"CPR draw skipped: %@", decision.diagnosis);
+			return;
+		}
 		_processingRequest = YES;
-		[self _sendNewRequestIfNeeded];
-		
-		[self _adjustROIs];
-		_processingRequest = NO;   
-		
-		[super drawRect: rect];
+		@try
+		{
+			if( self.curDCM)
+			{
+				NSString *geo = [HorosCPRRenderLifecycle diagnoseSpacingX:self.curDCM.pixelSpacingX spacingY:self.curDCM.pixelSpacingY];
+				if( [geo isEqualToString:@"ready"] == NO)
+					NSLog(@"CPR invalid geometry: %@", geo);
+			}
+			[self _sendNewRequestIfNeeded];
+			[self _adjustROIs];
+			[super drawRect: rect];
+		}
+		@finally
+		{
+			_processingRequest = NO;
+			[HorosCPRRenderLifecycle endDrawNamed:@"straightened"];
+		}
 	}
 }
 
 - (void)setNeedsDisplay:(BOOL)flag
 {
-    if (_processingRequest == NO) {
+    if ([HorosCPRRenderLifecycle shouldDisplaySynchronouslyWhileDrawing:_processingRequest]) {
         [super setNeedsDisplay:flag];
     }
 }
@@ -1143,6 +1165,9 @@ extern int splitPosition[ 3];
 {
 	if( [self windowController] == nil)
 		return;
+	if (volume == nil)
+		return;
+	[self.straightenedSession completeGeneration];
 		
 //    static NSDate *lastDate = nil;
 //    if (lastDate == nil) {
@@ -1229,6 +1254,24 @@ extern int splitPosition[ 3];
 
 - (void)generator:(CPRGenerator *)generator didAbandonRequest:(CPRGeneratorRequest *)request
 {
+}
+
+- (BOOL)cancelStraightenedGeneration
+{
+	if (self.straightenedSession == nil)
+		return NO;
+	HorosCPRStraightenedDecision *decision = [self.straightenedSession cancel];
+	if (decision.accepted == NO)
+		return NO;
+	[_generator cancelOutstandingRequests];
+	return YES;
+}
+
+- (HorosCPRStraightenedSession *)horosStraightenedSession
+{
+	if (self.straightenedSession == nil)
+		self.straightenedSession = [[[HorosCPRStraightenedSession alloc] init] autorelease];
+	return self.straightenedSession;
 }
 
 - (void)waitUntilPixUpdate
@@ -1329,16 +1372,25 @@ extern int splitPosition[ 3];
 //        request.vertical = NO;
         
         if ([_lastRequest isEqual:request] == NO) {
-			if (request.slabWidth < 2) {
-				CPRVolumeData *curvedVolume;
-				curvedVolume = [CPRGenerator synchronousRequestVolume:request volumeData:_generator.volumeData];
-				
-				[_generator runUntilAllRequestsAreFinished];
-				[self generator:nil didGenerateVolume:curvedVolume request:request];
-			} else {
-				[_generator requestVolume:request];
-			}
-			self.lastRequest = request;
+            NSMutableArray *packed = [NSMutableArray array];
+            for (NSValue *value in _curvedPath.nodes) {
+                N3Vector node = [value N3VectorValue];
+                [packed addObject:@(node.x)];
+                [packed addObject:@(node.y)];
+                [packed addObject:@(node.z)];
+            }
+            HorosCPRStraightenedSession *session = [self horosStraightenedSession];
+            [session replacePackedNodes:packed];
+            HorosCPRStraightenedDecision *decision = [session beginGenerationWithPixelsWide:(NSInteger)request.pixelsWide];
+            if (decision.accepted == NO) {
+                NSLog(@"CPR straightened: %@", decision.diagnosis);
+                self.lastRequest = request;
+                [request release];
+                _needsNewRequest = NO;
+                return;
+            }
+            [_generator requestVolume:request];
+            self.lastRequest = request;
         }
         
         [request release];

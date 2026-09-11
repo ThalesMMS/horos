@@ -45,6 +45,8 @@
 #import "AppController.h"
 #import "DicomStudy.h"
 #import "DicomSeries.h"
+#import "DicomDatabase.h"
+#import "Horos-Swift.h"
 #import "BrowserController.h"
 #import "DCMAbstractSyntaxUID.h"
 #import "NSManagedObject+N2.h"
@@ -617,6 +619,19 @@ static NSString *WebPortalResponseLock = @"WebPortalResponseLock";
 	}
     if ([key isEqualToString:@"proposeDelete"])
 		return [NSNumber numberWithBool: ([[NSUserDefaults standardUserDefaults] boolForKey:@"webPortalAdminCanDeleteStudies"] && wpc.user.isAdmin.boolValue)];
+    if ([key isEqualToString:@"federatedSources"])
+        return [BrowserController federatedSourceCatalog];
+    if ([key isEqualToString:@"federatedPermission"])
+        return [HorosFederatedSearch permissionLabelForPredicate:wpc.user.studyPredicate];
+    if ([key isEqualToString:@"hasFederatedSources"])
+    {
+        for (NSDictionary *source in [BrowserController federatedSourceCatalog])
+        {
+            if ([[source objectForKey:@"included"] boolValue])
+                return @YES;
+        }
+        return @NO;
+    }
     
 	if ([key isEqualToString:@"proposeShare"])
     {
@@ -832,6 +847,18 @@ static NSMutableDictionary *otherStudiesForThisPatientCache = nil;
 
 -(id)valueForKey:(NSString*)key object:(DicomStudy*)study context:(WebPortalConnection*)wpc
 {
+    if ([key isEqualToString:@"XID"] || [key isEqualToString:@"federatedOrigin"] || [key isEqualToString:@"permissionLabel"])
+    {
+        DicomDatabase *studyDB = [DicomDatabase databaseForContext:study.managedObjectContext];
+        DicomDatabase *portalDB = wpc.independentDicomDatabase;
+        NSString *origin = [HorosFederatedSearch displayOriginWithName:studyDB.name path:studyDB.baseDirPath];
+        if ([key isEqualToString:@"federatedOrigin"])
+            return origin;
+        if ([key isEqualToString:@"permissionLabel"])
+            return [HorosFederatedSearch permissionLabelForPredicate:wpc.user.studyPredicate];
+        if (studyDB && portalDB && [HorosFederatedSearch pathsEqual:studyDB.baseDirPath other:portalDB.baseDirPath] == NO)
+            return [HorosFederatedSearch federatedXIDWithStudyXID:study.XID originPath:studyDB.baseDirPath];
+    }
     if ([key isEqualToString:@"hasKeyImagesOrROIImages"])
 	{
         if( [[study keyImages] count])

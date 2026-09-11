@@ -36,6 +36,7 @@
  ============================================================================*/
 
 #import "PluginManagerController.h"
+#import "HorosPluginCatalogTransport.h"
 //#import <Message/NSMailDelivery.h>
 #import "WaitRendering.h"
 #import "Notifications.h"
@@ -158,6 +159,8 @@ static NSDate *CachedHorosPluginsListDate = nil;
     [osirixPluginDownloadURL release];
     [horosPluginDownloadURL release];
     
+    [osirixCatalogError release];
+    [horosCatalogError release];
     [downloadingPlugins release];
 	
 	[super dealloc];
@@ -297,6 +300,8 @@ static NSDate *CachedHorosPluginsListDate = nil;
                 [protectedModeLabel setHidden:YES];
             
             
+            [self configureCatalogStatusFields];
+            [self configurePluginLoadDetails];
             [osirixPluginWebView setPolicyDelegate:self];
             [horosPluginWebView setPolicyDelegate:self];
             
@@ -318,14 +323,15 @@ static NSDate *CachedHorosPluginsListDate = nil;
             
             ////////////////////////////////////////////////////////////////////////////////////////
             
-            if ([[self availableOsiriXPlugins] count]<1)
+            NSArray *availableOsiriXCatalog = [self availableOsiriXPlugins];
+            if (availableOsiriXCatalog.count < 1)
             {
                 [osirixPluginListPopUp removeAllItems];
                 [osirixPluginListPopUp setEnabled:NO];
                 [osirixPluginDownloadButton setEnabled:NO];
                 
                 [osirixPluginStatusTextField setHidden:NO];
-                [osirixPluginStatusTextField setStringValue:NSLocalizedString(@"No OsiriX plugin server available.", nil)];
+                [osirixPluginStatusTextField setStringValue:availableOsiriXCatalog ? NSLocalizedString(@"The plugin catalog is empty.", nil) : (osirixCatalogError.localizedDescription ?: NSLocalizedString(@"No OsiriX plugin server available.", nil))];
             }
             else
             {
@@ -340,14 +346,15 @@ static NSDate *CachedHorosPluginsListDate = nil;
             
             ////////////////////////////////////////////////////////////////////////////////////////
             
-            if ([[self availableHorosPlugins] count]<1)
+            NSArray *availableHorosCatalog = [self availableHorosPlugins];
+            if (availableHorosCatalog.count < 1)
             {
                 [horosPluginListPopUp removeAllItems];
                 [horosPluginListPopUp setEnabled:NO];
                 [horosPluginDownloadButton setEnabled:NO];
                 
                 [horosPluginStatusTextField setHidden:NO];
-                [horosPluginStatusTextField setStringValue:NSLocalizedString(@"No Horos plugin server available.", nil)];
+                [horosPluginStatusTextField setStringValue:availableHorosCatalog ? NSLocalizedString(@"The plugin catalog is empty.", nil) : (horosCatalogError.localizedDescription ?: NSLocalizedString(@"No Horos plugin server available.", nil))];
             }
             else
             {
@@ -395,9 +402,59 @@ static NSDate *CachedHorosPluginsListDate = nil;
 }
 
 
+- (void)configurePluginLoadDetails
+{
+    NSView *view = installedPluginsTabViewItem.view;
+    if (!view || [view viewWithTag:16601]) return;
+    NSButton *button = [NSButton buttonWithTitle:NSLocalizedString(@"Loading Details...", nil) target:self action:@selector(showPluginLoadDetails:)];
+    button.frame = NSMakeRect(430, 10, 180, 32);
+    button.autoresizingMask = NSViewMinXMargin | NSViewMaxYMargin;
+    button.tag = 16601;
+    [view addSubview:button];
+}
+
+- (void)showPluginLoadDetails:(id)sender
+{
+    NSArray *rows = [pluginsArrayController arrangedObjects];
+    NSInteger row = pluginTable.selectedRow;
+    NSAlert *alert = [[[NSAlert alloc] init] autorelease];
+    if (row < 0 || row >= (NSInteger)rows.count) {
+        alert.messageText = NSLocalizedString(@"Select a plugin first", nil);
+    } else {
+        NSDictionary *plugin = rows[row];
+        alert.messageText = [NSString stringWithFormat:@"%@: %@", plugin[@"name"], plugin[@"loadState"]];
+        alert.informativeText = plugin[@"loadReason"];
+    }
+    [alert addButtonWithTitle:NSLocalizedString(@"OK", nil)];
+    [alert beginSheetModalForWindow:self.window completionHandler:nil];
+}
+
+- (void)configureCatalogStatusFields
+{
+    NSTextField *fields[] = {osirixPluginStatusTextField, horosPluginStatusTextField};
+    NSButton *buttons[] = {osirixPluginDownloadButton, horosPluginDownloadButton};
+    for (NSUInteger index = 0; index < 2; index++) {
+        NSTextField *field = fields[index];
+        if (!field || !buttons[index]) continue;
+        NSRect frame = field.frame;
+        frame.origin.y = 8;
+        frame.size.height = 42;
+        frame.size.width = MAX(282, NSMinX([buttons[index] frame]) - NSMinX(frame) - 16);
+        field.frame = frame;
+        field.autoresizingMask = NSViewWidthSizable | NSViewMaxYMargin;
+        field.textColor = NSColor.labelColor;
+        field.maximumNumberOfLines = 3;
+        field.lineBreakMode = NSLineBreakByWordWrapping;
+        [field.cell setWraps:YES];
+        [field.cell setScrollable:NO];
+    }
+
+}
+
 - (void) awakeFromNib
 {
     [super awakeFromNib];
+
 }
 
 
@@ -440,7 +497,9 @@ NSInteger sortPluginArrayByName(id plugin1, id plugin2, void *context)
 
 - (NSArray*) availableOsiriXPlugins;
 {
-	NSString *pluginsListURL = @"";
+    // showWindow preloads on its worker; UI callbacks must never repeat network I/O.
+    if (NSThread.isMainThread) return CachedOsiriXPluginsList;
+
 	NSArray *pluginsList = nil;
 	
 	if (CachedOsiriXPluginsListDate == nil || [CachedOsiriXPluginsListDate timeIntervalSinceNow] < -10*60)
@@ -454,16 +513,23 @@ NSInteger sortPluginArrayByName(id plugin1, id plugin2, void *context)
     
     ////////////////////////////////////////////
 
-	for (int i=0; i < [osirixPluginListURLs count] && !pluginsList; i++)
-	{
-		pluginsListURL = [osirixPluginListURLs objectAtIndex:i];
-		pluginsList = [NSArray arrayWithContentsOfURL:[NSURL URLWithString:pluginsListURL]];
-	}
+	[osirixCatalogError release]; osirixCatalogError = nil;
+    NSMutableSet *attempted = [NSMutableSet set];
+    for (NSString *endpoint in osirixPluginListURLs) {
+        if ([attempted containsObject:endpoint]) continue;
+        [attempted addObject:endpoint];
+        NSError *failure = nil;
+        pluginsList = HorosLoadPluginCatalog([NSURL URLWithString:endpoint], 10, &failure);
+        [osirixCatalogError release]; osirixCatalogError = [failure retain];
+        if (pluginsList) break;
+    }
 	
     ////////////////////////////////////////////
     
-	if (!pluginsList)
+	if (!pluginsList) {
+        [CachedOsiriXPluginsList release]; CachedOsiriXPluginsList = nil;
         return nil;
+    }
 	
 	NSArray *sortedPlugins = [pluginsList sortedArrayUsingFunction:sortPluginArrayByName context:NULL];
 	
@@ -480,7 +546,9 @@ NSInteger sortPluginArrayByName(id plugin1, id plugin2, void *context)
 
 - (NSArray*) availableHorosPlugins;
 {
-    NSString *pluginsListURL = @"";
+    // showWindow preloads on its worker; UI callbacks must never repeat network I/O.
+    if (NSThread.isMainThread) return CachedHorosPluginsList;
+
     NSArray *pluginsList = nil;
     
     if (CachedHorosPluginsListDate == nil || [CachedHorosPluginsListDate timeIntervalSinceNow] < -10*60)
@@ -494,16 +562,23 @@ NSInteger sortPluginArrayByName(id plugin1, id plugin2, void *context)
     
     ////////////////////////////////////////////
     
-    for (int i=0; i < [horosPluginListURLs count] && !pluginsList; i++)
-    {
-        pluginsListURL = [horosPluginListURLs objectAtIndex:i];
-        pluginsList = [NSArray arrayWithContentsOfURL:[NSURL URLWithString:pluginsListURL]];
+    [horosCatalogError release]; horosCatalogError = nil;
+    NSMutableSet *attempted = [NSMutableSet set];
+    for (NSString *endpoint in horosPluginListURLs) {
+        if ([attempted containsObject:endpoint]) continue;
+        [attempted addObject:endpoint];
+        NSError *failure = nil;
+        pluginsList = HorosLoadPluginCatalog([NSURL URLWithString:endpoint], 10, &failure);
+        [horosCatalogError release]; horosCatalogError = [failure retain];
+        if (pluginsList) break;
     }
     
     ////////////////////////////////////////////
     
-    if (!pluginsList)
+    if (!pluginsList) {
+        [CachedHorosPluginsList release]; CachedHorosPluginsList = nil;
         return nil;
+    }
     
     NSArray *sortedPlugins = [pluginsList sortedArrayUsingFunction:sortPluginArrayByName context:NULL];
     
@@ -586,25 +661,11 @@ NSInteger sortPluginArrayByName(id plugin1, id plugin2, void *context)
 			BOOL sameVersion = NO;
 			for(NSDictionary *installedPlugin in plugins)
 			{	
-				NSString *name = [[[plugin valueForKey:@"download_url"] lastPathComponent] stringByReplacingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
-				name = [name stringByDeletingPathExtension]; // removes the .zip extension
-				name = [name stringByDeletingPathExtension]; // removes .osirixplugin extension
+				NSString *name = HorosPluginDownloadName(plugin);
 				
                 sameName = [name isEqualToString:[installedPlugin valueForKey:@"name"]];
                 
-                sameVersion = [[plugin valueForKey:@"version"] isEqualToString:[installedPlugin valueForKey:@"version"]];
-                
-                @try
-                {
-                    NSDecimalNumber* installedVersion = [NSDecimalNumber decimalNumberWithString:[installedPlugin valueForKey:@"version"] locale:nil];
-                    NSDecimalNumber* availableVersion = [NSDecimalNumber decimalNumberWithString:[plugin valueForKey:@"version"] locale:nil];
-                    
-                    sameVersion = ([installedVersion floatValue] >= [availableVersion floatValue]);
-                }
-                @catch(...)
-                {
-                   
-                }
+                sameVersion = HorosComparePluginVersions([installedPlugin objectForKey:@"version"], [plugin objectForKey:@"version"]) != NSOrderedAscending;
                 
 				alreadyInstalled = alreadyInstalled || sameName || (sameName && sameVersion);
 				
@@ -663,25 +724,11 @@ NSInteger sortPluginArrayByName(id plugin1, id plugin2, void *context)
             BOOL sameVersion = NO;
             for(NSDictionary *installedPlugin in plugins)
             {
-                NSString *name = [[[plugin valueForKey:@"download_url"] lastPathComponent] stringByReplacingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
-                name = [name stringByDeletingPathExtension]; // removes the .zip extension
-                name = [name stringByDeletingPathExtension]; // removes the .horosplugin
+                NSString *name = HorosPluginDownloadName(plugin);
                 
                 sameName = [name isEqualToString:[installedPlugin valueForKey:@"name"]];
                 
-                sameVersion = [[plugin valueForKey:@"version"] isEqualToString:[installedPlugin valueForKey:@"version"]];
-                
-                @try
-                {
-                    NSDecimalNumber* installedVersion = [NSDecimalNumber decimalNumberWithString:[installedPlugin valueForKey:@"version"] locale:nil];
-                    NSDecimalNumber* availableVersion = [NSDecimalNumber decimalNumberWithString:[plugin valueForKey:@"version"] locale:nil];
-                    
-                    sameVersion = ([installedVersion floatValue] >= [availableVersion floatValue]);
-                }
-                @catch(...)
-                {
-                    
-                }
+                sameVersion = HorosComparePluginVersions([installedPlugin objectForKey:@"version"], [plugin objectForKey:@"version"]) != NSOrderedAscending;
                 
                 alreadyInstalled = alreadyInstalled || sameName || (sameName && sameVersion);
                 

@@ -59,10 +59,16 @@
 #import "WADODownload.h"
 #import "NSManagedObject+N2.h"
 #import "Notifications.h"
-#import "dcdeftag.h"
+#import <dcmtk/dcmdata/dcdeftag.h>
 #import "WaitRendering.h"
+#import "Horos-Swift.h"
 
 @interface XMLRPCInterfaceConnection : N2XMLRPCConnection
+{
+    BOOL _listensBeyondLoopback;
+}
+
+@property BOOL listensBeyondLoopback;
 
 @end
 
@@ -71,12 +77,37 @@
 -(id)init {
 	if ((self = [super init])) {
         NSInteger port = [[NSUserDefaults standardUserDefaults] integerForKey:@"httpXMLRPCServerPort"];
-        _listener = [[N2ConnectionListener alloc] initWithPort:port connectionClass:[XMLRPCInterfaceConnection class]];
+
+        // This interface publishes KillOsiriX, Retrieve, DownloadURL and
+        // dbwindowfind, and dbwindowfind returns the database: patient names
+        // and identifiers included. It used to bind INADDR_ANY unconditionally
+        // and ask for no credential, so a preference turned on for a local
+        // script published all of that to the network. Leaving loopback is now
+        // an explicit choice, and it only takes effect once there is a password
+        // to check requests against.
+        BOOL allowRemote = [[NSUserDefaults standardUserDefaults] boolForKey:HorosXMLRPCServerAccess.allowRemoteKey];
+        BOOL hasCredential = HorosXMLRPCServerCredential.isConfigured;
+        _listensBeyondLoopback = [HorosXMLRPCServerAccess bindsBeyondLoopbackAllowRemote:allowRemote hasCredential:hasCredential];
+
+        _listener = [[N2ConnectionListener alloc] initWithPort:port loopbackOnly:!_listensBeyondLoopback connectionClass:[XMLRPCInterfaceConnection class]];
         _listener.threadPerConnection = YES;
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(connectionOpened:) name:N2ConnectionListenerOpenedConnectionNotification object:_listener];
         
         if( _listener)
-            NSLog( @"--- XML-RPC interface activated on port: %d", (int) port);
+        {
+            if( _listensBeyondLoopback)
+                NSLog( @"--- XML-RPC interface activated on port: %d, answering every interface, authenticated", (int) port);
+            else if( allowRemote)
+                NSLog( @"--- XML-RPC interface activated on port: %d, loopback only: remote access is enabled but no password could be read from the keychain", (int) port);
+            else
+                NSLog( @"--- XML-RPC interface activated on port: %d, loopback only", (int) port);
+        }
+        else
+        {
+            [[AppController sharedAppController] reportListenBindFailureForService:@"XML-RPC"
+                                                                              port:port
+                                                                         errnoCode:[N2ConnectionListener lastBindErrno]];
+        }
     }
 	
 	return self;
@@ -95,6 +126,7 @@
     {
         XMLRPCInterfaceConnection *xmlrpcConnection = (XMLRPCInterfaceConnection*) connection;
         xmlrpcConnection.dontSpecifyStringType = YES;
+        xmlrpcConnection.listensBeyondLoopback = _listensBeyondLoopback;
         [xmlrpcConnection setDelegate:self];
     }
 }
@@ -150,15 +182,7 @@
 }
 
 +(NSDictionary*)dictionaryForObject:(NSManagedObject*)obj {
-    NSMutableDictionary* d = [NSMutableDictionary dictionary];
-    
-    for (NSString* key in [obj.entity attributesByName]) {
-        NSObject* value = [obj valueForKey:key];
-        if ([value isKindOfClass:[NSString class]] || [value isKindOfClass:[NSNumber class]] || [value isKindOfClass:[NSDate class]])
-            [d setObject:[(NSString*)CFXMLCreateStringByEscapingEntities(NULL, (CFStringRef)value.description, NULL) autorelease] forKey:key];
-    }
-    
-    return d;
+    return [HorosXMLRPCOwnedThreadRead dictionaryForObject:obj];
 }
 
 -(DicomStudy*)studyForObject:(NSManagedObject*)obj {
@@ -657,23 +681,50 @@
     }
 }
 
+-(void)reportStudyNotOpened:(DicomStudy*) study {
+    // The browser logs the reason it refused, so only speak when it had none to
+    // give: every study matched carries no series of images, or none matched.
+    if( [BrowserController currentBrowser].lastStudyNotOpenedReason.length)
+        return;
+    
+    NSString *reason = study ? [HorosStudyNotOpenedReason reasonForNoImageSeries: study.studyInstanceUID]
+                             : [HorosStudyNotOpenedReason reasonForNoStudy];
+    NSLog( @"%@%@", [HorosStudyNotOpenedReason logPrefix], reason);
+}
+
 -(void)_onMainThreadOpenObjectsWithIDs:(NSArray*)objectIDs { // actually, only the first element is opened...
     if( [[NSUserDefaults standardUserDefaults] boolForKey: @"CloseAllWindowsBeforeXMLRPCOpen"])
         [ViewerController closeAllWindows];
     
+    [BrowserController currentBrowser].lastStudyNotOpenedReason = nil;
+    
+    BOOL opened = NO;
+    DicomStudy *lastStudy = nil;
     for (NSManagedObject* obj in [self.database objectsWithIDs: objectIDs]) {
         DicomStudy* study = [self studyForObject:obj];
+        if( study)
+            lastStudy = study;
         if ([study.imageSeries count]) {
-			[[BrowserController currentBrowser] displayStudy:study object:obj command:@"Open"];
-            break;
+            // The answer to the caller is sent before this runs, so a refusal
+            // here reached nobody: the order was answered with success and no
+            // viewer appeared. Try the next match, then say why none opened.
+			if( [[BrowserController currentBrowser] displayStudy:study object:obj command:@"Open"]) {
+                opened = YES;
+                break;
+            }
         }
     }
+    
+    if( opened == NO)
+        [self reportStudyNotOpened: lastStudy];
     
     if( [[NSUserDefaults standardUserDefaults] boolForKey: @"bringOsiriXToFrontAfterReceivingMessage"])
         [NSApp activateIgnoringOtherApps:YES];
 }
 
 -(void)_onMainThreadSelectObjectsWithIDs:(NSArray*)objectIDs { // actually, only the first element is opened...
+    
+    [BrowserController currentBrowser].lastStudyNotOpenedReason = nil;
     
     NSMutableArray *objectIDsMutable = [NSMutableArray arrayWithArray: objectIDs];
     
@@ -687,13 +738,22 @@
         }
     }
     
+    BOOL selected = objectIDsMutable.count != objectIDs.count; // one was already on screen
+    DicomStudy *lastStudy = nil;
     for (NSManagedObject* obj in [self.database objectsWithIDs: objectIDsMutable]) {
         DicomStudy* study = [self studyForObject:obj];
+        if( study)
+            lastStudy = study;
         if ([study.imageSeries count]) {
-			[[BrowserController currentBrowser] displayStudy:study object:obj command:@"Select"];
-            break;
+			if( [[BrowserController currentBrowser] displayStudy:study object:obj command:@"Select"]) {
+                selected = YES;
+                break;
+            }
         }
     }
+    
+    if( selected == NO)
+        [self reportStudyNotOpened: lastStudy];
     
     if( [[NSUserDefaults standardUserDefaults] boolForKey: @"bringOsiriXToFrontAfterReceivingMessage"])
         [NSApp activateIgnoringOtherApps:YES];
@@ -798,9 +858,12 @@
  Response: {error: "0", elements: array of series corresponding to displayed windows}
 */
 -(NSDictionary*)GetDisplayed2DViewerSeries:(NSDictionary*)paramDict error:(NSError**)error {
-    NSMutableArray* elements = [NSMutableArray array];
-    for (NSManagedObject* obj in [[ViewerController getDisplayed2DViewers] valueForKeyPath:@"imageView.seriesObj"])
-        [elements addObject:[[self class] dictionaryForObject:obj]];
+    NSArray* elements = [HorosXMLRPCOwnedThreadRead onMainAndWait:^id{
+        NSMutableArray* list = [NSMutableArray array];
+        for (NSManagedObject* obj in [[ViewerController getDisplayed2DViewers] valueForKeyPath:@"imageView.seriesObj"])
+            [list addObject:[HorosXMLRPCOwnedThreadRead dictionaryForObject:obj]];
+        return list;
+    }];
     
     ReturnWithErrorValueAndObjectForKey(0, elements, @"elements");
 }
@@ -813,9 +876,12 @@
  Response: {error: "0", elements: array of studies corresponding to displayed windows}
 */
 -(NSDictionary*)GetDisplayed2DViewerStudies:(NSDictionary*)paramDict error:(NSError**)error {
-    NSMutableArray* elements = [NSMutableArray array];
-    for (NSManagedObject* obj in [[ViewerController getDisplayed2DViewers] valueForKeyPath:@"imageView.seriesObj.study"])
-        [elements addObject:[[self class] dictionaryForObject:obj]];
+    NSArray* elements = [HorosXMLRPCOwnedThreadRead onMainAndWait:^id{
+        NSMutableArray* list = [NSMutableArray array];
+        for (NSManagedObject* obj in [[ViewerController getDisplayed2DViewers] valueForKeyPath:@"imageView.seriesObj.study"])
+            [list addObject:[HorosXMLRPCOwnedThreadRead dictionaryForObject:obj]];
+        return list;
+    }];
     
     ReturnWithErrorValueAndObjectForKey(0, elements, @"elements");
 }
@@ -836,9 +902,12 @@
     if (!uid.length)
         ReturnWithCode(400);
     
-    for (ViewerController* v in [ViewerController getDisplayed2DViewers])
-        if ([[v valueForKeyPath:@"imageView.seriesObj.seriesDICOMUID"] isEqualToString:uid])
-            [[v window] performSelectorOnMainThread:@selector(close) withObject:nil waitUntilDone:NO];
+    [HorosXMLRPCOwnedThreadRead onMainAndWait:^id{
+        for (ViewerController* v in [ViewerController getDisplayed2DViewers])
+            if ([[v valueForKeyPath:@"imageView.seriesObj.seriesDICOMUID"] isEqualToString:uid])
+                [[v window] close];
+        return [NSNull null];
+    }];
     
     ReturnWithErrorValue(0);
 }
@@ -859,9 +928,12 @@
     if (!uid.length)
         ReturnWithCode(400);
     
-    for (ViewerController* v in [ViewerController getDisplayed2DViewers])
-        if ([[v valueForKeyPath:@"imageView.seriesObj.study.studyInstanceUID"] isEqualToString:uid])
-            [[v window] performSelectorOnMainThread:@selector(close) withObject:nil waitUntilDone:NO];
+    [HorosXMLRPCOwnedThreadRead onMainAndWait:^id{
+        for (ViewerController* v in [ViewerController getDisplayed2DViewers])
+            if ([[v valueForKeyPath:@"imageView.seriesObj.study.studyInstanceUID"] isEqualToString:uid])
+                [[v window] close];
+        return [NSNull null];
+    }];
     
     ReturnWithErrorValue(0);
 }
@@ -1107,12 +1179,48 @@
 -(id)methodCall:(NSString*)methodName parameters:(NSDictionary*)parameters error:(NSError**)error {
     XMLRPCInterfaceConnection* conn = [[[XMLRPCInterfaceConnection alloc] init] autorelease];
     conn.delegate = self;
+    // The AppleScript bridge passes no parameters when the script supplies none,
+    // and +arrayWithObject: raises on nil.
+    if (!parameters)
+        parameters = [NSDictionary dictionary];
     return [conn methodCall:methodName params:[NSArray arrayWithObject:parameters] error:error];
 }
 
 @end
 
 @implementation XMLRPCInterfaceConnection
+
+@synthesize listensBeyondLoopback = _listensBeyondLoopback;
+
+// Runs on the connection thread, with the request headers complete and the body
+// not yet read, so a refused request never reaches the XML parser or a method.
+-(BOOL)shouldHandleRequest:(CFHTTPMessageRef)request version:(NSString*)version {
+    NSString* authorization = [(NSString*)CFHTTPMessageCopyHeaderFieldValue(request, (CFStringRef)@"Authorization") autorelease];
+    NSString* credential = _listensBeyondLoopback? HorosXMLRPCServerCredential.header : nil;
+
+    switch ([HorosXMLRPCServerAccess decisionForPeerAddress:self.address
+                                             authorization:authorization
+                                                credential:credential
+                                     listensBeyondLoopback:_listensBeyondLoopback])
+    {
+        case HorosXMLRPCAccessDecisionAllow:
+            return YES;
+
+        case HorosXMLRPCAccessDecisionChallenge:
+            NSLog( @"--- XML-RPC request from %@ refused: %@", self.address, authorization.length? @"wrong credential" : @"no credential");
+            [self writeStatus:401
+                      headers:[NSDictionary dictionaryWithObject:HorosXMLRPCServerAccess.challengeHeaderValue forKey:@"WWW-Authenticate"]
+                      version:version];
+            return NO;
+
+        case HorosXMLRPCAccessDecisionRefuse:
+            NSLog( @"--- XML-RPC request from %@ refused: the interface answers loopback only", self.address);
+            [self writeStatus:403 headers:nil version:version];
+            return NO;
+    }
+
+    return NO;
+}
 
 -(id)methodCall:(NSString*)methodName params:(NSArray*)params error:(NSError**)error {
     NSXMLDocument* doc = _doc? _doc : [[[NSXMLDocument alloc] initWithXMLString:[N2XMLRPC requestWithMethodName:methodName arguments:params] options:0 error:NULL] autorelease];

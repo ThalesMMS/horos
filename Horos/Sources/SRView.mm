@@ -3,7 +3,7 @@
  
  Horos is free software: you can redistribute it and/or modify
  it under the terms of the GNU Lesser General Public License as published by
- the Free Software Foundation,  version 3 of the License.
+ the Free Software Foundation, ùversion 3 of the License.
  
  The Horos Project was based originally upon the OsiriX Project which at the time of
  the code fork was licensed as a LGPL project.  However, not all of the the source-code
@@ -15,26 +15,27 @@
  
  Horos is distributed in the hope that it will be useful, but
  WITHOUT ANY WARRANTY EXPRESS OR IMPLIED, INCLUDING ANY WARRANTY OF
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE OR USE.  See the
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE OR USE. ùSee the
  GNU Lesser General Public License for more details.
  
  You should have received a copy of the GNU Lesser General Public License
- along with Horos.  If not, see http://www.gnu.org/licenses/lgpl.html
+ along with Horos. ùIf not, see http://www.gnu.org/licenses/lgpl.html
  
  Prior versions of this file were published by the OsiriX team pursuant to
  the below notice and licensing protocol.
  ============================================================================
- Program:   OsiriX
-  Copyright (c) OsiriX Team
-  All rights reserved.
-  Distributed under GNU - LGPL
-  
-  See http://www.osirix-viewer.com/copyright.html for details.
-     This software is distributed WITHOUT ANY WARRANTY; without even
-     the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
-     PURPOSE.
+ Program: ù OsiriX
+ ùCopyright (c) OsiriX Team
+ ùAll rights reserved.
+ ùDistributed under GNU - LGPL
+ ù
+ ùSee http://www.osirix-viewer.com/copyright.html for details.
+ ù ù This software is distributed WITHOUT ANY WARRANTY; without even
+ ù ù the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+ ù ù PURPOSE.
  ============================================================================*/
 
+#import "Horos-Swift.h"
 #import "options.h"
 #if !__LP64__ && !__arm64__
 #define USE3DCONNEXION 1
@@ -43,6 +44,7 @@
 #endif
 
 #import "SRView.h"
+#include "VRFramebufferCapture.h"
 #import "SRController.h"
 #import "DCMPix.h"
 #import "DCMView.h"
@@ -65,12 +67,14 @@
 #include <vtkIVExporter.h>
 #include <vtkOBJExporter.h>
 #include <vtkSTLWriter.h>
+#include "SRSurfaceExport.h"
 #include <vtkVRMLExporter.h>
 #include <vtkInteractorStyleFlight.h>
 
 #include <vtkAbstractPropPicker.h>
 #include <vtkInteractorStyle.h>
 #include <vtkWorldPointPicker.h>
+#include <vtkCellPicker.h>
 
 #include <vtkSphereSource.h>
 #include <vtkAssemblyPath.h>
@@ -457,12 +461,9 @@ typedef struct _xyzArray
 			{
 				vtkSTLWriter  *exporter = vtkSTLWriter::New();
 				
-				if (isoMapper[0] != nil)
-					exporter->SetInputData(isoMapper[0]->GetInput());
-				else if (isoMapper[1] != nil)
-					exporter->SetInputData(isoMapper[1]->GetInput());
-				else
-					exporter->SetInputData( nil);
+                vtkActor *surfaces[] = {iso[0], iso[1], Biso[0], Biso[1]};
+                auto geometry = HorosSurfaceExportGeometry(surfaces, 4);
+                exporter->SetInputData(geometry);
                 
 				exporter->SetFileName( [panel.URL.path UTF8String]);
 				exporter->Write();
@@ -1288,15 +1289,11 @@ typedef struct _xyzArray
 	{
 		if( [theEvent clickCount] > 1 && (tool != t3Dpoint))
 		{
-			
-			vtkWorldPointPicker *picker = vtkWorldPointPicker::New();
-			
-			picker->Pick(mouseLocStart.x, mouseLocStart.y, 0.0, aRenderer);
-			
+			NSPoint pickLoc = [HorosVRInteractionGeometry backingPoint: [theEvent locationInWindow] inView: self];
 			double wXYZ[3];
-			picker->GetPickPosition(wXYZ);
-			picker->Delete();
-			
+			if (![self pickSurfaceAtDisplayX: pickLoc.x y: pickLoc.y world: wXYZ])
+				return;
+
 			double dc[3], sc[3];
 			dc[0] = wXYZ[0];
 			dc[1] = wXYZ[1];
@@ -1565,8 +1562,8 @@ typedef struct _xyzArray
 			
 			if (![self isAny3DPointSelected])
 			{
-				// add a point on the surface under the mouse click
-				[self throw3DPointOnSurface: mouseLocStart.x : mouseLocStart.y];
+				NSPoint pickLoc = [HorosVRInteractionGeometry backingPoint: [theEvent locationInWindow] inView: self];
+				[self throw3DPointOnSurface: pickLoc.x : pickLoc.y];
 				[self setNeedsDisplay:YES];
 			}
 			else
@@ -1882,8 +1879,7 @@ typedef struct _xyzArray
 	{
 		NSLog( @"Exception during drawRect... not enough memory?");
 		
-		if( NSRunAlertPanel( NSLocalizedString(@"32-bit",nil), NSLocalizedString( @"Cannot use the 3D engine.\r\rUpgrade to OsiriX 64-bit or OsiriX MD to solve this issue.",nil), NSLocalizedString(@"OK", nil), NSLocalizedString(@"OsiriX 64-bit", nil), nil) == NSAlertAlternateReturn)
-			[[AppController sharedAppController] osirix64bit: self];
+		NSRunAlertPanel( NSLocalizedString( @"Not enough memory", nil), NSLocalizedString( @"Cannot use the 3D engine.\r\rClose other studies or open a smaller series. Nothing was reduced silently.", nil), NSLocalizedString( @"OK", nil), nil, nil);
 		
 		[[self window] performSelector:@selector(performClose:) withObject:self afterDelay: 1.0];
 	}
@@ -2079,8 +2075,7 @@ typedef struct _xyzArray
 	}
 	catch (...)
 	{
-		if( NSRunAlertPanel( NSLocalizedString(@"32-bit",nil), NSLocalizedString( @"Cannot use the 3D engine.\r\rUpgrade to OsiriX 64-bit or OsiriX MD to solve this issue.",nil), NSLocalizedString(@"OK", nil), NSLocalizedString(@"OsiriX 64-bit", nil), nil) == NSAlertAlternateReturn)
-			[[AppController sharedAppController] osirix64bit: self];
+		NSRunAlertPanel( NSLocalizedString( @"Not enough memory", nil), NSLocalizedString( @"Cannot use the 3D engine.\r\rClose other studies or open a smaller series. Nothing was reduced silently.", nil), NSLocalizedString( @"OK", nil), nil, nil);
 	}
 }
 
@@ -2579,62 +2574,22 @@ typedef struct _xyzArray
 -(unsigned char*) getRawPixels:(long*) width :(long*) height :(long*) spp :(long*) bpp :(BOOL) screenCapture :(BOOL) force8bits
 {
 	unsigned char	*buf = nil;
-	long			i;
 	
 //	if( screenCapture)	// Pixels displayed in current window -> only RGB 8 bits data
 	{
-		NSRect size = [self bounds];
-		
-		*width = (long) size.size.width;
-		*width/=4;
-		*width*=4;
-		*height = (long) size.size.height;
+		// The drawable is measured in pixels, not points. Reading [self bounds]
+		// and handing those numbers to glReadPixels captured the lower left
+		// quarter of a Retina window and declared it the whole image, so the
+		// export came out cropped and moved into the corner. The VTK window
+		// knows the size of its drawable, and the shared readback returns
+		// tightly packed, top-down RGB - which is what the row flip that used
+		// to be here produced.
 		*spp = 3;
 		*bpp = 8;
 		
-		buf = (unsigned char*) malloc( *width * *height * 4 * *bpp/8);
-		if( buf)
-		{
-			[self getVTKRenderWindow]->MakeCurrent();
-//			[[NSOpenGLContext currentContext] flushBuffer];
-			
-			CGLContextObj cgl_ctx = (CGLContextObj) [[NSOpenGLContext currentContext] CGLContextObj];
-			
-			glReadBuffer(GL_FRONT);
-			
-			#if __BIG_ENDIAN__
-				glReadPixels(0, 0, *width, *height, GL_RGB, GL_UNSIGNED_BYTE, buf);
-			#else
-				glReadPixels(0, 0, *width, *height, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV, buf);
-				i = *width * *height;
-				unsigned char	*t_argb = buf;
-				unsigned char	*t_rgb = buf;
-				while( i-->0)
-				{
-					*((int*) t_rgb) = *((int*) t_argb);
-					t_argb+=4;
-					t_rgb+=3;
-				}
-			#endif
-			
-			long rowBytes = *width**spp**bpp/8;
-			
-			{
-				unsigned char	*tempBuf = (unsigned char*) malloc( rowBytes);
-				
-				for( i = 0; i < *height/2; i++)
-				{
-					memcpy( tempBuf, buf + (*height - 1 - i)*rowBytes, rowBytes);
-					memcpy( buf + (*height - 1 - i)*rowBytes, buf + i*rowBytes, rowBytes);
-					memcpy( buf + i*rowBytes, tempBuf, rowBytes);
-				}
-				
-				free( tempBuf);
-			}
-			
-//			[[NSOpenGLContext currentContext] flushBuffer];
-			[NSOpenGLContext clearCurrentContext];
-		}
+		buf = HorosCopyVRFramebuffer([self getVTKRenderWindow], width, height);
+		
+		[NSOpenGLContext clearCurrentContext];
 	}
 //	else NSLog(@"Err getRawPixels...");
 		
@@ -2793,37 +2748,41 @@ typedef struct _xyzArray
 	
 	if( pt2D == nil)
 		return;
-	
-	vtkTransform *Transform = vtkTransform::New();
-			
-	Transform->SetMatrix( matrice);
-	Transform->Push();
-	
-	Transform->Inverse();
-	
-	Transform->TransformPoint( pt3D, pt2D);
-	
-	double vPos[ 3];
-	
-    if( iso[ 0])
-    {
-        iso[ 0]->GetPosition( vPos);
-        
-        pt2D[ 0] -= vPos[ 0];
-        pt2D[ 1] -= vPos[ 1];
-        pt2D[ 2] -= vPos[ 2];
-        
-        if( [firstObject pixelSpacingX])
-            pt2D[0] /= [firstObject pixelSpacingX];
-        
-        if( [firstObject pixelSpacingY])
-            pt2D[1] /= [firstObject pixelSpacingY];
-        
-        if( [firstObject sliceInterval])
-            pt2D[2] /= [firstObject sliceInterval];
-    }
-    
-	Transform->Delete();
+
+	if( matrice == nil)
+		return;
+
+	NSMutableArray *matrix = [NSMutableArray arrayWithCapacity: 16];
+	for (int row = 0; row < 4; row++)
+		for (int col = 0; col < 4; col++)
+			[matrix addObject: @(matrice->Element[row][col])];
+
+	double vPos[3] = {0, 0, 0};
+	double spacingX = 0, spacingY = 0, spacingZ = 0;
+	if (iso[0])
+	{
+		iso[0]->GetPosition(vPos);
+		spacingX = [firstObject pixelSpacingX];
+		spacingY = [firstObject pixelSpacingY];
+		spacingZ = [firstObject sliceInterval];
+	}
+
+	HorosSRSurfacePoint *voxel = [HorosSRSurfacePointGeometry voxelFromWorldX: pt3D[0]
+																		  y: pt3D[1]
+																		  z: pt3D[2]
+														   rowMajorMatrix: matrix
+															actorPositionX: vPos[0]
+															actorPositionY: vPos[1]
+															actorPositionZ: vPos[2]
+																  spacingX: spacingX
+																  spacingY: spacingY
+																  spacingZ: spacingZ];
+	if (voxel)
+	{
+		pt2D[0] = voxel.x;
+		pt2D[1] = voxel.y;
+		pt2D[2] = voxel.z;
+	}
 }
 
 // 3D points
@@ -2934,17 +2893,46 @@ typedef struct _xyzArray
 	}
 }
 
+- (BOOL) pickSurfaceAtDisplayX: (double) x y: (double) y world: (double *) wXYZ
+{
+	if (wXYZ == nil || aRenderer == nil)
+		return NO;
+
+	vtkActor *surfaces[] = {iso[0], iso[1], Biso[0], Biso[1]};
+	int wasPickable[4];
+	for (int i = 0; i < 4; i++)
+	{
+		wasPickable[i] = surfaces[i] ? surfaces[i]->GetPickable() : 0;
+		if (surfaces[i])
+			surfaces[i]->PickableOn();
+	}
+
+	vtkCellPicker *picker = vtkCellPicker::New();
+	picker->SetTolerance(0.005);
+	int hit = picker->Pick(x, y, 0.0, aRenderer);
+	picker->GetPickPosition(wXYZ);
+	picker->Delete();
+
+	for (int i = 0; i < 4; i++)
+	{
+		if (surfaces[i] == nil)
+			continue;
+		if (wasPickable[i])
+			surfaces[i]->PickableOn();
+		else
+			surfaces[i]->PickableOff();
+	}
+
+	return hit != 0;
+}
+
 - (void) throw3DPointOnSurface: (double) x : (double) y
 {
-	vtkWorldPointPicker *picker = vtkWorldPointPicker::New();
-	
-	picker->Pick(x, y, 0.0, aRenderer);
 	double wXYZ[3];
-	picker->GetPickPosition(wXYZ);
+	if (![self pickSurfaceAtDisplayX: x y: y world: wXYZ])
+		return;
 	[self add3DPoint: wXYZ[0] : wXYZ[1] : wXYZ[2]];
 	[controller add2DPoint: wXYZ[0] : wXYZ[1] : wXYZ[2]];
-	
-	picker->Delete();
 }
 
 #pragma mark display
@@ -3497,25 +3485,29 @@ static NSString * const O2PasteboardTypeEventModifierFlags = @"com.opensource.os
             if (!description.length)
                 description = firstObject.imageObj.series.seriesDescription;
             
-            NSString *name = firstObject.imageObj.series.study.name;
-            if (description.length)
-                name = [name stringByAppendingFormat:@" - %@", description];
+            // Study and series descriptions are free text from the DICOM data,
+            // so they cannot become a path component unexamined.
+            NSString *name = [HorosDraggedImageFile nameForStudy: firstObject.imageObj.series.study.name
+                                                          series: description];
+            NSURL *url = [HorosDraggedImageFile urlInDirectory: (NSURL *)urlRef
+                                                          name: name
+                                                 pathExtension: @"jpg"];
             
-            if (!name.length)
-                name = @"Horos";
+            NSEventModifierFlags mf = 0;
+            NSData *flags = [item dataForType: O2PasteboardTypeEventModifierFlags];
+            if( flags.length == sizeof( mf))
+                [flags getBytes: &mf length: sizeof( mf)];
             
-            NSURL *url = [(NSURL *)urlRef URLByAppendingPathComponent:[name stringByAppendingPathExtension:@"jpg"]];
-            size_t i = 0;
-            while ([url checkResourceIsReachableAndReturnError:NULL])
-                url = [(NSURL *)urlRef URLByAppendingPathComponent:[name stringByAppendingFormat:@" (%lu).jpg", ++i]];
-            
-            NSEventModifierFlags mf; [[item dataForType:O2PasteboardTypeEventModifierFlags] getBytes:&mf];
             NSImage *image = [self nsimage:(mf&NSShiftKeyMask)];
             
-            NSData *idata = [[NSBitmapImageRep imageRepWithData:image.TIFFRepresentation] representationUsingType:NSJPEGFileType properties:[NSDictionary dictionaryWithObject:[NSNumber numberWithFloat:0.9] forKey:NSImageCompressionFactor]];
-            [idata writeToURL:url atomically:YES];
+            NSData *idata = [[NSBitmapImageRep imageRepWithData:image.TIFFRepresentation] representationUsingType:NSBitmapImageFileTypeJPEG properties:[NSDictionary dictionaryWithObject:[NSNumber numberWithFloat:0.9] forKey:NSImageCompressionFactor]];
             
-            [item setString:[url absoluteString] forType:type];
+            // Advertise the file only once it exists. Naming it regardless left
+            // the destination holding a path to a file that was never written.
+            if( url && idata.length && [idata writeToURL: url options: NSDataWritingAtomic error: NULL])
+                [item setString:[url absoluteString] forType:type];
+            else
+                NSLog( @"**** dragged image could not be written for %@", name);
             
             CFRelease(urlRef);
         }

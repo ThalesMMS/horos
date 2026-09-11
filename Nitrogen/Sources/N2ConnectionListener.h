@@ -54,7 +54,15 @@ extern NSString* N2ConnectionListenerOpenedConnection;
 @property BOOL threadPerConnection;
 
 - (id)initWithPort:(NSInteger)port connectionClass:(Class)classs;
+// Binds 127.0.0.1 and ::1 instead of INADDR_ANY, so the port is reachable only
+// from this machine. A listener publishing anything worth a credential should
+// be explicit about which of the two it wants.
+- (id)initWithPort:(NSInteger)port loopbackOnly:(BOOL)loopbackOnly connectionClass:(Class)classs;
 - (id)initWithPath:(NSString*)path connectionClass:(Class)classs;
+
+// errno of the last failed bind, or 0 after a successful init. The instance
+// is gone when init returns nil, so callers have to ask the class.
++ (int)lastBindErrno;
 
 - (in_port_t)port;
 

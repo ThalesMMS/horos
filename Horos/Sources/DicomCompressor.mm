@@ -36,6 +36,7 @@
  ============================================================================*/
 
 #import "DicomCompressor.h"
+#import "HorosBoundedTask.h"
 #import "NSFileManager+N2.h"
 #include <algorithm>
 
@@ -68,9 +69,10 @@ const NSUInteger MaxFilesPassedToDecompress = 200;
 		NSTask* task = [[NSTask alloc] init];
 		[task setArguments:iargs];
 		[task setLaunchPath:[[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"Decompress"]];
-		[task launch];
 		
-		while ([task isRunning]) [NSThread sleepForTimeInterval:0.01];
+		NSError* taskError = nil;
+		if (!HorosRunTaskUntilExit(task, 600, &taskError))
+			NSLog(@"****** Decompress %@ failed: %@", actionString, taskError.localizedDescription);
 		
 		[task release];
         

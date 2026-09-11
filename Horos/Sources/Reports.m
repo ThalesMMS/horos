@@ -35,7 +35,13 @@
      PURPOSE.
  ============================================================================*/
 
+#import "Horos-Swift.h"
 #import "Reports.h"
+#import "HorosReportFileReplacement.h"
+#import "HorosReportExtraction.h"
+#import "HorosReportFields.h"
+#import "HorosOpenDocument.h"
+#import "HorosPagesCompatibility.h"
 #import "DicomFile.h"
 #import "DCM.h"
 #import "BrowserController.h"
@@ -84,6 +90,7 @@
 @interface Reports ()
 
 - (void)runScript:(NSString*)txt;
+- (NSDictionary*)reportFieldValuesForStudy:(NSManagedObject*)study;
 - (BOOL)createNewWordReportForStudy:(NSManagedObject*)study toDestinationPath:(NSString*)destinationFile;
 
 @end
@@ -207,130 +214,49 @@
 		case 0:
 		{
 			NSString *destinationFile = [NSString stringWithFormat:@"%@%@.%@", path, uniqueFilename, @"doc"];
-			[[NSFileManager defaultManager] removeItemAtPath: destinationFile error: nil];
-			
-            [self createNewWordReportForStudy:study toDestinationPath:destinationFile];
+            return [self createNewWordReportForStudy:study toDestinationPath:destinationFile];
         }
 		break;
 		
-		case 1:
-		{
-			NSString *destinationFile = [NSString stringWithFormat:@"%@%@.%@", path, uniqueFilename, @"rtf"];
-			[[NSFileManager defaultManager] removeItemAtPath: destinationFile error: nil];
-			
-			[[NSFileManager defaultManager] copyItemAtPath:[BrowserController.currentBrowser.database.baseDirPath stringByAppendingFormat:@"/ReportTemplate.rtf"] toPath:destinationFile error:NULL];
-			
-			NSDictionary                *attr;
-			NSMutableAttributedString	*rtf = [[NSMutableAttributedString alloc] initWithRTF: [NSData dataWithContentsOfFile:destinationFile] documentAttributes:&attr];
-			NSString					*rtfString = [rtf string];
-			NSRange						range;
-			
-			// SCAN FIELDS
-			
-			NSManagedObjectModel	*model = [[[study managedObjectContext] persistentStoreCoordinator] managedObjectModel];
-			NSArray *properties = [[[[model entitiesByName] objectForKey:@"Study"] attributesByName] allKeys];
-			
-			
-			NSDateFormatter		*date = [[[NSDateFormatter alloc] init] autorelease];
-			[date setDateStyle: NSDateFormatterShortStyle];
-			
-			for( NSString *name in properties)
-			{
-				NSString	*string;
-				
-				if( [[study valueForKey: name] isKindOfClass: [NSDate class]])
-				{
-					string = [date stringFromDate: [study valueForKey: name]];
-				}
-				else string = [[study valueForKey: name] description];
-				
-				NSRange	searchRange = rtf.range;
-				
-				do
-				{
-					range = [rtfString rangeOfString: [NSString stringWithFormat:@"«%@»", name] options:0 range:searchRange];
-					
-					if( range.length > 0)
-					{
-						if( string)
-						{
-							[rtf replaceCharactersInRange:range withString:string];
-						}
-						else [rtf replaceCharactersInRange:range withString:@""];
-						
-						searchRange = NSMakeRange( range.location, [rtf length]-(range.location+1));
-					}
-				}while( range.length != 0);
-			}
-			
-			// TODAY
-			
-			NSRange	searchRange = rtf.range;
-			
-			range = [rtfString rangeOfString: @"«today»" options:0 range: searchRange];
-			if( range.length > 0)
-			{
-				[rtf replaceCharactersInRange:range withString:[date stringFromDate: [NSDate date]]];
-			}
-			
-			// DICOM Fields
-			NSArray	*seriesArray = [[BrowserController currentBrowser] childrenArray: study];
-			if( [seriesArray count] > 0)
-			{
-				NSArray	*imagePathsArray = [[BrowserController currentBrowser] imagesPathArray: [seriesArray objectAtIndex: 0]];
-				BOOL moreFields = NO;
-				do
-				{
-					NSRange firstChar = [rtfString rangeOfString: @"«DICOM_FIELD:"];
-					if( firstChar.location != NSNotFound)
-					{
-						NSRange secondChar = [rtfString rangeOfString: @"»"];
-						
-						if( secondChar.location != NSNotFound)
-						{
-                            NSString *rawField = [rtfString substringWithRange: NSMakeRange( firstChar.location+firstChar.length, secondChar.location - (firstChar.location+firstChar.length))];
-                            NSString *v = [self getDICOMStringValueForField: rawField inDICOMFile: [imagePathsArray objectAtIndex: 0]];
-                            if( v)
-                                [rtf replaceCharactersInRange:NSMakeRange(firstChar.location, secondChar.location-firstChar.location+1) withString: v];
-                            else
-                                [rtf replaceCharactersInRange:NSMakeRange(firstChar.location, secondChar.location-firstChar.location+1) withString:@""];
-                            
-                            moreFields = YES;
-						}
-						else moreFields = NO;
-					}
-					else moreFields = NO;
-				}
-				while( moreFields);
-			}
-			
-			[[rtf RTFFromRange:rtf.range documentAttributes:attr] writeToFile:destinationFile atomically:YES];
-			
-			[rtf release];
-			[study setValue: destinationFile forKey:@"reportURL"];
-			
-			[[NSWorkspace sharedWorkspace] openFile:destinationFile withApplication:@"TextEdit" andDeactivate: YES];
-			[NSThread sleepForTimeInterval: 1];
-		}
-		break;
-		
+        case 1:
+        {
+            NSString *destinationFile = [NSString stringWithFormat:@"%@%@.rtf", path, uniqueFilename];
+            NSString *templatePath = [BrowserController.currentBrowser.database.baseDirPath stringByAppendingPathComponent:@"ReportTemplate.rtf"];
+            NSDictionary *values = [self reportFieldValuesForStudy:study];
+            NSArray *series = [[BrowserController currentBrowser] childrenArray:study];
+            NSArray *paths = series.count ? [[BrowserController currentBrowser] imagesPathArray:series.firstObject] : nil;
+            BOOL created = HorosCreateReportFromTemplate(templatePath, destinationFile, ^BOOL(NSString *prepared, NSError **error) {
+                NSDictionary *attributes = nil;
+                NSMutableAttributedString *rtf = [[[NSMutableAttributedString alloc] initWithRTF:[NSData dataWithContentsOfFile:prepared] documentAttributes:&attributes] autorelease];
+                if (!rtf) return NO;
+                HorosFillAttributedReport(rtf, values, ^NSString *(NSString *field) {
+                    return paths.count ? [self getDICOMStringValueForField:field inDICOMFile:paths.firstObject] : @"";
+                });
+                NSData *data = [rtf RTFFromRange:NSMakeRange(0, rtf.length) documentAttributes:attributes];
+                return data && [data writeToFile:prepared options:NSDataWritingAtomic error:error];
+            }, NULL);
+            if (!created) {
+                NSRunCriticalAlertPanel(NSLocalizedString(@"Report", nil), @"%@", NSLocalizedString(@"OK", nil), nil, nil,
+                    NSLocalizedString(@"The RTF report could not be created. Check the report template and destination. Any existing report has been preserved.", nil));
+                return NO;
+            }
+            [study setValue:destinationFile forKey:@"reportURL"];
+            [[NSWorkspace sharedWorkspace] openFile:[study valueForKey:@"reportURL"] withApplication:@"TextEdit" andDeactivate:YES];
+        }
+        break;
+
 		case 2:
 		{
 			NSString *destinationFile = [NSString stringWithFormat:@"%@%@.%@", path, uniqueFilename, @"pages"];
-			[[NSFileManager defaultManager] removeItemAtPath: destinationFile error: nil];
-			
-			[self createNewPagesReportForStudy:study toDestinationPath:destinationFile];
+			return [self createNewPagesReportForStudy:study toDestinationPath:destinationFile];
 		}
 		break;
 		
 		case 5:
 		{
 			NSString *destinationFile = [NSString stringWithFormat:@"%@%@.%@", path, uniqueFilename, @"odt"];
-			[[NSFileManager defaultManager] removeItemAtPath: destinationFile error: nil];
-			
-			[[NSFileManager defaultManager] copyItemAtPath:[BrowserController.currentBrowser.database.baseDirPath stringByAppendingPathComponent:@"ReportTemplate.odt"] toPath:destinationFile error:NULL];
-			[self createNewOpenDocumentReportForStudy:study toDestinationPath:destinationFile];
-			
+            return [self createNewOpenDocumentReportForStudy:study toDestinationPath:destinationFile];
+
 		}
 		break;
 	}
@@ -379,110 +305,52 @@
     if (!script) [NSException raise:NSGenericException format:@"Invalid script source"];
     
     id r = [script runWithArguments:args error:&errs];
-    if (errs) [NSException raise:NSGenericException format:@"%@", errs];
+    if (errs)
+    {
+        // The caller turns this into a generic "report could not be created",
+        // so the editor's own number and message have to be recorded here or
+        // they are lost: -1712 (timed out, often a modal dialog), -1743
+        // (Automation denied), -10024 (sandbox refused the destination).
+        NSLog( @"***** report AppleScript failed: %@ (%@)",
+              errs[ NSAppleScriptErrorBriefMessage] ?: errs[ NSAppleScriptErrorMessage] ?: errs,
+              errs[ NSAppleScriptErrorNumber] ?: @"no number");
+        [NSException raise:NSGenericException format:@"%@ (%@)",
+            errs[ NSAppleScriptErrorMessage] ?: errs[ NSAppleScriptErrorBriefMessage] ?: errs,
+            errs[ NSAppleScriptErrorNumber] ?: @"no number"];
+    }
     
     return r;
 }
 
 #pragma mark -
 
-- (void)searchAndReplaceFieldsFromStudy:(NSManagedObject*)aStudy inString:(NSMutableString*)aString;
+- (NSDictionary*)reportFieldValuesForStudy:(NSManagedObject*)aStudy
 {
-	if( aString == nil)
-		return;
-		
-	NSManagedObjectModel *model = [[[aStudy managedObjectContext] persistentStoreCoordinator] managedObjectModel];
-	NSArray *properties = [[[[model entitiesByName] objectForKey:@"Study"] attributesByName] allKeys];
-	
-	NSDateFormatter		*date = [[[NSDateFormatter alloc] init] autorelease];
-	[date setDateStyle: NSDateFormatterShortStyle];
-    
-    NSDateFormatter		*longDate = [[[NSDateFormatter alloc] init] autorelease];
-	[longDate setDateStyle: NSDateFormatterLongStyle];
-	
-	for( NSString *propertyName in properties)
-	{
-		NSString *propertyValue;
-		
-		if( [[aStudy valueForKey:propertyName] isKindOfClass:[NSDate class]])
-			propertyValue = [date stringFromDate: [aStudy valueForKey:propertyName]];
-		else
-			propertyValue = [[aStudy valueForKey:propertyName] description];
-			
-		if(!propertyValue)
-			propertyValue = @"";
-			
-		//		« is encoded as &#xAB;
-		//      » is encoded as &#xBB;
-		[aString replaceOccurrencesOfString:[NSString stringWithFormat:@"&#xAB;%@&#xBB;", propertyName] withString:propertyValue options:NSLiteralSearch range:aString.range];
-		[aString replaceOccurrencesOfString:[NSString stringWithFormat:@"«%@»", propertyName] withString:propertyValue options:NSLiteralSearch range:aString.range];
-	}
-	
-	// "today"
-	[aString replaceOccurrencesOfString:@"&#xAB;today&#xBB;" withString:[date stringFromDate: [NSDate date]] options:NSLiteralSearch range:aString.range];
-	[aString replaceOccurrencesOfString:@"«today»" withString:[date stringFromDate: [NSDate date]] options:NSLiteralSearch range:aString.range];
-    
-    [aString replaceOccurrencesOfString:@"&#xAB;longtoday&#xBB;" withString:[longDate stringFromDate: [NSDate date]] options:NSLiteralSearch range:aString.range];
-	[aString replaceOccurrencesOfString:@"«longtoday»" withString:[longDate stringFromDate: [NSDate date]] options:NSLiteralSearch range:aString.range];
-	
-	NSArray	*seriesArray = [[BrowserController currentBrowser] childrenArray: aStudy];
-	NSArray	*imagePathsArray = [[BrowserController currentBrowser] imagesPathArray: [seriesArray objectAtIndex: 0]];
-	
-	// DICOM Fields
-	BOOL moreFields = NO;
-	do
-	{
-		NSRange firstChar = [aString rangeOfString: @"&#xAB;DICOM_FIELD:"];
-		
-		if( firstChar.location == NSNotFound)
-			firstChar = [aString rangeOfString: @"«DICOM_FIELD:"];
-		
-		if( firstChar.location != NSNotFound)
-		{
-			NSRange secondChar = [aString rangeOfString: @"&#xBB;" options: 0 range: NSMakeRange( firstChar.location+firstChar.length, aString.length - (firstChar.location+firstChar.length)) locale: nil];
-			if( secondChar.location == NSNotFound)
-				secondChar = [aString rangeOfString: @"»"];
-			
-			if( secondChar.location != NSNotFound)
-			{
-				NSString *dicomField = [aString substringWithRange: NSMakeRange( firstChar.location+firstChar.length, secondChar.location - (firstChar.location+firstChar.length))];
-				
-                if( dicomField.length) // delete the <blabla> strings
-                {
-                    dicomField = [dicomField stringByReplacingOccurrencesOfString:@" " withString:@""];
-                    
-                    NSRange sChar;
-                    do
-                    {
-                        sChar = [dicomField rangeOfString: @"<"];
-                        if( sChar.location != NSNotFound)
-                        {
-                            NSRange sChar2 = [dicomField rangeOfString: @">"];
-                            
-                            if( sChar2.location != NSNotFound)
-                                dicomField = [dicomField stringByReplacingCharactersInRange:NSMakeRange( sChar.location, sChar2.location + sChar2.length - sChar.location) withString:@""];
-                        }
-                    }
-                    while( sChar.location != NSNotFound);
-				}
-                
-                NSString *s = [self getDICOMStringValueForField: dicomField inDICOMFile: [imagePathsArray objectAtIndex: 0]];
-                
-				if( s)
-                    [aString replaceCharactersInRange:NSMakeRange(firstChar.location, secondChar.location-firstChar.location+secondChar.length) withString: s];
-                else
-                    [aString replaceCharactersInRange:NSMakeRange(firstChar.location, secondChar.location-firstChar.location+secondChar.length) withString:@""];
-                
-				moreFields = YES;
-			}
-			else moreFields = NO;
-		}
-		else moreFields = NO;
-	}
-	while( moreFields);
+    NSDateFormatter *date = [[[NSDateFormatter alloc] init] autorelease];
+    date.dateStyle = NSDateFormatterShortStyle;
+    NSDateFormatter *longDate = [[[NSDateFormatter alloc] init] autorelease];
+    longDate.dateStyle = NSDateFormatterLongStyle;
+    NSMutableDictionary *values = [NSMutableDictionary dictionary];
+    for (NSString *key in aStudy.entity.attributesByName) {
+        id value = [aStudy valueForKey:key];
+        [values setObject:([value isKindOfClass:NSDate.class] ? [date stringFromDate:value] : [value description]) ?: @"" forKey:key];
+    }
+    NSDate *now = [NSDate date];
+    [values setObject:[date stringFromDate:now] forKey:@"today"];
+    [values setObject:[longDate stringFromDate:now] forKey:@"longtoday"];
+    return values;
 }
 
-
+- (void)searchAndReplaceFieldsFromStudy:(NSManagedObject*)aStudy inString:(NSMutableString*)aString
+{
+    if (!aString) return;
+    NSDictionary *values = [self reportFieldValuesForStudy:aStudy];
+    NSArray *series = [[BrowserController currentBrowser] childrenArray:aStudy];
+    NSArray *paths = series.count ? [[BrowserController currentBrowser] imagesPathArray:series.firstObject] : nil;
+    HorosFillReportXML(aString, values, ^NSString *(NSString *field) {
+        return paths.count ? [self getDICOMStringValueForField:field inDICOMFile:paths.firstObject] : @"";
+    });
+}
 
 #pragma mark -
 #pragma mark Word
@@ -539,15 +407,14 @@
     if( path == nil)
         path = DicomDatabase.defaultBaseDirPath;
     
+    if (!path.length) return nil;
     NSString *folder = [path stringByAppendingPathComponent:@"WORD TEMPLATES"];
-    
-    BOOL isDirectory;
-    if( [[NSFileManager defaultManager] fileExistsAtPath: folder isDirectory: &isDirectory] && isDirectory)
-        return folder;
-    
-    [[NSFileManager defaultManager] removeItemAtPath: folder error: nil];
-    [[NSFileManager defaultManager] createDirectoryAtPath: folder withIntermediateDirectories: NO attributes: nil error: nil];
-    
+    BOOL isDirectory = NO;
+    if ([NSFileManager.defaultManager fileExistsAtPath:folder isDirectory:&isDirectory])
+        return isDirectory ? folder : nil;
+    // A colliding file, dangling symlink, or failed mkdir must never be removed.
+    if (![NSFileManager.defaultManager createDirectoryAtPath:folder withIntermediateDirectories:NO attributes:nil error:NULL])
+        return nil;
     return folder;
 }
 
@@ -559,7 +426,9 @@
 {
 	NSMutableArray* templatesArray = [NSMutableArray array];
     
-	NSDirectoryEnumerator* directoryEnumerator = [[NSFileManager defaultManager] enumeratorAtPath:[self resolvedDatabaseWordTemplatesDirPath]];
+    NSString *directory = [self resolvedDatabaseWordTemplatesDirPath];
+    if (!directory.length) return templatesArray;
+	NSDirectoryEnumerator* directoryEnumerator = [[NSFileManager defaultManager] enumeratorAtPath:directory];
 	NSString* filename;
 	while ((filename = [directoryEnumerator nextObject]))
 	{
@@ -574,7 +443,7 @@
 	return templatesArray;
 }
 
-- (NSString*) generateWordReportMergeDataForStudy:(NSManagedObject*) study
+- (NSString*) generateWordReportMergeDataForStudy:(NSManagedObject*)study toPath:(NSString*)path
 {
 	long x;
 	
@@ -615,82 +484,145 @@
 		[file appendFormat: @"%c", NSTabCharacter];
 	}
 	
-	NSString *path = [BrowserController.currentBrowser.database.baseDirPath stringByAppendingFormat:@"/TEMP.noindex/Report.rtf"];
-	
-	[[NSFileManager defaultManager] removeItemAtPath:path error:NULL];
-	
 	NSMutableAttributedString	*rtf = [[[NSMutableAttributedString alloc] initWithString: file] autorelease];
 	
-    [[rtf RTFFromRange:rtf.range documentAttributes:@{}] writeToFile: path atomically:YES]; // To support full encoding in MicroSoft Word
-	
-	return path;
+    NSData *data = [rtf RTFFromRange:rtf.range documentAttributes:@{}];
+    return [data writeToFile:path options:NSDataWritingAtomic error:NULL] ? path : nil;
 }
 
 - (BOOL)createNewWordReportForStudy:(NSManagedObject*)study toDestinationPath:(NSString*)destinationFile
 {
-    // Applescript doesnt support UTF-8 encoding
-    
-//    NSString* tempPath = [[[destinationFile stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"MSTempReport"] stringByAppendingPathExtension:[destinationFile pathExtension]];
-  //  [[NSFileManager defaultManager] removeItemAtPath: tempPath error: nil];
-    
-    [[NSFileManager defaultManager] removeItemAtPath:destinationFile error: nil];
-    
     NSString* inTemplateName = templateName;
     
     if( inTemplateName.length == 0 && [[Reports wordTemplatesList] count])
         inTemplateName = [[Reports wordTemplatesList] objectAtIndex: 0];
     
-    NSString* sourceData = [self generateWordReportMergeDataForStudy:study];
     NSString* templatePath = nil;
     
     NSString* templatesDirPath = [[self class] resolvedDatabaseWordTemplatesDirPath];
-    if ([[NSFileManager defaultManager] fileExistsAtPath:templatesDirPath])
-    {
-        for( NSString *filename in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:templatesDirPath error:NULL])
-        {
-            if( [filename.pathExtension hasPrefix: @"doc"] && [filename.stringByDeletingPathExtension isEqualToString: inTemplateName.stringByDeletingPathExtension])
-                templatePath = [templatesDirPath stringByAppendingPathComponent: filename];
+    NSArray *filenames = templatesDirPath.length ? [[NSFileManager.defaultManager contentsOfDirectoryAtPath:templatesDirPath error:NULL]
+        sortedArrayUsingSelector:@selector(compare:)] : nil;
+    BOOL explicitFormat = [inTemplateName.pathExtension.lowercaseString hasPrefix:@"doc"];
+    for (NSString *filename in filenames) {
+        NSString *candidate = [templatesDirPath stringByAppendingPathComponent:filename];
+        if (![filename.pathExtension.lowercaseString hasPrefix:@"doc"] ||
+            ![[NSFileManager.defaultManager attributesOfItemAtPath:candidate error:NULL].fileType isEqualToString:NSFileTypeRegular])
+            continue;
+        // A menu selection includes its extension: never substitute another
+        // format with the same stem. Keep legacy extensionless names working.
+        if ([filename isEqualToString:inTemplateName] ||
+            (!explicitFormat && [filename.stringByDeletingPathExtension isEqualToString:inTemplateName])) {
+            templatePath = candidate;
+            break;
         }
     }
-    
+
     if( templatePath == nil || ![[NSFileManager defaultManager] fileExistsAtPath:templatePath])
     {
         NSRunCriticalAlertPanel( NSLocalizedString( @"Microsoft Word", nil),  NSLocalizedString(@"I cannot find the Horos Word Template doc file.", nil), NSLocalizedString(@"OK", nil), nil, nil);
         return NO;
     }
     
-	NSString* source =
+    // Word 16 returns no value for `open ... add to recent files false`, so
+    // `set d to open ...` leaves d undefined and every later reference fails.
+    // Track the documents by name instead, and never let the error handler
+    // touch a variable the failing statement may not have assigned - it used
+    // to raise -2753 of its own and replace Word's error with "variable not
+    // defined". Commands are sent to the loop variable of `every document`:
+    // Word rejects `active document` and `document 1` as command targets.
+    NSString *source =
     @"on run argv\n"
-    @"  set dataSourceFileUnix to (item 1 of argv)\n"
-	@"  set outFilePathUnix to (item 2 of argv)\n"
-	@"  set templatePathUnix to (item 3 of argv)\n"
-	@"  set dataSourceFile to POSIX file dataSourceFileUnix\n"
-    @"  set outFilePath to POSIX file outFilePathUnix\n"
-    @"  set templatePath to POSIX file templatePathUnix\n"
+    @"  set dataSourceFile to POSIX file (item 1 of argv)\n"
+    @"  set outFilePath to POSIX file (item 2 of argv)\n"
+    @"  set templatePath to POSIX file (item 3 of argv)\n"
+    @"  set templateName to missing value\n"
+    @"  set mergedName to missing value\n"
     @"  tell application \"Microsoft Word\"\n"
-    @"    open templatePath\n"
-    @"    open data source data merge of document 1 name dataSourceFile\n"
-    @"    set myMerge to data merge of document 1\n"
-    @"    set destination of myMerge to send to new document\n"
-    @"    execute data merge myMerge\n"
-    @"    save as document 1 file name (outFilePath as string)\n"
-    @"    close document 2 saving no\n" // close the non-merged file
+    @"    try\n"
+    @"      open templatePath add to recent files false\n"
+    @"      set templateName to name of active document\n"
+    @"      open data source data merge of active document name dataSourceFile\n"
+    @"      set myMerge to data merge of active document\n"
+    @"      set destination of myMerge to send to new document\n"
+    @"      execute data merge myMerge\n"
+    @"      set mergedName to name of active document\n"
+    @"      if mergedName is templateName then error \"The merge did not create a new document.\"\n"
+    @"      set savedMerge to false\n"
+    @"      repeat with d in (get every document)\n"
+    @"        if (name of d) is mergedName then\n"
+    @"          if (item 4 of argv) is \"docx\" then\n"
+    @"            save as d file name (outFilePath as string) file format format document add to recent files false\n"
+    @"          else\n"
+    @"            save as d file name (outFilePath as string) file format format document97 add to recent files false\n"
+    @"          end if\n"
+    @"          set savedMerge to true\n"
+    @"        end if\n"
+    @"      end repeat\n"
+    @"      if not savedMerge then error \"The merged document could not be saved.\"\n"
+    @"      my closeReportDocument(mergedName)\n"
+    @"      set mergedName to missing value\n"
+    @"      my closeReportDocument(templateName)\n"
+    @"      set templateName to missing value\n"
+    @"    on error errorMessage number errorNumber\n"
+    @"      my closeReportDocument(mergedName)\n"
+    @"      my closeReportDocument(templateName)\n"
+    @"      error errorMessage number errorNumber\n"
+    @"    end try\n"
     @"  end tell\n"
-    @"end run\n";
-	
-//	NSLog(@"%@", source);
-    
-    @try {
-        [[self class] _runAppleScript:source withArguments:[NSArray arrayWithObjects: sourceData, destinationFile, templatePath, nil]];
-    } @catch( NSException* e) {
-        NSLog( @"Exception: %@", e.reason);
+    @"end run\n"
+    @"\n"
+    @"on closeReportDocument(theName)\n"
+    @"  if theName is missing value then return\n"
+    @"  tell application \"Microsoft Word\"\n"
+    @"    try\n"
+    @"      repeat with d in (get every document)\n"
+    @"        if (name of d) is theName then close d saving no\n"
+    @"      end repeat\n"
+    @"    end try\n"
+    @"  end tell\n"
+    @"end closeReportDocument\n";
+
+    NSError *reportError = nil;
+    BOOL created = HorosCreateReportFromTemplate(templatePath, destinationFile, ^BOOL(NSString *prepared, NSError **error) {
+        NSString *directory = prepared.stringByDeletingLastPathComponent;
+        NSString *sourceData = [self generateWordReportMergeDataForStudy:study
+            toPath:[directory stringByAppendingPathComponent:@"MergeData.rtf"]];
+        if (!sourceData) return NO;
+        NSString *extension = [destinationFile.pathExtension.lowercaseString isEqualToString:@"docx"] ? @"docx" : @"doc";
+        NSString *output = [directory stringByAppendingPathComponent:[@"Merged" stringByAppendingPathExtension:extension]];
+        @try {
+            [[self class] _runAppleScript:source withArguments:@[sourceData, output, prepared, extension]];
+        }
+        @catch (NSException *exception) {
+            // Keep the editor's own message: the caller only sees a BOOL, and
+            // the preparation wrapper would otherwise replace it.
+            if (error) *error = [NSError errorWithDomain:@"HorosWordReport" code:1
+                userInfo:@{NSLocalizedDescriptionKey: exception.reason ?: exception.name}];
+            return NO;
+        }
+        NSDictionary *attributes = [NSFileManager.defaultManager attributesOfItemAtPath:output error:error];
+        if (![attributes.fileType isEqualToString:NSFileTypeRegular] || !attributes.fileSize) return NO;
+        // Only the private copy is replaced here; publication happens after success.
+        if (![NSFileManager.defaultManager removeItemAtPath:prepared error:error]) return NO;
+        return [NSFileManager.defaultManager moveItemAtPath:output toPath:prepared error:error];
+    }, &reportError);
+    if (!created) {
+        // Name what Word refused: the generic sentence alone sent people
+        // looking at the template when the cause was an Automation refusal or
+        // a destination the editor's sandbox would not write.
+        NSString *detail = reportError.localizedDescription.length
+            ? [NSString stringWithFormat:@"%@\n\n%@",
+               NSLocalizedString(@"The Word report could not be created. Check the template, Word permissions, and destination. Any existing report has been preserved.", nil),
+               reportError.localizedDescription]
+            : NSLocalizedString(@"The Word report could not be created. Check the template, Word permissions, and destination. Any existing report has been preserved.", nil);
+        NSLog( @"***** Word report not created: %@", reportError ?: @"no error reported");
+        NSRunCriticalAlertPanel(NSLocalizedString(@"Microsoft Word", nil), @"%@", NSLocalizedString(@"OK", nil), nil, nil, detail);
         return NO;
     }
-    
+
     [study setValue:destinationFile forKey: @"reportURL"];
     
-    [[NSWorkspace sharedWorkspace] openFile:destinationFile withApplication:@"Microsoft Word" andDeactivate:YES]; // it's already open, but we're making it come to foreground
-    [NSThread sleepForTimeInterval:1]; // why?
+    [[NSWorkspace sharedWorkspace] openFile:destinationFile withApplication:@"Microsoft Word" andDeactivate:YES];
     
     return YES;
 }
@@ -698,65 +630,43 @@
 #pragma mark -
 #pragma mark OpenDocument
 
+// ODT templates live beside the legacy ReportTemplate.odt in the database root.
++ (NSMutableArray*)openDocumentTemplatesList
+{
+    NSString *directory = BrowserController.currentBrowser.database.baseDirPath;
+    NSMutableArray *templates = [NSMutableArray array];
+    for (NSString *name in [NSFileManager.defaultManager contentsOfDirectoryAtPath:directory error:NULL]) {
+        NSString *path = [directory stringByAppendingPathComponent:name];
+        if ([name.pathExtension.lowercaseString isEqualToString:@"odt"] &&
+            [[NSFileManager.defaultManager attributesOfItemAtPath:path error:NULL].fileType isEqualToString:NSFileTypeRegular])
+            [templates addObject:name];
+    }
+    [templates sortUsingSelector:@selector(compare:)];
+    return templates;
+}
+
++ (NSString*)pathForOpenDocumentTemplate:(NSString*)name
+{
+    NSArray *templates = [self openDocumentTemplatesList];
+    if (!name.length)
+        name = [templates containsObject:@"ReportTemplate.odt"] ? @"ReportTemplate.odt" : templates.firstObject;
+    // Only resolve a listed file, never silently substitute a missing selection.
+    if (!name || ![templates containsObject:name]) return nil;
+    return [BrowserController.currentBrowser.database.baseDirPath stringByAppendingPathComponent:name];
+}
+
 - (BOOL) createNewOpenDocumentReportForStudy:(NSManagedObject*)aStudy toDestinationPath:(NSString*)aPath;
 {
-	// decompress the gzipped index.xml.gz file in the .pages bundle
-	NSTask *unzip = [[[NSTask alloc] init] autorelease];
-	[unzip setLaunchPath:@"/usr/bin/unzip"];
-	[unzip setCurrentDirectoryPath: [aPath stringByDeletingLastPathComponent]];
-	
-	[[NSFileManager defaultManager] removeItemAtPath: [[aPath stringByDeletingLastPathComponent] stringByAppendingPathComponent: @"HHHoros"] error: nil];
-	[unzip setArguments: [NSArray arrayWithObjects: aPath, @"-d", @"HHHoros", nil]];
-	[unzip launch];
+    NSString *templatePath = [[self class] pathForOpenDocumentTemplate:templateName];
+    BOOL created = HorosCreateOpenDocument(templatePath, aPath, ^(NSMutableString *content) {
+        [self searchAndReplaceFieldsFromStudy:aStudy inString:content];
+    }, NULL);
+    if (!created) {
+        NSRunCriticalAlertPanel(NSLocalizedString(@"Report", nil), @"%@", NSLocalizedString(@"OK", nil), nil, nil,
+            NSLocalizedString(@"The OpenDocument report could not be created. Check the report template and destination. Any existing report has been preserved.", nil));
+        return NO;
+    }
 
-	while( [unzip isRunning])
-        [NSThread sleepForTimeInterval: 0.1];
-    
-    //[aTask waitUntilExit];		// <- This is VERY DANGEROUS : the main runloop is continuing...
-	int status = [unzip terminationStatus];
- 
-	if (status == 0)
-		NSLog(@"OO Report creation. unzip -d succeeded.");
-	else
-	{
-		NSLog(@"OO Report creation  failed. Cause: unzip -d failed.");
-		return NO;
-	}
-	
-	// read the xml file and find & replace templated string with patient's datas
-	NSString *indexFilePath = [NSString stringWithFormat:@"%@/HHHoros/content.xml", [aPath stringByDeletingLastPathComponent]];
-	NSError *xmlError = nil;
-	NSStringEncoding xmlFileEncoding = NSUTF8StringEncoding;
-	NSMutableString *xmlContentString = [NSMutableString stringWithContentsOfFile:indexFilePath encoding:xmlFileEncoding error:&xmlError];
-	
-	[self searchAndReplaceFieldsFromStudy:aStudy inString:xmlContentString];
-	
-	if(![xmlContentString writeToFile:indexFilePath atomically:YES encoding:xmlFileEncoding error:&xmlError])
-		return NO;
-	
-	// zip back the index.xml file
-	unzip = [[[NSTask alloc] init] autorelease];
-	[unzip setLaunchPath:@"/usr/bin/zip"];
-	[unzip setCurrentDirectoryPath: [[aPath stringByDeletingLastPathComponent] stringByAppendingPathComponent: @"HHHoros"]];
-	[unzip setArguments: [NSArray arrayWithObjects: @"-q", @"-r", aPath, @"content.xml", nil]];
-	[unzip launch];
-
-	while( [unzip isRunning])
-        [NSThread sleepForTimeInterval: 0.1];
-    
-    //[aTask waitUntilExit];		// <- This is VERY DANGEROUS : the main runloop is continuing...
-	status = [unzip terminationStatus];
- 
-	if (status == 0)
-		NSLog(@"OO Report creation. zip succeeded.");
-	else
-	{
-		NSLog(@"OO Report creation  failed. Cause: zip failed.");
-		// we don't need to return NO, because the xml has been modified. Thus, even if the file is not compressed, the report is valid...
-	}
-	
-	[[NSFileManager defaultManager] removeItemAtPath: [[aPath stringByDeletingLastPathComponent] stringByAppendingPathComponent: @"HHHoros"] error: nil];
-	
 	[aStudy setValue:aPath forKey:@"reportURL"];
 	
 	// open the modified .odt file
@@ -774,7 +684,6 @@
 #pragma mark -
 #pragma mark Pages.app
 
-static int Pages5orHigher = -1;
 
 +(NSString*)databasePagesTemplatesDirPath {
     
@@ -806,141 +715,89 @@ static int Pages5orHigher = -1;
 }
 
 
-+ (int) Pages5orHigher
++ (int)Pages5orHigher
 {
-    if( Pages5orHigher != -1)
-        return Pages5orHigher;
-    
-    // Pages 09 (4.0) or 2013 (5.0) ??
-    NSString *appPath = [[NSWorkspace sharedWorkspace] absolutePathForAppBundleWithIdentifier:@"com.apple.iWork.Pages"];
-    
-    if( appPath.length)
-    {
-        NSString *version = [[[NSBundle bundleWithPath: appPath] infoDictionary] objectForKey:@"DTXcode"];
-        
-        int number =  version.integerValue;
-        if( number >= 500)
-            Pages5orHigher = YES;
-        else
-            Pages5orHigher = NO;
-    }
-    
-    return Pages5orHigher;
+    return HorosPagesUsesModernTemplates([HorosPagesApplication information]);
 }
 
-- (void) decompressPagesFileIfNecessary: (NSString*) aPath
+- (BOOL)decompressPagesFileIfNecessary:(NSString*)aPath
 {
     BOOL isDirectory = NO;
-    if( [[NSFileManager defaultManager] fileExistsAtPath: aPath isDirectory: &isDirectory] && isDirectory == NO)
-    {
-#define UNZIPPEDNAME @"unzipped"
-        
-        // decompress .pages file
-        NSTask *unzip = [[[NSTask alloc] init] autorelease];
-        [unzip setLaunchPath:@"/usr/bin/unzip"];
-        [unzip setCurrentDirectoryPath:aPath.stringByDeletingLastPathComponent];
-        [unzip setArguments:[NSArray arrayWithObjects: @"-qq", @"-o", @"-d", UNZIPPEDNAME, aPath, nil]];
-        [unzip launch];
-        
-        while( [unzip isRunning])
-            [NSThread sleepForTimeInterval: 0.1];
-        
-        //[aTask waitUntilExit];		// <- This is VERY DANGEROUS : the main runloop is continuing...
-        int status = [unzip terminationStatus];
-        
-        if (status == 0)
-            NSLog(@"Pages Report creation. unzip -d succeeded.");
-        else
-        {
-            NSLog(@"Pages Report creation  failed. Cause: unzip -d failed.");
-            return;
-        }
-        
-        [[NSFileManager defaultManager] removeItemAtPath: aPath error: nil];
-        [[NSFileManager defaultManager] moveItemAtPath: [aPath.stringByDeletingLastPathComponent stringByAppendingPathComponent: UNZIPPEDNAME] toPath: aPath error: nil];
+    if (![NSFileManager.defaultManager fileExistsAtPath:aPath isDirectory:&isDirectory]) return NO;
+    if (isDirectory) return YES;
+    NSData *data = [NSData dataWithContentsOfFile:aPath options:NSDataReadingMappedIfSafe error:NULL];
+    NSString *unpacked = HorosExtractPagesPackage(data);
+    if (!unpacked) return NO;
+    @try {
+        return HorosReplaceReportFile(unpacked, aPath, NULL);
+    } @finally {
+        [NSFileManager.defaultManager removeItemAtPath:unpacked error:NULL];
     }
 }
 
-- (BOOL)createNewPagesReportForStudy:(NSManagedObject*)aStudy toDestinationPath:(NSString*)aPath;
-{	
-	// create the Pages file, using the template (not filling the patient's data yet)
-	
-	[[NSFileManager defaultManager] removeItemAtPath:aPath error:NULL];
-    
-    NSString* templatePath = [[self class] pathForPagesTemplate: templateName];
-    if( templatePath)
-        [[NSFileManager defaultManager] copyItemAtPath: templatePath toPath:aPath byReplacingExisting:YES error: nil];
-    else {
-		NSRunCriticalAlertPanel( NSLocalizedString( @"Pages", nil),  NSLocalizedString(@"Failed to create the report with Pages.", nil), NSLocalizedString(@"OK", nil), nil, nil);
+- (BOOL)createNewPagesReportForStudy:(NSManagedObject*)aStudy toDestinationPath:(NSString*)aPath
+{
+    // Not by one bundle identifier: Pages '09 answers to com.apple.iWork.Pages
+    // and Pages 15 to com.apple.Pages, so asking only for the first said "Pages
+    // is not installed" with Pages in the Applications folder.
+    NSURL *pagesApplication = [HorosPagesApplication url];
+    if (!pagesApplication) {
+        NSRunCriticalAlertPanel(NSLocalizedString(@"Pages", nil), @"%@", NSLocalizedString(@"OK", nil), nil, nil,
+            NSLocalizedString(@"Pages is not installed or could not be located. Install Pages before creating a Pages report. No report has been changed.", nil));
         return NO;
-	}
-    
-	if ([[NSFileManager defaultManager] fileExistsAtPath:aPath] == NO) {
-		NSRunCriticalAlertPanel( NSLocalizedString( @"Pages", nil),  NSLocalizedString(@"Failed to create the report with Pages.", nil), NSLocalizedString(@"OK", nil), nil, nil);
-        return NO;
-	}
-    
-    [self decompressPagesFileIfNecessary: aPath];
-    
-	// read the xml file and find & replace templated string with patient's datas
-	NSString *indexFilePath = [aPath stringByAppendingPathComponent:@"index.xml"];
-    if( [[NSFileManager defaultManager] fileExistsAtPath:indexFilePath] == NO)
-    {
-        /*
-        NSString* path = [[NSBundle mainBundle] pathForResource:@"pages2pages09" ofType:@"applescript"];
-        @try
-        {
-            [[self class] _runAppleScript: [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil]
-                            withArguments:[NSArray arrayWithObjects:templatePath, [templatePath stringByAppendingString: @"09.pages"], nil]];
-        }
-        @catch(NSException* ex)
-        {
-            NSLog(@"%@",ex);
-        }
-        
-        NSLog( @"-- Try to convert to Pages 09: %@", templateName);
-        */
-        
-        NSString* path = [[NSBundle mainBundle] pathForResource:@"Horos Report.pages09" ofType:@"pages"];
-        if( [[NSFileManager defaultManager] fileExistsAtPath:path] == YES)
-        {
-            [[NSFileManager defaultManager] copyItemAtPath:path toPath:[templatePath stringByAppendingString: @"09.pages"] byReplacingExisting:YES error: nil];
-        }
-        
-        if( [[NSFileManager defaultManager] fileExistsAtPath: [templatePath stringByAppendingString: @"09.pages"]])
-        {
-            [[NSFileManager defaultManager] removeItemAtPath: templatePath error: nil];
-            [[NSFileManager defaultManager] moveItemAtPath: [templatePath stringByAppendingString: @"09.pages"] toPath:templatePath error: nil];
-            [[NSFileManager defaultManager] removeItemAtPath: aPath error: nil];
-            [[NSFileManager defaultManager] copyItemAtPath: templatePath toPath:aPath byReplacingExisting:YES error: nil];
-            
-            [self decompressPagesFileIfNecessary: aPath];
-        }
-        
-        if( [[NSFileManager defaultManager] fileExistsAtPath:indexFilePath] == NO)
-        {
-            NSRunCriticalAlertPanel( NSLocalizedString( @"Pages", nil),  NSLocalizedString(@"Horos requires templates files in Pages '09 format. Open your template in Pages, select File menu and Export to Pages '09 format.", nil), NSLocalizedString(@"OK", nil), nil, nil);
-            return NO;
-        }
     }
-    
-	NSError *xmlError = nil;
-	NSStringEncoding xmlFileEncoding = NSUTF8StringEncoding;
-	NSMutableString *xmlContentString = [NSMutableString stringWithContentsOfFile:indexFilePath encoding:xmlFileEncoding error:&xmlError];
+    NSString *templatePath = [[self class] pathForPagesTemplate:templateName];
+    if (!templatePath.length || ![[NSFileManager defaultManager] fileExistsAtPath:templatePath]) {
+        NSRunCriticalAlertPanel(NSLocalizedString(@"Pages", nil), @"%@", NSLocalizedString(@"OK", nil), nil, nil,
+            NSLocalizedString(@"The selected Pages template could not be found. Choose an available template and try again. No report has been changed.", nil));
+        return NO;
+    }
+    NSError *error = nil;
+    BOOL created = HorosCreateReportFromTemplate(templatePath, aPath, ^BOOL(NSString *prepared, NSError **preparationError) {
+        // A template Pages '09 wrote keeps its text in index.xml and can be
+        // filled in here. One that Pages 5 or later wrote keeps it in
+        // Index/*.iwa, where nothing here can reach it - and unpacking it first
+        // would turn the document into a directory - so Pages fills that one in.
+        BOOL isDirectory = NO;
+        BOOL legacy = NO;
+        if ([NSFileManager.defaultManager fileExistsAtPath:prepared isDirectory:&isDirectory] && isDirectory)
+            legacy = [NSFileManager.defaultManager fileExistsAtPath:[prepared stringByAppendingPathComponent:@"index.xml"]];
+        else
+            legacy = HorosPagesArchiveHasIndexXML([NSData dataWithContentsOfFile:prepared options:NSDataReadingMappedIfSafe error:NULL]);
 
-	[self searchAndReplaceFieldsFromStudy:aStudy inString:xmlContentString];
-	
-	if(![xmlContentString writeToFile:indexFilePath atomically:YES encoding:xmlFileEncoding error:&xmlError])
-		return NO;
-	
-	[aStudy setValue: aPath forKey:@"reportURL"];
-	
-	// open the modified .pages file
-	[[NSWorkspace sharedWorkspace] openFile:aPath withApplication:@"Pages" andDeactivate: YES];
-	[NSThread sleepForTimeInterval: 1];
-	
-	// end
-	return YES;
+        if (legacy)
+        {
+            if (![self decompressPagesFileIfNecessary:prepared]) return NO;
+            NSString *indexPath = [prepared stringByAppendingPathComponent:@"index.xml"];
+            NSMutableString *xml = [NSMutableString stringWithContentsOfFile:indexPath encoding:NSUTF8StringEncoding error:preparationError];
+            if (!xml) return NO;
+            [self searchAndReplaceFieldsFromStudy:aStudy inString:xml];
+            return [xml writeToFile:indexPath atomically:YES encoding:NSUTF8StringEncoding error:preparationError];
+        }
+
+        NSDictionary *values = [self reportFieldValuesForStudy:aStudy];
+        NSArray *series = [[BrowserController currentBrowser] childrenArray:aStudy];
+        NSArray *paths = series.count ? [[BrowserController currentBrowser] imagesPathArray:series.firstObject] : nil;
+        return [HorosPagesDocumentFill fillDocumentAtPath:prepared substitute:^NSString *(NSString *line) {
+            NSMutableString *filled = [[line mutableCopy] autorelease];
+            HorosFillReportText(filled, values, ^NSString *(NSString *field) {
+                return paths.count ? [self getDICOMStringValueForField:field inDICOMFile:paths.firstObject] : @"";
+            });
+            return filled;
+        }];
+    }, &error);
+    if (!created) {
+        NSRunCriticalAlertPanel(NSLocalizedString(@"Pages", nil), @"%@", NSLocalizedString(@"OK", nil), nil, nil,
+            NSLocalizedString(@"The Pages report could not be created. Check that Pages can open the template, and that Horos is allowed to control Pages in System Settings > Privacy & Security > Automation. The original template and any existing report have been preserved.", nil));
+        return NO;
+    }
+    [aStudy setValue:aPath forKey:@"reportURL"];
+    if (![[NSWorkspace sharedWorkspace] openFile:aPath withApplication:pagesApplication.path andDeactivate:YES]) {
+        NSRunCriticalAlertPanel(NSLocalizedString(@"Pages", nil), @"%@", NSLocalizedString(@"OK", nil), nil, nil,
+            NSLocalizedString(@"The report was created and attached to the study, but Pages could not open it. Check that Pages can launch, then open the report again. The generated report has been kept.", nil));
+        return NO;
+    }
+    return YES;
 }
 
 + (NSString*) pathForPagesTemplate: (NSString*) templateName
@@ -995,8 +852,7 @@ static int Pages5orHigher = -1;
     while ((file = [directoryEnumerator nextObject]))
     {
         [directoryEnumerator skipDescendents];
-        NSRange rangeOfOsiriX = [file rangeOfString:@"Horos "];
-        if( rangeOfOsiriX.location==0 && rangeOfOsiriX.length==7)
+        if ([file hasPrefix:@"Horos "])
         {
             NSString *fromPath = [templateDirectory stringByAppendingPathComponent: file];
             NSString *toPath = [newDirectory stringByAppendingPathComponent: file];
@@ -1067,10 +923,9 @@ static int Pages5orHigher = -1;
 
 - (void)setTemplateName:(NSString *)aName;
 {
-	[templateName setString:aName];
-	[templateName replaceOccurrencesOfString:@".pages" withString:@"" options:NSLiteralSearch range:templateName.range];
-    [templateName replaceOccurrencesOfString:@".docx" withString:@"" options:NSLiteralSearch range:templateName.range];
-    [templateName replaceOccurrencesOfString:@".doc" withString:@"" options:NSLiteralSearch range:templateName.range];
+    // Resolvers remove only the final extension when comparing names. Keep the
+    // selected filename intact so dots and format-like text in its stem survive.
+    [templateName setString:aName ?: @""];
 }
 
 @end

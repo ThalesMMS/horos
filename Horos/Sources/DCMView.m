@@ -1,3 +1,4 @@
+#include <limits.h>
 /*=========================================================================
  This file is part of the Horos Project (www.horosproject.org)
  
@@ -37,6 +38,7 @@
 
 #import "DCMAbstractSyntaxUID.h"
 #import "DCMView.h"
+#import "Horos-Swift.h"
 #import "StringTexture.h"
 #import "DCMPix.h"
 #import "ROI.h"
@@ -540,6 +542,7 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
 @synthesize volumicSeries;
 @synthesize isKeyView, mouseDragging;
 @synthesize annotationType;
+@synthesize referenceLineAbsenceReason;
 
 - (BOOL) eventToPlugins: (NSEvent*) event
 {
@@ -1417,6 +1420,10 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
         if( [item tag] == [[NSUserDefaults standardUserDefaults] integerForKey:@"CLUTBARS"]) [item setState: NSOnState];
         else [item setState: NSOffState];
     }
+    else if( [item action] == @selector(increaseFontSize:) || [item action] == @selector(decreaseFontSize:))
+    {
+        valid = [DCMView labelFontSizeMenuItemIsEnabled: item];
+    }
     else valid = YES;
     
     if( showDescriptionInLarge)
@@ -1799,7 +1806,9 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
             }
         }
         
-        StringTexture *stringTex = [stringTextureCache objectForKey: str];
+        NSFont *textureFont = fontL == labelFontListGL ? labelFont : fontGL;
+        NSArray *textureKey = @[str, textureFont, @(self.window.backingScaleFactor), [HorosAnnotationPresentation textureCacheTokenForWindow: self.window]];
+        StringTexture *stringTex = [stringTextureCache objectForKey: textureKey];
         if( stringTex == nil)
         {
             if( [stringTextureCache count] > STRCAPACITY)
@@ -1809,14 +1818,17 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
             }
             NSMutableDictionary *stanStringAttrib = [NSMutableDictionary dictionary];
             
-            if( fontL == labelFontListGL) [stanStringAttrib setObject:labelFont forKey:NSFontAttributeName];
-            //			else if( fontL == iChatFontListGL) [stanStringAttrib setObject:iChatFontGL forKey:NSFontAttributeName];
-            else [stanStringAttrib setObject:fontGL forKey:NSFontAttributeName];
+            [stanStringAttrib setObject:textureFont forKey:NSFontAttributeName];
             [stanStringAttrib setObject:[NSColor whiteColor] forKey:NSForegroundColorAttributeName];
             
             stringTex = [[StringTexture alloc] initWithString:str withAttributes:stanStringAttrib];
+            // StringTexture rasterizes without antialiasing unless asked. Every
+            // other caller asks; this one, which draws all of the viewer's
+            // annotations, did not, so they came out hard-edged next to the
+            // smooth ROI labels drawn beside them.
+            [stringTex setAntiAliasing: YES];
             [stringTex genTextureWithBackingScaleFactor:self.window.backingScaleFactor];
-            [stringTextureCache setObject:stringTex forKey:str];
+            [stringTextureCache setObject:stringTex forKey:textureKey];
             [stringTex release];
         }
         
@@ -1834,6 +1846,13 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
             long xc, yc;
             xc = x+2;
             yc = y+1-[stringTex texSize].height;
+            if( recordAnnotationRects)
+            {
+                NSRect occupied = NSMakeRect(xc - drawingFrameRect.size.width/2,
+                    yc - drawingFrameRect.size.height/2, [stringTex texSize].width+1, [stringTex texSize].height+1);
+                [rectArray addObject:[NSValue valueWithRect:occupied]];
+            }
+
             
             if( whiteBackground)
                 glColor4f (1.0f, 1.0f, 1.0f, 1.0f);
@@ -2315,6 +2334,8 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
     [stringID release];
     stringID = nil;
     
+    self.referenceLineAbsenceReason = nil;
+    
     NSAutoreleasePool *pool = [NSAutoreleasePool new];
     @try
     {
@@ -2431,6 +2452,59 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
     COPYSETTINGSINSERIES = b;
 }
 
+// Applies a change of the propagation flag to one series' images.
+//
+// Turning propagation on is a flattening, and is meant to be: every image loses
+// its own settings and takes the one on screen. Turning it off used to be a
+// flattening too - it wrote the current window, scale, rotation, flips and
+// offset onto every image in the series - so the option that exists to give each
+// image its own settings began by making them all identical, and an image's own
+// window could not be recovered afterwards. A heterogeneous series, where every
+// image carries a different WindowCenter, showed one window from beginning to
+// end whichever way the option was set.
+//
+// Off now means off: only the image on screen keeps what is on screen, so
+// nothing changes under the user at the moment they choose it, and every other
+// image is left with whatever it already had - for an untouched image, its own
+// window from the file.
+- (void) writeCopySettingsInSeriesForPixels:(NSArray*) pixels
+{
+    for( DCMPix *pix in pixels)
+    {
+        DicomImage *im = pix.imageObj;
+        
+        if( COPYSETTINGSINSERIES)
+        {
+            if( pix.isLoaded)
+                [pix changeWLWW :curWL :curWW];
+            
+            [im setValue: nil forKey:@"windowWidth"];
+            [im setValue: nil forKey:@"windowLevel"];
+            [im setValue: nil forKey:@"scale"];
+            [im setValue: nil forKey:@"rotationAngle"];
+            [im setValue: nil forKey:@"yFlipped"];
+            [im setValue: nil forKey:@"xFlipped"];
+            [im setValue: nil forKey:@"xOffset"];
+            [im setValue: nil forKey:@"yOffset"];
+        }
+        else if( im == self.imageObj)
+        {
+            [im setValue:[NSNumber numberWithFloat:curWW] forKey:@"windowWidth"];
+            [im setValue:[NSNumber numberWithFloat:curWL] forKey:@"windowLevel"];
+            if( [self isScaledFit] == NO)
+                [im setValue:[NSNumber numberWithFloat:scaleValue] forKey:@"scale"];
+            else
+                [im setValue:nil forKey:@"scale"];
+            [im setValue:[NSNumber numberWithFloat:rotation] forKey:@"rotationAngle"];
+            [im setValue:[NSNumber numberWithBool:yFlipped] forKey:@"yFlipped"];
+            // This wrote the vertical flip into the horizontal one.
+            [im setValue:[NSNumber numberWithBool:xFlipped] forKey:@"xFlipped"];
+            [im setValue:[NSNumber numberWithFloat:origin.x] forKey:@"xOffset"];
+            [im setValue:[NSNumber numberWithFloat:origin.y] forKey:@"yOffset"];
+        }
+    }
+}
+
 - (void) setCOPYSETTINGSINSERIES: (BOOL) b
 {
     ViewerController *v = [self windowController];
@@ -2438,43 +2512,7 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
     COPYSETTINGSINSERIES = b;
     
     for( int i = 0 ; i < [v  maxMovieIndex]; i++)
-    {
-        for( DCMPix *pix in [v pixList: i])
-        {
-            if( pix.isLoaded)
-                [pix changeWLWW :curWL :curWW];
-            
-            if( COPYSETTINGSINSERIES)
-            {
-                DicomImage *im = pix.imageObj;
-                
-                [im setValue: nil forKey:@"windowWidth"];
-                [im setValue: nil forKey:@"windowLevel"];
-                [im setValue: nil forKey:@"scale"];
-                [im setValue: nil forKey:@"rotationAngle"];
-                [im setValue: nil forKey:@"yFlipped"];
-                [im setValue: nil forKey:@"xFlipped"];
-                [im setValue: nil forKey:@"xOffset"];
-                [im setValue: nil forKey:@"yOffset"];
-            }
-            else
-            {
-                DicomImage *im = pix.imageObj;
-                
-                [im setValue:[NSNumber numberWithFloat:curWW] forKey:@"windowWidth"];
-                [im setValue:[NSNumber numberWithFloat:curWL] forKey:@"windowLevel"];
-                if( [self isScaledFit] == NO)
-                    [im setValue:[NSNumber numberWithFloat:scaleValue] forKey:@"scale"];
-                else
-                    [im setValue:nil forKey:@"scale"];
-                [im setValue:[NSNumber numberWithFloat:rotation] forKey:@"rotationAngle"];
-                [im setValue:[NSNumber numberWithBool:yFlipped] forKey:@"yFlipped"];
-                [im setValue:[NSNumber numberWithBool:yFlipped] forKey:@"xFlipped"];
-                [im setValue:[NSNumber numberWithFloat:origin.x] forKey:@"xOffset"];
-                [im setValue:[NSNumber numberWithFloat:origin.y] forKey:@"yOffset"];
-            }
-        }
-    }
+        [self writeCopySettingsInSeriesForPixels: [v pixList: i]];
 }
 
 - (void) switchCopySettingsInSeries:(id) sender
@@ -2492,38 +2530,7 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
                 imageView.COPYSETTINGSINSERIES = COPYSETTINGSINSERIES;
                 
                 for( int i = 0 ; i < [v  maxMovieIndex]; i++)
-                {
-                    for( DCMPix *pix in [v pixList: i])
-                    {
-                        [pix changeWLWW :curWL :curWW];
-                        
-                        if( COPYSETTINGSINSERIES)
-                        {
-                            [pix.imageObj setValue: nil forKey:@"windowWidth"];
-                            [pix.imageObj setValue: nil forKey:@"windowLevel"];
-                            [pix.imageObj setValue: nil forKey:@"scale"];
-                            [pix.imageObj setValue: nil forKey:@"rotationAngle"];
-                            [pix.imageObj setValue: nil forKey:@"yFlipped"];
-                            [pix.imageObj setValue: nil forKey:@"xFlipped"];
-                            [pix.imageObj setValue: nil forKey:@"xOffset"];
-                            [pix.imageObj setValue: nil forKey:@"yOffset"];
-                        }
-                        else
-                        {
-                            [pix.imageObj setValue:[NSNumber numberWithFloat:curWW] forKey:@"windowWidth"];
-                            [pix.imageObj setValue:[NSNumber numberWithFloat:curWL] forKey:@"windowLevel"];
-                            if( [self isScaledFit] == NO)
-                                [pix.imageObj setValue:[NSNumber numberWithFloat:scaleValue] forKey:@"scale"];
-                            else
-                                [pix.imageObj setValue:nil forKey:@"scale"];
-                            [pix.imageObj setValue:[NSNumber numberWithFloat:rotation] forKey:@"rotationAngle"];
-                            [pix.imageObj setValue:[NSNumber numberWithBool:yFlipped] forKey:@"yFlipped"];
-                            [pix.imageObj setValue:[NSNumber numberWithBool:yFlipped] forKey:@"xFlipped"];
-                            [pix.imageObj setValue:[NSNumber numberWithFloat:origin.x] forKey:@"xOffset"];
-                            [pix.imageObj setValue:[NSNumber numberWithFloat:origin.y] forKey:@"yOffset"];
-                        }
-                    }
-                }
+                    [imageView writeCopySettingsInSeriesForPixels: [v pixList: i]];
             }
         }
     }
@@ -2815,6 +2822,12 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
                     {
                         if( [r deleteSelectedPoint] == NO && r.locked == NO)
                         {
+                            if( curROI == r)
+                            {
+                                [curROI autorelease];
+                                curROI = nil;
+                                drawingROI = NO;
+                            }
                             groupID = [r groupID];
                             [[NSNotificationCenter defaultCenter] postNotificationName: OsirixRemoveROINotification object:r userInfo: nil];
                             [rArray removeObjectAtIndex:i];
@@ -3320,9 +3333,20 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
     [super flagsChanged:event];
 }
 
+// A hidden hardware cursor does not imply that input left this Mac: remote
+// control can still deliver events to this viewer's window. Retain the legacy
+// filtering only for hidden-cursor events without a matching local window.
+- (BOOL) shouldIgnoreHiddenCursorEvent:(NSEvent*) event
+{
+    if( CGCursorIsVisible() || lensTexture != nil)
+        return NO;
+    NSWindow *targetWindow = self.window;
+    return targetWindow == nil || event.window != targetWindow;
+}
+
 - (void)mouseUp:(NSEvent *)event
 {
-    if( CGCursorIsVisible() == NO && lensTexture == nil) return; //For Synergy compatibility
+    if( [self shouldIgnoreHiddenCursorEvent:event]) return;
     if ([self eventToPlugins:event]) return;
     
     mouseDragging = NO;
@@ -3469,27 +3493,15 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
 
 -(BOOL) roiTool:(ToolMode) tool
 {
-    switch( tool)
-    {
-        case tMesure:
-        case tROI:
-        case tOval:
-        case tOPolygon:
-        case tCPolygon:
-        case tDynAngle:
-        case tAxis:
-        case tAngle:
-        case tArrow:
-        case tText:
-        case tPencil:
-        case tPlain:
-        case t2DPoint:
-        case tTAGT:
-            return YES;
-        default:;
-    }
-    
-    return NO;
+    // The list used to live here as a switch with a silent default, so a tool
+    // mode added to ToolMode fell through to NO without anyone deciding. A255
+    // asks for the opposite: a mode that does not apply refused for a stated
+    // reason. HorosToolModeCapability carries one row per mode, with that
+    // reason, and a test compares it against the enum in DCMView.h.
+    //
+    // tRepulsor and tROISelector are deliberately not here: they work on ROIs
+    // without drawing one, and each caller of this method names them.
+    return [HorosToolModeCapability drawsROIsWithToolMode: tool];
 }
 
 - (IBAction) selectAll: (id) sender
@@ -3953,7 +3965,7 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
 
 -(void) mouseMoved: (NSEvent*) theEvent
 {
-    if( CGCursorIsVisible() == NO && lensTexture == nil) return; //For Synergy compatibility
+    if( [self shouldIgnoreHiddenCursorEvent:theEvent]) return;
     if( ![[self window] isVisible])
     {
         if( [self is2DViewer] && [[self windowController] FullScreenON])
@@ -4059,17 +4071,17 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
     
     [self.curDCM convertPixX: mouseXPos pixY: mouseYPos toDICOMCoords: location pixelCenter: YES];
     
-    DCMPix	*thickDCM;
+    DCMPix	*thickDCM = nil;
     
-    if (self.curDCM.stack > 1)
-    {
-        long maxVal = curImage+(self.curDCM.stack-1);
-        if( maxVal < 0) maxVal = 0;
-        if( maxVal >= [dcmPixList count]) maxVal = (long)[dcmPixList count]-1;
-        
-        thickDCM = [dcmPixList objectAtIndex: maxVal];
-    }
-    else thickDCM = nil;
+    // This used to ignore flippedData, while -syncMessage: right below honoured
+    // it: a reversed series sent the far end of the slab from the wrong side of
+    // the current slice, and the receiver drew the band there.
+    long farEnd = [HorosThickSlabRange farEndIndexForCurrentIndex: curImage
+                                                           stack: self.curDCM.stack
+                                                           count: [dcmPixList count]
+                                                     flippedData: flippedData];
+    if( farEnd >= 0)
+        thickDCM = [dcmPixList objectAtIndex: farEnd];
     
     int pos = flippedData? (long)[dcmPixList count] -1 -curImage : curImage;
     
@@ -4219,7 +4231,7 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
 
 - (void) mouseDown:(NSEvent *)event
 {
-    if( CGCursorIsVisible() == NO && lensTexture == nil) return; //For Synergy compatibility
+    if( [self shouldIgnoreHiddenCursorEvent:event]) return;
     if ([self eventToPlugins:event]) return;
     
     currentMouseEventTool = -1;
@@ -4844,6 +4856,27 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
     //	NSLog( @"OUT - Pixel coordinates in slice: %f %f slice index: %d", slicePosition[ 0], slicePosition[ 1], (int) slicePosition[ 2]);
 }
 
+static short HorosImageIndexByAddingScroll(short current, double change, short *increment)
+{
+    if (!isfinite(change)) { *increment = 0; return current; }
+    // Keep truncation toward zero for ordinary wheel steps. Clamp before narrowing
+    // so a large event cannot wrap the legacy index to the opposite end of a series.
+    double next = fmax(SHRT_MIN, fmin(SHRT_MAX, (double)current + trunc(change)));
+    *increment = (short)fmax(SHRT_MIN, fmin(SHRT_MAX, next - current));
+    return (short)next;
+}
+
+static NSInteger HorosMovieIndexForScroll(NSInteger current, NSInteger count, double delta)
+{
+    if (count <= 0 || !isfinite(delta) || delta == 0) return current;
+    double change = delta / -2.5;
+    change = change >= 0 ? fmax(1, ceil(change)) : fmin(-1, floor(change));
+    // Reduce before addition; repeated float subtraction can stall for large deltas.
+    double result = fmod((double)current + fmod(change, (double)count), (double)count);
+    if (result < 0) result += count;
+    return (NSInteger)result;
+}
+
 - (void)scrollWheel:(NSEvent *)theEvent
 {
     float reverseScrollWheel;
@@ -4859,6 +4892,15 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
     }
 #endif
     
+    if (!isfinite(deltaX) || !isfinite(deltaY)) return;
+
+    // macOS inverts these deltas when "natural" scrolling is on, while a
+    // click-drag carries no such inversion. Undo it here so a system-wide
+    // setting no longer decides whether the two gestures agree.
+    double deviceSign = [HorosScrollDirection deviceOrientationSignInverted: theEvent.isDirectionInvertedFromDevice];
+    deltaX *= deviceSign;
+    deltaY *= deviceSign;
+
     if( [NSEvent pressedMouseButtons])
         return;
     
@@ -4893,12 +4935,7 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
     
     if( [[NSUserDefaults standardUserDefaults] boolForKey: @"ZoomWithHorizonScroll"] == NO) deltaX = 0;
     
-    if ([[NSUserDefaults standardUserDefaults] boolForKey: @"Scroll Wheel Reversed"])
-        reverseScrollWheel = -1.0;
-    else
-        reverseScrollWheel = 1.0;
-    
-    if( flippedData) reverseScrollWheel *= -1.0;
+    reverseScrollWheel = [HorosScrollDirection wheelSignForFlippedData: flippedData];
     
     if( dcmPixList)
     {
@@ -4929,26 +4966,9 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
                     if( [self is2DViewer] && [[self windowController] maxMovieIndex] > 1)
                     {
                         // 4D Direction scroll - Cardiac CT eg
-                        float change = deltaY / -2.5f;
-                        
-                        if( change >= 0)
-                        {
-                            change = ceil( change);
-                            if( change < 1) change = 1;
-                            
-                            change += [[self windowController] curMovieIndex];
-                            while( change >= [[self windowController] maxMovieIndex]) change -= [[self windowController] maxMovieIndex];
-                        }
-                        else
-                        {
-                            change = floor( change);
-                            if( change > -1) change = -1;
-                            
-                            change += [[self windowController] curMovieIndex];
-                            while( change < 0) change += [[self windowController] maxMovieIndex];
-                        }
-                        
-                        [[self windowController] setMovieIndex: change];
+                        NSInteger next = HorosMovieIndexForScroll([[self windowController] curMovieIndex],
+                                                                 [[self windowController] maxMovieIndex], deltaY);
+                        [[self windowController] setMovieIndex:next];
                     }
                 }
                 else if( [theEvent modifierFlags]  & NSShiftKeyMask)
@@ -4960,16 +4980,14 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
                         change = ceil( change);
                         if( change < 1) change = 1;
                         
-                        inc = self.curDCM.stack * change;
-                        curImage += inc;
+                        curImage = HorosImageIndexByAddingScroll(curImage, (double)self.curDCM.stack * change, &inc);
                     }
                     else
                     {
                         change = floor( change);
                         if( change > -1) change = -1;
                         
-                        inc = self.curDCM.stack * change;
-                        curImage += inc;
+                        curImage = HorosImageIndexByAddingScroll(curImage, (double)self.curDCM.stack * change, &inc);
                     }
                 }
                 else
@@ -4983,8 +5001,7 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
                         else if( change < 1)
                             change = 1;
                         
-                        inc = _imageRows * _imageColumns * change;
-                        curImage += inc;
+                        curImage = HorosImageIndexByAddingScroll(curImage, (double)_imageRows * _imageColumns * change, &inc);
                     }
                     else
                     {
@@ -4993,8 +5010,7 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
                         else if( change > -1)
                             change = -1;
                         
-                        inc = _imageRows * _imageColumns * change;
-                        curImage += inc;
+                        curImage = HorosImageIndexByAddingScroll(curImage, (double)_imageRows * _imageColumns * change, &inc);
                     }
                 }
             }
@@ -5119,7 +5135,8 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
                 else [[self windowController] computeContextualMenu];
             }
             
-            [NSMenu popUpContextMenu:[self menu] withEvent:event forView:self];
+            NSMenu *menu = [self menuForEvent:event];
+            if( menu) [NSMenu popUpContextMenu:menu withEvent:event forView:self];
         }
     }
     
@@ -5160,7 +5177,27 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
     contextualMenuInWindowPosX = contextualMenuWhere.x;
     contextualMenuInWindowPosY = contextualMenuWhere.y;
     if (([theEvent modifierFlags] & NSControlKeyMask) && ([theEvent modifierFlags] & NSAlternateKeyMask)) return nil;
-    return [self menu];
+    NSMenu *menu = [[[self menu] copy] autorelease];
+    if( curRoiList.count && menu)
+    {
+        [menu addItem:[NSMenuItem separatorItem]];
+        NSMenuItem *labels = [menu addItemWithTitle:NSLocalizedString(@"ROI Labels...", nil)
+            action:@selector(showCompleteROILabels:) keyEquivalent:@""];
+        labels.target = self;
+    }
+    return menu;
+}
+
+- (IBAction) showCompleteROILabels:(id) sender
+{
+    if( self.window == nil) return;
+    NSMutableArray *labels = [NSMutableArray array];
+    // Snapshot complete fields, independently of compact or overflow rendering.
+    for( ROI *roi in curRoiList)
+        [labels addObject:@[roi.textualBoxLine1 ?: @"", roi.textualBoxLine2 ?: @"",
+            roi.textualBoxLine3 ?: @"", roi.textualBoxLine4 ?: @"",
+            roi.textualBoxLine5 ?: @"", roi.textualBoxLine6 ?: @""]];
+    [HorosROILabelPresentation showLabels:labels inWindow:self.window];
 }
 
 - (IBAction) decreaseThickness: (id) sender
@@ -5196,7 +5233,7 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
     if( curImage < 0)
         return;
     
-    if( CGCursorIsVisible() == NO && lensTexture == nil) return; //For Synergy compatibility
+    if( [self shouldIgnoreHiddenCursorEvent:event]) return;
     
     if ([self eventToPlugins:event]) return;
     
@@ -5213,11 +5250,13 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
         if( [[self windowController] windowWillClose]) return;
     }
     
-    // We have dragged before timer went off turn off timer and contine with drag
-    if (_dragInProgress == NO && ([event deltaX] != 0 || [event deltaY] != 0))
+    // Movement before the still-press timer is WW/WL, scroll or ROI — not export.
+    if (_dragInProgress == NO &&
+        [HorosViewerImageDrag shouldCancelWaitForClinicalMoveWithDeltaX: [event deltaX]
+                                                                  deltaY: [event deltaY]])
         [self deleteMouseDownTimer];
     
-    // we are dragging don't do anything
+    // The file-promise session owns the pointer until it ends.
     if (_dragInProgress == YES) return;
     
     // if we have images do drag
@@ -5579,18 +5618,21 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
     {
         previmage = curImage;
         
-        if( scrollMode == 2)
-        {
-            curImage = startImage + ((current.x - start.x) * [dcmPixList count] )/ ([self frame].size.width/2);
-        }
-        else if( scrollMode == 1)
-        {
-            curImage = startImage + ((start.y - current.y) * [dcmPixList count] )/ ([self frame].size.height/2);
-        }
-        
-        if( curImage < 0) curImage = 0;
-        if( curImage >= [dcmPixList count]) curImage = (long)[dcmPixList count] -1;
-        
+        NSUInteger count = dcmPixList.count;
+        if (count == 0 || !isfinite(current.x) || !isfinite(current.y)) return;
+        CGFloat extent = scrollMode == 2 ? NSWidth(self.frame) : NSHeight(self.frame);
+        if ((scrollMode != 1 && scrollMode != 2) || !isfinite(extent) || extent <= 0) return;
+        double movement = scrollMode == 2 ? current.x - start.x : start.y - current.y;
+        // The wheel obeyed the reversal preference and the flipped series order
+        // while the drag ignored both, so the two gestures walked the series in
+        // opposite directions as soon as either was in play.
+        movement *= [HorosScrollDirection dragSignForFlippedData: flippedData];
+        double proposedIndex = startImage + movement * (double)count / (extent / 2.0);
+        if (!isfinite(proposedIndex)) return;
+        // Clamp in floating point before narrowing to the legacy short index.
+        double lastIndex = MIN((double)count - 1, (double)SHRT_MAX);
+        curImage = (short)fmax(0, fmin(proposedIndex, lastIndex));
+
         if(previmage != curImage)
         {
             if( listType == 'i') [self setIndex:curImage];
@@ -6573,6 +6615,11 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
                name:  OsirixLabelGLFontChangeNotification
              object: nil];
     
+    [nc addObserver: self
+           selector: @selector(screenParametersChanged:)
+               name: NSApplicationDidChangeScreenParametersNotification
+             object: nil];
+    
     [nc	addObserver: self
            selector: @selector(changeWLWW:)
                name: OsirixChangeWLWWNotification
@@ -6673,15 +6720,12 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
     if( curImage < 0)
         return nil;
     
-    if( self.curDCM.stack > 1)
-    {
-        long maxVal = flippedData? curImage-(self.curDCM.stack-1) : curImage+self.curDCM.stack-1;
-        if( maxVal < 0) maxVal = 0;
-        if( maxVal >= [dcmPixList count]) maxVal = (long)[dcmPixList count]-1;
-        
-        thickDCM = [dcmPixList objectAtIndex: maxVal];
-    }
-    else thickDCM = nil;
+    long farEnd = [HorosThickSlabRange farEndIndexForCurrentIndex: curImage
+                                                           stack: self.curDCM.stack
+                                                           count: [dcmPixList count]
+                                                     flippedData: flippedData];
+    if( farEnd >= 0)
+        thickDCM = [dcmPixList objectAtIndex: farEnd];
     
     int pos = flippedData? (long)[dcmPixList count] -1 -curImage : curImage;
     
@@ -6740,6 +6784,15 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
     }
 }
 
+- (void) invalidateReferenceLines
+{
+    sliceFromTo[ 0][ 0] = HUGE_VALF;
+    sliceFromTo2[ 0][ 0] = HUGE_VALF;
+    sliceFromToS[ 0][ 0] = HUGE_VALF;
+    sliceFromToE[ 0][ 0] = HUGE_VALF;
+    sliceVector[0] = sliceVector[1] = sliceVector[2] = 0;
+}
+
 - (void) computeSliceIntersection: (DCMPix*) oPix sliceFromTo: (float[2][3]) sft vector: (float*) vectorB origin: (float*) originB
 {
     // Compute Slice From To Points
@@ -6747,8 +6800,8 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
     float c1[ 3], c2[ 3], r[ 3], sc[ 3];
     int order[ 2];
     
-    originB[ 0] += [oPix pixelSpacingX] / 2.;
-    originB[ 1] += [oPix pixelSpacingY] / 2.;
+    // originB is the physical DICOM plane origin, shared by all slice references.
+    // Pixel-center offsets belong to the coordinate conversions below, not this plane.
     
     sft[ 0][ 0] = HUGE_VALF; sft[ 0][ 1] = HUGE_VALF; sft[ 0][ 2] = HUGE_VALF;
     sft[ 1][ 0] = HUGE_VALF; sft[ 1][ 1] = HUGE_VALF; sft[ 1][ 2] = HUGE_VALF;
@@ -6878,11 +6931,7 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
     }
     else
     {
-        sliceVector[0] = sliceVector[1] = sliceVector[2] = 0;
-        sliceFromTo[ 0][ 0] = HUGE_VALF;
-        sliceFromTo2[ 0][ 0] = HUGE_VALF;
-        sliceFromToS[ 0][ 0] = HUGE_VALF;
-        sliceFromToE[ 0][ 0] = HUGE_VALF;
+        [self invalidateReferenceLines];
     }
     
     if( csliceFromToThickness != sliceFromToThickness) changed = YES;
@@ -6976,25 +7025,35 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
                 point3D = YES;
             }
             
-            if( [oStudyId isEqualToString:[[dcmFilesList objectAtIndex: newImage] valueForKeyPath:@"series.study.studyInstanceUID"]])
-            {
-                if( self.curDCM.frameofReferenceUID && oFrameofReferenceUID && [[NSUserDefaults standardUserDefaults] boolForKey: @"UseFrameofReferenceUID"])
-                {
-                    if( oFrameofReferenceUID == nil || self.curDCM.frameofReferenceUID == nil || [oFrameofReferenceUID isEqualToString: self.curDCM.frameofReferenceUID])
-                        same3DReferenceWorld = YES;
-                    else
-                        NSLog( @"-- same studyInstanceUID, but different frameofReferenceUID : NO cross reference lines displayed:\r%@\r%@",oFrameofReferenceUID,self.curDCM.frameofReferenceUID);
-                }
-                else
-                    same3DReferenceWorld = YES;
-            }
+            NSString *destinationStudy = [[dcmFilesList objectAtIndex: newImage] valueForKeyPath:@"series.study.studyInstanceUID"];
+            BOOL useFrameOfReference = [[NSUserDefaults standardUserDefaults] boolForKey: HorosViewerReferenceLines.frameOfReferencePreferenceKey];
+            BOOL sameStudyOnly = [[NSUserDefaults standardUserDefaults] boolForKey: HorosViewerReferenceLines.sameStudyPreferenceKey];
+            same3DReferenceWorld = [HorosViewerReferenceLines sameThreeDWorldDestinationFrame: self.curDCM.frameofReferenceUID
+                                                                                sourceFrame: oFrameofReferenceUID
+                                                                           destinationStudy: destinationStudy
+                                                                                sourceStudy: oStudyId
+                                                                        useFrameOfReference: useFrameOfReference];
             
             BOOL registeredViewer = NO;
             
             if( [[self windowController] registeredViewer] == [otherView windowController] || [[otherView windowController] registeredViewer] == [self windowController])
                 registeredViewer = YES;
             
-            if( same3DReferenceWorld || registeredViewer || [[NSUserDefaults standardUserDefaults] boolForKey:@"SAMESTUDY"] == NO || syncSeriesIndex != -1)  // We received a message from the keyWindow -> display the slice cut to our window!
+            NSString *relationshipReason = [HorosViewerReferenceLines absenceReasonDestinationFrame: self.curDCM.frameofReferenceUID
+                                                                                      sourceFrame: oFrameofReferenceUID
+                                                                                 destinationStudy: destinationStudy
+                                                                                      sourceStudy: oStudyId
+                                                                              useFrameOfReference: useFrameOfReference
+                                                                                    sameStudyOnly: sameStudyOnly
+                                                                                       registered: registeredViewer];
+            self.referenceLineAbsenceReason = relationshipReason;
+            if( relationshipReason.length)
+                NSLog( @"-- %@%@\r%@\r%@", [HorosViewerReferenceLines logPrefix], relationshipReason, oFrameofReferenceUID, self.curDCM.frameofReferenceUID);
+            
+            if( [HorosViewerReferenceLines admitSynchronizationSameWorld: same3DReferenceWorld
+                                                             registered: registeredViewer
+                                                          sameStudyOnly: sameStudyOnly
+                                                             manualSync: syncSeriesIndex != -1])  // We received a message from the keyWindow -> display the slice cut to our window!
             {
                 if( same3DReferenceWorld || registeredViewer)
                 {
@@ -7034,25 +7093,20 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
                 // Absolute Vodka
                 if( syncro == syncroABS && point3D == NO && syncSeriesIndex == -1)
                 {
-                    if( flippedData) newImage = (long)[dcmPixList count] -1 -pos;
-                    else newImage = pos;
-                    
-                    if( newImage >= [dcmPixList count]) newImage = [dcmPixList count] - 1;
-                    if( newImage < 0) newImage = 0;
+                    NSInteger mapped = [HorosSyncSeriesIndex absoluteIndexForPosition: pos
+                                                                          count: [dcmPixList count]
+                                                                    flippedData: flippedData];
+                    if( mapped != HorosSyncSeriesIndex.noIndex) newImage = mapped;
                 }
                 
                 // Absolute Ratio
                 if( syncro == syncroRatio && point3D == NO && syncSeriesIndex == -1)
                 {
-                    float ratio = (float) pos / (float) [[otherView dcmPixList] count];
-                    
-                    int ratioPos = round( ratio * (float) [dcmPixList count]);
-                    
-                    if( flippedData) newImage = (long)[dcmPixList count] -1 -ratioPos;
-                    else newImage = ratioPos;
-                    
-                    if( newImage >= [dcmPixList count]) newImage = [dcmPixList count] - 1;
-                    if( newImage < 0) newImage = 0;
+                    NSInteger mapped = [HorosSyncSeriesIndex ratioIndexForPosition: pos
+                                                                 sourceCount: [[otherView dcmPixList] count]
+                                                                       count: [dcmPixList count]
+                                                                 flippedData: flippedData];
+                    if( mapped != HorosSyncSeriesIndex.noIndex) newImage = mapped;
                 }
                 
                 // Based on Location
@@ -7086,7 +7140,7 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
                                     [oPix convertPixX: oPix.pwidth/2 pixY: oPix.pheight/2 toDICOMCoords: centerPix];
                                     
                                     float oPixOrientation[9]; [oPix orientation:oPixOrientation];
-                                    index = [self findPlaneForPoint: centerPix preferParallelTo:oPixOrientation localPoint: nil distanceWithPlane: &smallestdiff];
+                                    index = [self findPlaneForPoint: centerPix preferParallelTo:oPixOrientation localPoint: nil distanceWithPlane: &smallestdiff preferImageType:oPix.imageType];
                                 }
                                 else
                                 {
@@ -7119,7 +7173,11 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
                                         
                                         if( fdiff < 0) fdiff = -fdiff;
                                         
-                                        if( fdiff < smallestdiff || smallestdiff == -1)
+                                        NSString *sourceType = oPix.imageType;
+                                        BOOL matchingType = sourceType.length && [[(DCMPix*)[dcmPixList objectAtIndex:i] imageType] isEqualToString:sourceType];
+                                        BOOL selectedMatchingType = index >= 0 && sourceType.length && [[(DCMPix*)[dcmPixList objectAtIndex:index] imageType] isEqualToString:sourceType];
+                                        if( fdiff < smallestdiff || smallestdiff == -1 ||
+                                            (fdiff == smallestdiff && matchingType && !selectedMatchingType))
                                         {
                                             smallestdiff = fdiff;
                                             index = i;
@@ -7160,33 +7218,34 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
                     }
                     else if( volumicSeries == NO && [otherView volumicSeries] == NO)	// For example time or functional series
                     {
-                        if( [[NSUserDefaults standardUserDefaults] integerForKey: @"DefaultModeForNonVolumicSeries"] == syncroRatio)
-                        {
-                            float ratio = (float) pos / (float) [[otherView dcmPixList] count];
-                            int ratioPos = round( ratio * (float) [dcmPixList count]);
-                            
-                            if( flippedData) newImage = (long)[dcmPixList count] -1 -ratioPos;
-                            else newImage = ratioPos;
-                        }
-                        else if( [[NSUserDefaults standardUserDefaults] integerForKey: @"DefaultModeForNonVolumicSeries"] == syncroABS)
-                        {
-                            if( flippedData) newImage = (long)[dcmPixList count] -1 -pos;
-                            else newImage = pos;
-                        }
+                        // The same two mappings as above; they were written out
+                        // a second time here, which is how two copies of one
+                        // rule drift apart.
+                        NSInteger nonVolumicMode = [[NSUserDefaults standardUserDefaults] integerForKey: @"DefaultModeForNonVolumicSeries"];
+                        NSInteger mapped = HorosSyncSeriesIndex.noIndex;
                         
-                        if( newImage >= [dcmPixList count]) newImage = [dcmPixList count] - 1;
-                        if( newImage < 0) newImage = 0;
+                        if( nonVolumicMode == syncroRatio)
+                            mapped = [HorosSyncSeriesIndex ratioIndexForPosition: pos
+                                                                     sourceCount: [[otherView dcmPixList] count]
+                                                                           count: [dcmPixList count]
+                                                                     flippedData: flippedData];
+                        else if( nonVolumicMode == syncroABS)
+                            mapped = [HorosSyncSeriesIndex absoluteIndexForPosition: pos
+                                                                              count: [dcmPixList count]
+                                                                        flippedData: flippedData];
+                        
+                        if( mapped != HorosSyncSeriesIndex.noIndex) newImage = mapped;
                     }
                 }
                 
                 // Relative
                 if( syncro == syncroREL && point3D == NO && syncSeriesIndex == -1)
                 {
-                    if( flippedData) newImage -= diff;
-                    else newImage += diff;
-                    
-                    if( newImage < 0) newImage += [dcmPixList count];
-                    if( newImage >= [dcmPixList count]) newImage -= [dcmPixList count];
+                    NSInteger mapped = [HorosSyncSeriesIndex relativeIndexForCurrent: newImage
+                                                                    difference: diff
+                                                                         count: [dcmPixList count]
+                                                                   flippedData: flippedData];
+                    if( mapped != HorosSyncSeriesIndex.noIndex) newImage = mapped;
                 }
                 
                 // Relatif
@@ -7206,53 +7265,28 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
                     }
                 }
                 
-                if( same3DReferenceWorld || registeredViewer)
+                BOOL displaySourceLines = [HorosViewerReferenceLines shouldDisplaySourceLinesDestinationIsKey: (selfViewer == frontMostViewer)
+                                                                                                 sourceIsKey: (otherViewer == frontMostViewer)
+                                                                                         sourceIsFullscreen: [otherView.windowController FullScreenON]];
+                if( [HorosViewerReferenceLines shouldComputeLinesSameWorld: same3DReferenceWorld registered: registeredViewer] && displaySourceLines)
                 {
-                    if( (selfViewer != frontMostViewer && otherViewer == frontMostViewer) || [otherView.windowController FullScreenON])
-                    {
-                        if( same3DReferenceWorld || registeredViewer)
-                        {
-                            if( [self computeSlice: oPix :oPix2])
-                                [self setNeedsDisplay:YES];
-                        }
-                        else
-                        {
-                            if( sliceFromTo[ 0][ 0] != HUGE_VALF && (sliceVector[ 0] != 0 || sliceVector[ 1] != 0  || sliceVector[ 2] != 0))
-                            {
-                                sliceFromTo[ 0][ 0] = HUGE_VALF;
-                                sliceFromTo2[ 0][ 0] = HUGE_VALF;
-                                sliceFromToS[ 0][ 0] = HUGE_VALF;
-                                sliceFromToE[ 0][ 0] = HUGE_VALF;
-                                sliceVector[0] = sliceVector[1] = sliceVector[2] = 0;
-                                [self setNeedsDisplay:YES];
-                            }
-                        }
-                    }
+                    if( [self computeSlice: oPix :oPix2])
+                        [self setNeedsDisplay:YES];
+                    if( sliceFromTo[ 0][ 0] == HUGE_VALF)
+                        self.referenceLineAbsenceReason = [HorosViewerReferenceLines reasonForParallelPlanes];
                     else
-                    {
-                        if( sliceFromTo[ 0][ 0] != HUGE_VALF && (sliceVector[ 0] != 0 || sliceVector[ 1] != 0  || sliceVector[ 2] != 0))
-                        {
-                            sliceFromTo[ 0][ 0] = HUGE_VALF;
-                            sliceFromTo2[ 0][ 0] = HUGE_VALF;
-                            sliceFromToS[ 0][ 0] = HUGE_VALF;
-                            sliceFromToE[ 0][ 0] = HUGE_VALF;
-                            sliceVector[0] = sliceVector[1] = sliceVector[2] = 0;
-                            [self setNeedsDisplay:YES];
-                        }
-                    }
+                        self.referenceLineAbsenceReason = nil;
                 }
-            }
-            else
-            {
-                if( sliceFromTo[ 0][ 0] != HUGE_VALF && (sliceVector[ 0] != 0 || sliceVector[ 1] != 0  || sliceVector[ 2] != 0))
+                else if( sliceFromTo[ 0][ 0] != HUGE_VALF && (sliceVector[ 0] != 0 || sliceVector[ 1] != 0  || sliceVector[ 2] != 0))
                 {
-                    sliceFromTo[ 0][ 0] = HUGE_VALF;
-                    sliceFromTo2[ 0][ 0] = HUGE_VALF;
-                    sliceFromToS[ 0][ 0] = HUGE_VALF;
-                    sliceFromToE[ 0][ 0] = HUGE_VALF;
-                    sliceVector[0] = sliceVector[1] = sliceVector[2] = 0;
+                    [self invalidateReferenceLines];
                     [self setNeedsDisplay:YES];
                 }
+            }
+            else if( sliceFromTo[ 0][ 0] != HUGE_VALF && (sliceVector[ 0] != 0 || sliceVector[ 1] != 0  || sliceVector[ 2] != 0))
+            {
+                [self invalidateReferenceLines];
+                [self setNeedsDisplay:YES];
             }
         }
         
@@ -7317,6 +7351,21 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
     
     if( ww)
         [self setWLWW: wl :ww];
+}
+
+- (void)screenParametersChanged:(NSNotification*)note
+{
+    // Profile and monitor changes do not always alter backingScaleFactor, so
+    // the scale path in drawRect cannot be the only cache invalidation.
+    [DCMView purgeStringTextureCache];
+    for( NSArray *rois in dcmRoiList)
+    {
+        for( ROI *r in rois)
+            [r updateLabelFont];
+    }
+    if( self.window.backingScaleFactor != 0)
+        [[NSNotificationCenter defaultCenter] postNotificationName: OsirixLabelGLFontChangeNotification object: self];
+    [self setNeedsDisplay:YES];
 }
 
 -(void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)change context:(void *)context
@@ -7898,9 +7947,9 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
             
             // retain all DCMPix from groups with at least half the number of images with the most common imageType
             NSMutableArray* r = [NSMutableArray array];
-            for (NSArray* group in dcmPixByImageTypeArrays)
-                if (group.count >= maxCount/2)
-                    [r addObjectsFromArray:group];
+            for (DCMPix *pix in input)
+                if ([[dcmPixByImageType objectForKey:pix.imageType ?: @""] count] >= maxCount/2)
+                    [r addObject:pix];
             
             return r;
         }
@@ -7913,6 +7962,11 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
 }
 
 - (int) findPlaneForPoint:(float*) pt preferParallelTo:(float*)parto localPoint:(float*) location distanceWithPlane: (float*) distanceResult
+{
+    return [self findPlaneForPoint:pt preferParallelTo:parto localPoint:location distanceWithPlane:distanceResult preferImageType:nil];
+}
+
+- (int) findPlaneForPoint:(float*) pt preferParallelTo:(float*)parto localPoint:(float*) location distanceWithPlane:(float*)distanceResult preferImageType:(NSString*)preferredImageType
 {
     int		ii = -1;
     float	vectors[ 9], orig[ 3], locationTemp[ 3];
@@ -7931,7 +7985,7 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
             currParallel = YES;
     }
     
-    int i = 0;
+    DCMPix *selectedPix = nil;
     for( DCMPix* pix in cleanedOutDcmPixArray)
     {
         if( volumicData != 1)
@@ -7947,7 +8001,10 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
         [pix origin: orig];
         tempDistance = [DCMView pbase_Plane: pt :orig :&(vectors[ 6]) :locationTemp];
         
-        if ((!vParallel && currParallel) || (currParallel == vParallel && tempDistance < distance))
+        BOOL matchingType = preferredImageType.length && [pix.imageType isEqualToString:preferredImageType];
+        BOOL selectedMatchingType = preferredImageType.length && [selectedPix.imageType isEqualToString:preferredImageType];
+        if ((!vParallel && currParallel) || (currParallel == vParallel &&
+            (tempDistance < distance || (tempDistance == distance && matchingType && !selectedMatchingType))))
         {
             vParallel = currParallel;
             
@@ -7959,10 +8016,17 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
             }
             
             distance = tempDistance;
-            ii = i;
+            selectedPix = pix;
         }
-        
-        i++;
+    }
+
+    // Filtering by image type can reorder pixels or remove earlier instances.
+    // Callers index dcmPixList, so resolve the selected object in that array.
+    if (selectedPix)
+    {
+        NSUInteger originalIndex = [dcmPixList indexOfObjectIdenticalTo:selectedPix];
+        if (originalIndex != NSNotFound)
+            ii = (int)originalIndex;
     }
     
     if( ii != -1 )
@@ -8041,6 +8105,27 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
     {
         [self DrawNSStringGL: @"VOI LUT Applied" : fontListGL :size.origin.x + size.size.width/2 :yPosition align:DCMViewTextAlignCenter useStringTexture: YES];
         yPosition += stringSize.height + 3;
+    }
+    
+    // An empty frame is otherwise indistinguishable from a dark one, and the
+    // only thing that said which it was went to the console.
+    if( self.curDCM.missingPixelsReason.length)
+    {
+        [self DrawNSStringGL: self.curDCM.missingPixelsReason : fontListGL :size.origin.x + size.size.width/2 :yPosition align:DCMViewTextAlignCenter useStringTexture: YES];
+        yPosition += stringSize.height + 3;
+    }
+    
+    if( [self is2DViewer] && self.window.isKeyWindow == NO)
+    {
+        NSString *overlay = [HorosViewerReferenceLines overlayTextDisplayingLines: DISPLAYCROSSREFERENCELINES
+                                                                  annotationType: annotationType
+                                                                   hasFiniteLine: (sliceFromTo[ 0][ 0] != HUGE_VALF)
+                                                            relationshipReason: self.referenceLineAbsenceReason];
+        if( overlay.length)
+        {
+            [self DrawNSStringGL: overlay : fontListGL :size.origin.x + size.size.width/2 :yPosition align:DCMViewTextAlignCenter useStringTexture: YES];
+            yPosition += stringSize.height + 3;
+        }
     }
     
     //Bottom
@@ -8575,8 +8660,12 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
                         }
                         else if( [[annot objectAtIndex:j] isEqualToString: @"PatientName"])
                         {
-                            if( annotFull == annotationType && [[dcmFilesList objectAtIndex: 0] valueForKeyPath:@"series.study.name"])
-                                [tempString appendString: [[dcmFilesList objectAtIndex: 0] valueForKeyPath:@"series.study.name"]];
+                            if( annotFull == annotationType && curImage >= 0 && curImage < dcmFilesList.count)
+                            {
+                                NSString *patientName = [[dcmFilesList objectAtIndex: curImage] valueForKeyPath:@"series.study.name"];
+                                if( patientName.length)
+                                    [tempString appendString: patientName];
+                            }
                         }
                         else if( fullText)
                         {
@@ -8756,6 +8845,16 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
         c[ 1][ 0] += a[0]*shift;	c[ 1][ 1] -= a[1]*shift;
     }
     
+    NSPoint (^viewPoint)(float, float) = ^(float sx, float sy) {
+        return [HorosViewerReferenceLines renderedPointSliceX: sx
+                                                       sliceY: sy
+                                                pixelSpacingX: self.curDCM.pixelSpacingX
+                                                pixelSpacingY: self.curDCM.pixelSpacingY
+                                                        width: self.curDCM.pwidth
+                                                       height: self.curDCM.pheight
+                                                        scale: scaleValue];
+    };
+    
     if( showPoint)
     {
         glEnable(GL_POINT_SMOOTH);
@@ -8764,8 +8863,8 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
         glBegin( GL_POINTS);
         float mx = (c[ 0][ 0] + c[ 1][ 0]) / 2.;
         float my = (c[ 0][ 1] + c[ 1][ 1]) / 2.;
-        
-        glVertex2f( scaleValue*(mx/self.curDCM.pixelSpacingX-self.curDCM.pwidth/2.), scaleValue*( my/self.curDCM.pixelSpacingY - self.curDCM.pheight /2.));
+        NSPoint mid = viewPoint(mx, my);
+        glVertex2f( mid.x, mid.y);
         glEnd();
     }
     else
@@ -8774,12 +8873,16 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
         glBlendFunc( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
         glEnable(GL_BLEND);
         glBegin(GL_LINES);
-        glVertex2f( scaleValue*(c[ 0][ 0]/self.curDCM.pixelSpacingX-self.curDCM.pwidth/2.), scaleValue*(c[ 0][ 1]/self.curDCM.pixelSpacingY - self.curDCM.pheight /2.));
+        NSPoint start = viewPoint(c[ 0][ 0], c[ 0][ 1]);
+        glVertex2f( start.x, start.y);
         
         if( half)
             glVertex2f( 0, 0);
         else
-            glVertex2f( scaleValue*(c[ 1][ 0]/self.curDCM.pixelSpacingX-self.curDCM.pwidth/2.), scaleValue*(c[ 1][ 1]/self.curDCM.pixelSpacingY - self.curDCM.pheight /2.));
+        {
+            NSPoint end = viewPoint(c[ 1][ 0], c[ 1][ 1]);
+            glVertex2f( end.x, end.y);
+        }
         glEnd();
     }
     
@@ -8787,14 +8890,18 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
     if( perpendicular)
     {
         glLineWidth(1.0 * self.window.backingScaleFactor);
+        NSPoint plus0 = viewPoint(c[ 0][ 0]+a[0]*sliceFromToThickness/2., c[ 0][ 1]-a[1]*sliceFromToThickness/2.);
+        NSPoint plus1 = viewPoint(c[ 1][ 0]+a[0]*sliceFromToThickness/2., c[ 1][ 1]-a[1]*sliceFromToThickness/2.);
         glBegin(GL_LINES);
-        glVertex2f( scaleValue*((c[ 0][ 0]+a[0]*sliceFromToThickness/2.)/self.curDCM.pixelSpacingX-self.curDCM.pwidth/2.), scaleValue*((c[ 0][ 1]-a[1]*sliceFromToThickness/2.)/self.curDCM.pixelSpacingY - self.curDCM.pheight /2.));
-        glVertex2f( scaleValue*((c[ 1][ 0]+a[0]*sliceFromToThickness/2.)/self.curDCM.pixelSpacingX-self.curDCM.pwidth/2.), scaleValue*((c[ 1][ 1]-a[1]*sliceFromToThickness/2.)/self.curDCM.pixelSpacingY - self.curDCM.pheight /2.));
+        glVertex2f( plus0.x, plus0.y);
+        glVertex2f( plus1.x, plus1.y);
         glEnd();
         
+        NSPoint minus0 = viewPoint(c[ 0][ 0]-a[0]*sliceFromToThickness/2., c[ 0][ 1]+a[1]*sliceFromToThickness/2.);
+        NSPoint minus1 = viewPoint(c[ 1][ 0]-a[0]*sliceFromToThickness/2., c[ 1][ 1]+a[1]*sliceFromToThickness/2.);
         glBegin(GL_LINES);
-        glVertex2f( scaleValue*((c[ 0][ 0]-a[0]*sliceFromToThickness/2.)/self.curDCM.pixelSpacingX-self.curDCM.pwidth/2.), scaleValue*((c[ 0][ 1]+a[1]*sliceFromToThickness/2.)/self.curDCM.pixelSpacingY - self.curDCM.pheight /2.));
-        glVertex2f( scaleValue*((c[ 1][ 0]-a[0]*sliceFromToThickness/2.)/self.curDCM.pixelSpacingX-self.curDCM.pwidth/2.), scaleValue*((c[ 1][ 1]+a[1]*sliceFromToThickness/2.)/self.curDCM.pixelSpacingY - self.curDCM.pheight /2.));
+        glVertex2f( minus0.x, minus0.y);
+        glVertex2f( minus1.x, minus1.y);
         glEnd();
     }
 }
@@ -8929,6 +9036,7 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
 - (void) drawRect:(NSRect)aRect withContext:(NSOpenGLContext *)ctx
 {
     long clutBars = CLUTBARS, annotations = annotationType;
+    BOOL preparedROILabels = NO;
     BOOL frontMost = NO, is2DViewer = [self is2DViewer];
     float sf = self.window.backingScaleFactor;
     
@@ -9412,7 +9520,6 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
                     BOOL resetData = NO;
                     if(_imageColumns > 1 || _imageRows > 1) resetData = YES;	//For alias ROIs
                     
-                    NSSortDescriptor * roiSorting = [[[NSSortDescriptor alloc] initWithKey:@"uniqueID" ascending:NO] autorelease];
                     
                     rectArray = [[NSMutableArray alloc] initWithCapacity: [curRoiList count]];
                     
@@ -9432,39 +9539,8 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
                     [[OSIEnvironment sharedEnvironment] drawDCMView:self];
 #endif
                     
-                    if ( !suppress_labels)
-                    {
-                        NSArray	*sortedROIs = [curRoiList sortedArrayUsingDescriptors: [NSArray arrayWithObject: roiSorting]];
-                        
-                        BOOL drawingRoiMode = NO;
-                        for( ROI *r in sortedROIs)
-                        {
-                            if( r.ROImode == ROI_drawing)
-                                drawingRoiMode = YES;
-                        }
-                        
-                        if( drawingRoiMode == NO)
-                        {
-                            for( int i = (long)[sortedROIs count]-1; i>=0; i--)
-                            {
-                                ROI *r = [[sortedROIs objectAtIndex:i] retain];
-                                
-                                @try
-                                {
-                                    [r drawTextualData];
-                                }
-                                @catch (NSException * e)
-                                {
-                                    NSLog( @"drawTextualData ROI Exception : %@", e);
-                                }
-                                
-                                [r release];
-                            }
-                        }
-                    }
-                    
-                    [rectArray release];
-                    rectArray = nil;
+                    // Place text after this frame's fixed annotation bounds are known.
+                    preparedROILabels = YES;
                 }
                 
                 if( drawROI && is2DViewer == YES) [[[self windowController] roiLock] unlock];
@@ -9692,6 +9768,7 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
             
             @try
             {
+                recordAnnotationRects = preparedROILabels;
                 [self drawTextualData: drawingFrameRect :annotations];
             }
             
@@ -9700,6 +9777,50 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
                 NSLog( @"drawTextualData Annotations Exception : %@", e);
             }
             
+            recordAnnotationRects = NO;
+            if( preparedROILabels)
+            {
+                BOOL labelLock = !is2DViewer || [[[self windowController] roiLock] tryLock];
+                if( labelLock)
+                {
+                    NSSortDescriptor *roiSorting = [NSSortDescriptor sortDescriptorWithKey:@"uniqueID" ascending:NO];
+                    if ( !suppress_labels)
+                    {
+                        NSArray	*sortedROIs = [curRoiList sortedArrayUsingDescriptors: [NSArray arrayWithObject: roiSorting]];
+
+                        BOOL drawingRoiMode = NO;
+                        for( ROI *r in sortedROIs)
+                        {
+                            if( r.ROImode == ROI_drawing)
+                                drawingRoiMode = YES;
+                        }
+
+                        if( drawingRoiMode == NO)
+                        {
+                            for( int i = (long)[sortedROIs count]-1; i>=0; i--)
+                            {
+                                ROI *r = [[sortedROIs objectAtIndex:i] retain];
+
+                                @try
+                                {
+                                    [r drawTextualData];
+                                }
+                                @catch (NSException * e)
+                                {
+                                    NSLog( @"drawTextualData ROI Exception : %@", e);
+                                }
+
+                                [r release];
+                            }
+                        }
+                    }
+
+                    if( is2DViewer) [[[self windowController] roiLock] unlock];
+                }
+                [rectArray release];
+                rectArray = nil;
+            }
+
             if(repulsorRadius != 0)
             {
                 glLoadIdentity (); // reset model view matrix to identity (eliminates rotation basically)
@@ -12377,6 +12498,23 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
             free( computedfImage);
     }
     
+    // The RGB colour transfer above ran vImageTableLookUp_ARGB8888 in place over
+    // self.curDCM.baseAddr, and the read that supplied that pointer had already
+    // cleared needToCompute8bitRepresentation. What is left there is display
+    // pixels, not the window-levelled original -- and -getROIValue::: reads this
+    // very buffer for an RGB image, so the next mean, min and max would be taken
+    // over the CLUT. Mark the cache stale now that the texture is uploaded. The
+    // drawing path pays nothing: these same draws already begin by invalidating
+    // it through -reapplyWindowLevel.
+    if( [HorosPixelCacheInvalidation displayTransformWritesIntoPixelCacheWithIsRGB: isRGB
+                                                                       isLUT12Bit: self.curDCM.isLUT12Bit
+                                                                    colorTransfer: colorTransfer
+                                                                         blending: blending
+                                                                        redFactor: redFactor
+                                                                      greenFactor: greenFactor
+                                                                       blueFactor: blueFactor])
+        self.curDCM.needToCompute8bitRepresentation = YES;
+    
     return texture;
 }
 
@@ -12411,6 +12549,16 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
         [[self windowController] propagateSettings];
         [[self windowController] adjustKeyImage];
     }
+}
+
++ (BOOL) labelFontSizeMenuItemIsEnabled:(NSMenuItem *)item
+{
+    float size = [[NSUserDefaults standardUserDefaults] floatForKey: @"LabelFONTSIZE"];
+    if( [item action] == @selector(increaseFontSize:))
+        return size < 60;
+    if( [item action] == @selector(decreaseFontSize:))
+        return size > 6;
+    return YES;
 }
 
 - (void) increaseFontSize:(id) sender
@@ -12451,7 +12599,7 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
         [labelFont release];
         
         labelFont = [[NSFont fontWithName: [[NSUserDefaults standardUserDefaults] stringForKey:@"LabelFONTNAME"] size: [[NSUserDefaults standardUserDefaults] floatForKey: @"LabelFONTSIZE"]] retain];
-        if( labelFont == nil) labelFont = [[NSFont fontWithName:@"Monaco" size:12] retain];
+        if( labelFont == nil) labelFont = [[NSFont userFixedPitchFontOfSize: [[NSUserDefaults standardUserDefaults] floatForKey: @"LabelFONTSIZE"]] retain];
         
         [labelFont makeGLDisplayListFirst:' ' count:150 base: labelFontListGL :labelFontListGLSize :2 :self.window.backingScaleFactor];
         [ROI setFontHeight: [DCMView sizeOfString: @"B" forFont: labelFont].height];
@@ -12540,11 +12688,7 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
 {
     [self updateTilingViews];
     
-    sliceFromTo[ 0][ 0] = HUGE_VALF;
-    sliceFromTo2[ 0][ 0] = HUGE_VALF;
-    sliceFromToS[ 0][ 0] = HUGE_VALF;
-    sliceFromToE[ 0][ 0] = HUGE_VALF;
-    sliceVector[ 0] = sliceVector[ 1] = sliceVector[ 2] = 0;
+    [self invalidateReferenceLines];
     slicePoint3D[ 0] = HUGE_VALF;
     
     [self sendSyncMessage: 0];
@@ -12554,11 +12698,7 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
 
 -(void) becomeKeyWindow
 {
-    sliceFromTo[ 0][ 0] = HUGE_VALF;
-    sliceFromTo2[ 0][ 0] = HUGE_VALF;
-    sliceFromToS[ 0][ 0] = HUGE_VALF;
-    sliceFromToE[ 0][ 0] = HUGE_VALF;
-    sliceVector[ 0] = sliceVector[ 1] = sliceVector[ 2] = 0;
+    [self invalidateReferenceLines];
     slicePoint3D[ 0] = HUGE_VALF;
     
     [self erase2DPointMarker];
@@ -13379,10 +13519,12 @@ static NSString * const O2PasteboardTypeEventModifierFlags = @"com.opensource.os
 - (void) startDrag:(NSTimer*)theTimer
 {
     @try {
-        _dragInProgress = YES;
         NSEvent *event = [theTimer userInfo];
         
         NSImage *image = [self nsimage:(event.modifierFlags&NSShiftKeyMask)];
+        NSData *tiff = image.TIFFRepresentation;
+        if( tiff.length == 0)
+            return;
         
         NSSize originalSize = [image size];
         float ratio = originalSize.width / originalSize.height;
@@ -13393,32 +13535,46 @@ static NSString * const O2PasteboardTypeEventModifierFlags = @"com.opensource.os
             [thumbnail unlockFocus];
         }
         
+        NSString *description = self.dicomImage.series.name;
+        if( !description.length)
+            description = self.dicomImage.series.seriesDescription;
+        HorosDraggedImagePromise *promise = [[[HorosDraggedImagePromise alloc] initWithTIFFData: tiff
+                                                                                          study: self.dicomImage.series.study.name
+                                                                                         series: description] autorelease];
+        
         NSPasteboardItem* pbi = [[[NSPasteboardItem alloc] init] autorelease];
         for (NSString *pasteboardType in DCMView.PasteboardTypes)
             if ([pasteboardType containsString:@"."])
                 [pbi setData:[NSData dataWithBytes:&self length:sizeof(DCMView *)] forType:pasteboardType];
-        [pbi setData:image.TIFFRepresentation forType:NSPasteboardTypeTIFF];
-        NSEventModifierFlags mf = event.modifierFlags;
-        [pbi setData:[NSData dataWithBytes:&mf length:sizeof(NSEventModifierFlags)] forType:O2PasteboardTypeEventModifierFlags];
-        [pbi setDataProvider:self forTypes:@[NSPasteboardTypeString, (NSString *)kPasteboardTypeFileURLPromise]];
-        [pbi setString:(id)kUTTypeImage forType:(id)kPasteboardTypeFilePromiseContent];
-
-        NSDraggingItem* di = [[[NSDraggingItem alloc] initWithPasteboardWriter:pbi] autorelease];
-        NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
-        [di setDraggingFrame:NSMakeRect(p.x-thumbnail.size.width/2, p.y-thumbnail.size.height/2, thumbnail.size.width, thumbnail.size.height) contents:thumbnail];
+        [pbi setData:tiff forType:NSPasteboardTypeTIFF];
         
-        NSDraggingSession* session = [self beginDraggingSessionWithItems:@[di] event:event source:self];
+        NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
+        NSRect frame = NSMakeRect(p.x-thumbnail.size.width/2, p.y-thumbnail.size.height/2, thumbnail.size.width, thumbnail.size.height);
+        NSDraggingItem* fileItem = [[[NSDraggingItem alloc] initWithPasteboardWriter:[promise filePromiseProviderForDragging]] autorelease];
+        [fileItem setDraggingFrame:frame contents:thumbnail];
+        NSDraggingItem* horosItem = [[[NSDraggingItem alloc] initWithPasteboardWriter:pbi] autorelease];
+        [horosItem setDraggingFrame:frame contents:thumbnail];
+        
+        _dragInProgress = YES;
+        NSDraggingSession* session = [self beginDraggingSessionWithItems:@[fileItem, horosItem] event:event source:self];
         session.animatesToStartingPositionsOnCancelOrFail = YES;
     }
     @catch( NSException *localException) {
         NSLog(@"Exception while dragging: %@", [localException description]);
+        _dragInProgress = NO;
     }
-    
-    _dragInProgress = NO;
 }
 
 - (NSDragOperation)draggingSession:(NSDraggingSession *)session sourceOperationMaskForDraggingContext:(NSDraggingContext)context {
-    return NSDragOperationGeneric;
+    return (NSDragOperation)[HorosViewerImageDrag sourceOperationMaskOutsideApplication: context == NSDraggingContextOutsideApplication];
+}
+
+- (void)draggingSession:(NSDraggingSession *)session willBeginAtPoint:(NSPoint)screenPoint {
+    _dragInProgress = YES;
+}
+
+- (void)draggingSession:(NSDraggingSession *)session endedAtPoint:(NSPoint)screenPoint operation:(NSDragOperation)operation {
+    _dragInProgress = NO;
 }
 
 - (void)pasteboard:(NSPasteboard *)pasteboard item:(NSPasteboardItem *)item provideDataForType:(NSString *)type {
@@ -13438,25 +13594,30 @@ static NSString * const O2PasteboardTypeEventModifierFlags = @"com.opensource.os
             if (!description.length)
                 description = self.dicomImage.series.seriesDescription;
 
-            NSString *name = self.dicomImage.series.study.name;
-            if (description.length)
-                name = [name stringByAppendingFormat:@" - %@", description];
+            // Study and series descriptions are free text from the DICOM data,
+            // so they cannot become a path component unexamined.
+            NSString *name = [HorosDraggedImageFile nameForStudy: self.dicomImage.series.study.name
+                                                          series: description];
+            NSURL *url = [HorosDraggedImageFile urlInDirectory: (NSURL *)urlRef
+                                                          name: name
+                                                 pathExtension: @"jpg"];
+
+            NSEventModifierFlags mf = 0;
+            NSData *flags = [item dataForType: O2PasteboardTypeEventModifierFlags];
+            if( flags.length == sizeof( mf))
+                [flags getBytes: &mf length: sizeof( mf)];
             
-            if (!name.length)
-                name = @"Horos";
-
-            NSURL *url = [(NSURL *)urlRef URLByAppendingPathComponent:[name stringByAppendingPathExtension:@"jpg"]];
-            size_t i = 0;
-            while ([url checkResourceIsReachableAndReturnError:NULL])
-                url = [(NSURL *)urlRef URLByAppendingPathComponent:[name stringByAppendingFormat:@" (%lu).jpg", ++i]];
-
-            NSEventModifierFlags mf; [[item dataForType:O2PasteboardTypeEventModifierFlags] getBytes:&mf];
             NSImage *image = [self nsimage:(mf&NSShiftKeyMask)];
+            HorosDraggedImagePromise *promise = [[[HorosDraggedImagePromise alloc] initWithTIFFData: image.TIFFRepresentation
+                                                                                              study: self.dicomImage.series.study.name
+                                                                                             series: description] autorelease];
             
-            NSData *idata = [[NSBitmapImageRep imageRepWithData:image.TIFFRepresentation] representationUsingType:NSJPEGFileType properties:[NSDictionary dictionaryWithObject:[NSNumber numberWithFloat:0.9] forKey:NSImageCompressionFactor]];
-            [idata writeToURL:url atomically:YES];
-
-            [item setString:[url absoluteString] forType:type];
+            // Advertise the file only once it exists. Naming it regardless left
+            // the destination holding a path to a file that was never written.
+            if( url && [promise writeJPEGToURL: url error: NULL])
+                [item setString:[url absoluteString] forType:type];
+            else
+                NSLog( @"**** dragged image could not be written for %@", name);
 
             CFRelease(urlRef);
         }
@@ -13470,7 +13631,6 @@ static NSString * const O2PasteboardTypeEventModifierFlags = @"com.opensource.os
     [_mouseDownTimer invalidate];
     [_mouseDownTimer release];
     _mouseDownTimer = nil;
-    _dragInProgress = NO;
 }
 
 //part of Dragging Source Protocol

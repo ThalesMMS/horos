@@ -127,6 +127,7 @@ extern "C"
     NSString            *repetitiontime, *echotime, *flipAngle;
     
     NSString			*laterality, *viewPosition, *patientPosition, *acquisitionDate, *SOPClassUID, *frameofReferenceUID, *rescaleType;
+    NSString			*missingPixelsReason;
     BOOL				hasSUV, SUVConverted, displaySUVValue;
     NSString			*units, *decayCorrection;
     float				decayFactor, factorPET2SUV, radionuclideTotalDose, radionuclideTotalDoseCorrected;
@@ -331,6 +332,9 @@ extern "C"
 @property float patientsWeight, halflife, radionuclideTotalDose, radionuclideTotalDoseCorrected;
 @property(retain) NSCalendarDate *acquisitionTime;
 @property(copy) NSString *acquisitionDate, *rescaleType;
+// Why this frame has no picture in it, in one sentence, or nil when it has
+// one. An empty frame used to be indistinguishable from a dark one.
+@property(copy) NSString *missingPixelsReason;
 @property(retain) NSCalendarDate *radiopharmaceuticalStartTime;
 @property BOOL SUVConverted, needToCompute8bitRepresentation;
 
@@ -662,6 +666,8 @@ extern "C"
 
 /** Compute the float pointer for the image data */
 - (float*) computefImage;
+/** The same pixels without the presentation convolution: what a measurement reads. */
+- (float*) computefImageForMeasurement;
 
 /** Sets fusion paramaters
  * @param m  stack mode
@@ -687,7 +693,7 @@ extern "C"
 - (void) setFixed8bitsWLWW:(BOOL) f;
 
 /** Creates a DCMPix with the original values and places it in the restore cache*/
-- (void) prepareRestore;
+- (BOOL) prepareRestore;
 
 
 /** Releases the restored DCMPix from the restoreCache */

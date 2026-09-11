@@ -93,11 +93,11 @@
 	long hours, minutes, seconds;
 	NSTimeInterval  thisTime = [NSDate timeIntervalSinceReferenceDate];
 	
-	if( [progress doubleValue] != 0)
+	if( startTime != nil)
 	{
 		NSTimeInterval fullWork, intervalElapsed = -[startTime timeIntervalSinceNow];
 		
-		if( intervalElapsed > 1)
+		if( intervalElapsed > 1 && [progress doubleValue] > 0)
 		{
 			if( thisTime - lastTimeFrame > 1.0 && thisTime - firstTime > 10.0)
 			{
@@ -202,6 +202,14 @@
 {
 	aborted = YES;
 	[NSApp stopModal];
+}
+
+- (BOOL)pollCancellation
+{
+    [self incrementBy:0];
+    if (session && !aborted)
+        [NSApp runModalSession:session];
+    return aborted;
 }
 
 -(BOOL) aborted

@@ -45,6 +45,12 @@
 //
 
 #import "AsyncSocket.h"
+#import <errno.h>
+#import <fcntl.h>
+#import <poll.h>
+#import <unistd.h>
+
+static int sLastBindErrno = 0;
 #import <sys/socket.h>
 #import <netinet/in.h>
 #import <arpa/inet.h>
@@ -124,6 +130,11 @@ enum AsyncSocketFlags
 - (BOOL)openStreamsAndReturnError:(NSError **)errPtr;
 - (void)doStreamOpen;
 - (BOOL)setSocketFromStreamsAndReturnError:(NSError **)errPtr;
+- (void)abandonUnopenedStreamNativeHandle;
+- (void)rememberFailedOpenCopiedNative:(const unsigned char *)openBefore limit:(int)limit;
+- (BOOL)nativeSocketIsDead;
+- (BOOL)acceptedNativeStillUsable:(CFSocketNativeHandle)native;
+- (void)closeIfStreamsNeverOpened;
 
 // Disconnect Implementation
 - (void)closeWithError:(NSError *)err;
@@ -716,6 +727,11 @@ static void MyCFWriteStreamCallback(CFWriteStreamRef stream, CFStreamEventType t
 
 @implementation AsyncSocket
 
++ (int)lastBindErrno
+{
+	return sLastBindErrno;
+}
+
 - (id)init
 {
 	return [self initWithDelegate:nil userData:0];
@@ -737,6 +753,7 @@ static void MyCFWriteStreamCallback(CFWriteStreamRef stream, CFStreamEventType t
 		
 		theNativeSocket4 = 0;
 		theNativeSocket6 = 0;
+		theCFStreamCopiedNative = 0;
 		
 		theSocket4 = NULL;
 		theSource4 = NULL;
@@ -977,6 +994,7 @@ static void MyCFWriteStreamCallback(CFWriteStreamRef stream, CFStreamEventType t
 
 - (void)runLoopRemoveSource:(CFRunLoopSourceRef)source
 {
+	if (theRunLoop == NULL || source == NULL) return;
 	for (NSString *runLoopMode in theRunLoopModes)
 	{
 		CFRunLoopRemoveSource(theRunLoop, source, (CFStringRef)runLoopMode);
@@ -1003,6 +1021,7 @@ static void MyCFWriteStreamCallback(CFWriteStreamRef stream, CFStreamEventType t
 
 - (void)runLoopRemoveTimer:(NSTimer *)timer
 {
+	if (theRunLoop == NULL || timer == nil) return;
 	for (NSString *runLoopMode in theRunLoopModes)		
 	{
 		CFRunLoopRemoveTimer(theRunLoop, (CFRunLoopTimerRef)timer, (CFStringRef)runLoopMode);
@@ -1019,20 +1038,35 @@ static void MyCFWriteStreamCallback(CFWriteStreamRef stream, CFStreamEventType t
 	CFRunLoopRemoveTimer(theRunLoop, (CFRunLoopTimerRef)timer, (CFStringRef)runLoopMode);
 }
 
+// A socket can hold streams and never have reached a run loop. Accepting creates
+// the pair first and attaches afterwards, and CFStreamCreatePairWithSocket can
+// hand back one stream and not the other - under load, when descriptors run out -
+// so the failure path closes a socket whose theRunLoop is still NULL.
+// CFReadStreamUnscheduleFromRunLoop does not check it, and reads through it:
+// CFArrayGetCount(NULL), which is a segmentation fault at address zero in the
+// middle of accepting a connection.
 - (void)runLoopUnscheduleReadStream
 {
-	for (NSString *runLoopMode in theRunLoopModes)
+	if (theReadStream == NULL) return;
+	if (theRunLoop != NULL)
 	{
-		CFReadStreamUnscheduleFromRunLoop(theReadStream, theRunLoop, (CFStringRef)runLoopMode);
+		for (NSString *runLoopMode in theRunLoopModes)
+		{
+			CFReadStreamUnscheduleFromRunLoop(theReadStream, theRunLoop, (CFStringRef)runLoopMode);
+		}
 	}
 	CFReadStreamSetClient(theReadStream, kCFStreamEventNone, NULL, NULL);
 }
 
 - (void)runLoopUnscheduleWriteStream
 {
-	for (NSString *runLoopMode in theRunLoopModes)
+	if (theWriteStream == NULL) return;
+	if (theRunLoop != NULL)
 	{
-		CFWriteStreamUnscheduleFromRunLoop(theWriteStream, theRunLoop, (CFStringRef)runLoopMode);
+		for (NSString *runLoopMode in theRunLoopModes)
+		{
+			CFWriteStreamUnscheduleFromRunLoop(theWriteStream, theRunLoop, (CFStringRef)runLoopMode);
+		}
 	}
 	CFWriteStreamSetClient(theWriteStream, kCFStreamEventNone, NULL, NULL);
 }
@@ -1472,9 +1506,13 @@ static void MyCFWriteStreamCallback(CFWriteStreamRef stream, CFStreamEventType t
 	}
 
 	theFlags |= kDidStartDelegate;
+	sLastBindErrno = 0;
 	return YES;
 	
 Failed:
+	sLastBindErrno = errno;
+	if (sLastBindErrno == 0)
+		sLastBindErrno = EADDRINUSE;
 	if(errPtr) *errPtr = [self getSocketError];
 	if(theSocket4 != NULL)
 	{
@@ -1826,18 +1864,31 @@ Failed:
 {
 	if(newNativeSocket)
 	{
+		// A peer that resets the connection between the accept and here leaves a
+		// descriptor that cannot be used and that nothing frees: CFStream takes a
+		// descriptor over only when its stream opens, this one cannot open, and
+		// the pair is released with its copy still open. One descriptor stayed
+		// behind in CLOSED for every such connection, for the life of the process.
+		// Ask the socket first, and hand over only what is still alive.
+		if (![self acceptedNativeStillUsable:newNativeSocket])
+		{
+			close(newNativeSocket);
+			return;
+		}
+		
 		// New socket inherits same delegate and run loop modes.
 		// Note: We use [self class] to support subclassing AsyncSocket.
 		AsyncSocket *newSocket = [[[[self class] alloc] initWithDelegate:theDelegate] autorelease];
 		[newSocket setRunLoopModes:theRunLoopModes];
 		
-		if(![newSocket createStreamsFromNative:newNativeSocket error:nil])
-			goto Failed;
-		
 		if (parentSocket == theSocket4)
 			newSocket->theNativeSocket4 = newNativeSocket;
 		else
 			newSocket->theNativeSocket6 = newNativeSocket;
+		newSocket->theNativeSocketIsOurs = YES;
+		
+		if(![newSocket createStreamsFromNative:newNativeSocket error:nil])
+			goto Failed;
 		
 		if ([theDelegate respondsToSelector:@selector(onSocket:didAcceptNewSocket:)])
 			[theDelegate onSocket:self didAcceptNewSocket:newSocket];
@@ -1853,6 +1904,14 @@ Failed:
 		if(![newSocket attachStreamsToRunLoop:runLoop error:nil]) goto Failed;
 		if(![newSocket configureStreamsAndReturnError:nil])       goto Failed;
 		if(![newSocket openStreamsAndReturnError:nil])            goto Failed;
+		if (((newSocket->theFlags & kDidCompleteOpenForRead) == 0 ||
+		     (newSocket->theFlags & kDidCompleteOpenForWrite) == 0) &&
+		    [newSocket nativeSocketIsDead])
+			goto Failed;
+		// CFStreamOpen can return YES and then never deliver OpenCompleted
+		// or an error after a reset. Check again once the run loop has run.
+		[newSocket performSelector:@selector(closeIfStreamsNeverOpened) withObject:nil afterDelay:0];
+		[newSocket performSelector:@selector(closeIfStreamsNeverOpened) withObject:nil afterDelay:0.1];
 		
 		return;
 		
@@ -1951,6 +2010,10 @@ Failed:
 	// Ensure the CF & BSD socket is closed when the streams are closed.
 	CFReadStreamSetProperty(theReadStream, kCFStreamPropertyShouldCloseNativeSocket, kCFBooleanTrue);
 	CFWriteStreamSetProperty(theWriteStream, kCFStreamPropertyShouldCloseNativeSocket, kCFBooleanTrue);
+	
+	// That property only takes effect once the stream is opened. Until then the
+	// accepted descriptor belongs to this socket.
+	theNativeSocketIsOurs = YES;
 	
 	return YES;
 }
@@ -2057,21 +2120,30 @@ Failed:
 - (BOOL)openStreamsAndReturnError:(NSError **)errPtr
 {
 	BOOL pass = YES;
+	unsigned char openBefore[256];
+	int descriptorLimit = (int)(sizeof(openBefore));
+	int fd;
+	for (fd = 0; fd < descriptorLimit; fd++)
+		openBefore[fd] = (fcntl(fd, F_GETFD) != -1);
 	
 	if(pass && !CFReadStreamOpen(theReadStream))
 	{
 		NSLog (@"AsyncSocket %p couldn't open read stream,", self);
+		[self abandonUnopenedStreamNativeHandle];
 		pass = NO;
 	}
 	
 	if(pass && !CFWriteStreamOpen(theWriteStream))
 	{
 		NSLog (@"AsyncSocket %p couldn't open write stream,", self);
+		if ((theFlags & kDidCompleteOpenForRead) == 0)
+			[self abandonUnopenedStreamNativeHandle];
 		pass = NO;
 	}
 	
 	if(!pass)
 	{
+		[self rememberFailedOpenCopiedNative:openBefore limit:descriptorLimit];
 		if (errPtr) *errPtr = [self getStreamError];
 	}
 	
@@ -2180,6 +2252,102 @@ Failed:
 	return YES;
 }
 
+// CFStreamCreatePairWithSocket keeps its own descriptor. That copy is released
+// when the stream opens (ShouldCloseNativeSocket) and not when it never does.
+// Closing our number from -close is too early: CFStream is still using it, and
+// the listen socket's number lives in the same field. Close the stream's copy
+// here, when Open returns NO or the stream errors before OpenCompleted.
+- (void)abandonUnopenedStreamNativeHandle
+{
+	CFSocketNativeHandle streamNative = 0;
+	CFDataRef nativeProp = NULL;
+	if (theReadStream != NULL)
+		nativeProp = CFReadStreamCopyProperty(theReadStream, kCFStreamPropertySocketNativeHandle);
+	if (nativeProp == NULL && theWriteStream != NULL)
+		nativeProp = CFWriteStreamCopyProperty(theWriteStream, kCFStreamPropertySocketNativeHandle);
+	if (nativeProp != NULL)
+	{
+		CFIndex len = MIN(CFDataGetLength(nativeProp), (CFIndex)sizeof(streamNative));
+		CFDataGetBytes(nativeProp, CFRangeMake(0, len), (UInt8 *)&streamNative);
+		CFRelease(nativeProp);
+	}
+	if (streamNative <= 0)
+		return;
+	if (streamNative == theNativeSocket4 || streamNative == theNativeSocket6)
+		return;
+	close(streamNative);
+}
+
+- (void)rememberFailedOpenCopiedNative:(const unsigned char *)openBefore limit:(int)limit
+{
+	int fd;
+	for (fd = 0; fd < limit; fd++)
+	{
+		if (openBefore[fd])
+			continue;
+		if (fcntl(fd, F_GETFD) == -1)
+			continue;
+		if (fd == theNativeSocket4 || fd == theNativeSocket6)
+			continue;
+		theCFStreamCopiedNative = fd;
+		return;
+	}
+}
+
+- (BOOL)acceptedNativeStillUsable:(CFSocketNativeHandle)native
+{
+	if (native <= 0)
+		return NO;
+	struct pollfd ready;
+	ready.fd = native;
+	ready.events = POLLIN | POLLERR | POLLHUP;
+	ready.revents = 0;
+	if (poll(&ready, 1, 0) < 0)
+		return NO;
+	if (ready.revents & (POLLERR | POLLHUP | POLLNVAL))
+		return NO;
+	int soerror = 0;
+	socklen_t length = sizeof(soerror);
+	if (getsockopt(native, SOL_SOCKET, SO_ERROR, &soerror, &length) != 0 || soerror != 0)
+		return NO;
+	char peeked;
+	ssize_t n = recv(native, &peeked, 1, MSG_PEEK | MSG_DONTWAIT);
+	if (n == 0)
+		return NO;
+	if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
+		return NO;
+	return YES;
+}
+
+- (BOOL)nativeSocketIsDead
+{
+	CFSocketNativeHandle native = (theNativeSocket4 > 0) ? theNativeSocket4 : theNativeSocket6;
+	if (native <= 0)
+		return NO;
+	int soerror = 0;
+	socklen_t length = sizeof(soerror);
+	if (getsockopt(native, SOL_SOCKET, SO_ERROR, &soerror, &length) != 0)
+		return YES;
+	if (soerror != 0)
+		return YES;
+	char peeked;
+	ssize_t n = recv(native, &peeked, 1, MSG_PEEK | MSG_DONTWAIT);
+	if (n == 0)
+		return YES;
+	if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
+		return YES;
+	return NO;
+}
+
+- (void)closeIfStreamsNeverOpened
+{
+	if ((theFlags & kDidCompleteOpenForRead) && (theFlags & kDidCompleteOpenForWrite))
+		return;
+	if (![self nativeSocketIsDead])
+		return;
+	[self close];
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 #pragma mark Disconnect Implementation
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2260,39 +2428,71 @@ Failed:
 		[self endConnectTimeout];
 	}
 	
-	// Close streams.
+	// Close streams and sockets.
+	//
+	// A socket is closed from more than one thread: the accept thread takes the
+	// failure path while the thread the delegate runs the connection on closes it
+	// too. Both used to pass the "is it set?" test and release the same handle
+	// twice, which is the CFRelease of an already released stream in the report -
+	// EXC_BREAKPOINT inside CFRelease, measured here while connections were being
+	// reset mid-request.
 	if (theReadStream != NULL)
-	{
         [self runLoopUnscheduleReadStream];
-		CFReadStreamClose(theReadStream);
-		CFRelease(theReadStream);
-		theReadStream = NULL;
-	}
 	if (theWriteStream != NULL)
-	{
         [self runLoopUnscheduleWriteStream];
-		CFWriteStreamClose(theWriteStream);
-		CFRelease(theWriteStream);
-		theWriteStream = NULL;
+	
+	// Each handle is taken with an atomic exchange, so of two threads closing the
+	// same socket exactly one gets it and the other finds NULL. Measured: the
+	// accept thread and the connection's own thread do close it at the same time,
+	// and both used to pass the "is it set?" test and release it twice.
+	CFReadStreamRef readStream = __atomic_exchange_n(&theReadStream, NULL, __ATOMIC_SEQ_CST);
+	CFWriteStreamRef writeStream = __atomic_exchange_n(&theWriteStream, NULL, __ATOMIC_SEQ_CST);
+	CFSocketRef socket4 = __atomic_exchange_n(&theSocket4, NULL, __ATOMIC_SEQ_CST);
+	CFSocketRef socket6 = __atomic_exchange_n(&theSocket6, NULL, __ATOMIC_SEQ_CST);
+	
+	if (readStream != NULL)
+	{
+		CFReadStreamClose(readStream);
+		CFRelease(readStream);
+	}
+	if (writeStream != NULL)
+	{
+		CFWriteStreamClose(writeStream);
+		CFRelease(writeStream);
 	}
 	
-	// Close sockets.
-	if (theSocket4 != NULL)
+	if (socket4 != NULL)
 	{
-		CFSocketInvalidate (theSocket4);
-		CFRelease (theSocket4);
-		theSocket4 = NULL;
+		CFSocketInvalidate (socket4);
+		CFRelease (socket4);
 	}
-	if (theSocket6 != NULL)
+	if (socket6 != NULL)
 	{
-		CFSocketInvalidate (theSocket6);
-		CFRelease (theSocket6);
-		theSocket6 = NULL;
+		CFSocketInvalidate (socket6);
+		CFRelease (socket6);
 	}
 	
-	// Closing the streams or sockets resulted in closing the underlying native socket
+	// CFStream closes the native socket only after a stream has opened.
+	// Closing it earlier, while the stream objects still exist, is what
+	// killed the server on the previous attempts. After Close/Release of a
+	// pair that never reached OpenCompleted, CFStream has given up and the
+	// accepted descriptor is still ours — the listen socket never stores
+	// its fd here, so this does not touch the accept socket.
+	BOOL anyStreamOpened = ((theFlags & kDidCompleteOpenForRead) != 0) ||
+	                       ((theFlags & kDidCompleteOpenForWrite) != 0);
+	__atomic_exchange_n(&theNativeSocketIsOurs, NO, __ATOMIC_SEQ_CST);
+	if (!anyStreamOpened)
+	{
+		CFSocketNativeHandle native4 = __atomic_exchange_n(&theNativeSocket4, 0, __ATOMIC_SEQ_CST);
+		CFSocketNativeHandle native6 = __atomic_exchange_n(&theNativeSocket6, 0, __ATOMIC_SEQ_CST);
+		if (native4 > 0) close(native4);
+		if (native6 > 0) close(native6);
+	}
 	theNativeSocket4 = 0;
 	theNativeSocket6 = 0;
+	CFSocketNativeHandle copied = __atomic_exchange_n(&theCFStreamCopiedNative, 0, __ATOMIC_SEQ_CST);
+	if (copied > 0)
+		close(copied);
 	
 	// Remove run loop sources
     if (theSource4 != NULL) 
@@ -4268,6 +4468,9 @@ Failed:
 	{
 		case kCFStreamEventOpenCompleted:
 			theFlags |= kDidCompleteOpenForRead;
+			// CFReadStreamOpen returning YES only started the open. The
+			// descriptor becomes CFStream's when this event arrives.
+			theNativeSocketIsOurs = NO;
 			[self doStreamOpen];
 			break;
 		case kCFStreamEventHasBytesAvailable:
@@ -4281,6 +4484,8 @@ Failed:
 			break;
 		case kCFStreamEventErrorOccurred:
 		case kCFStreamEventEndEncountered:
+			if ((theFlags & kDidCompleteOpenForRead) == 0)
+				[self abandonUnopenedStreamNativeHandle];
 			err = CFReadStreamGetError (theReadStream);
 			[self closeWithError: [self errorFromCFStreamError:err]];
 			break;
@@ -4300,6 +4505,7 @@ Failed:
 	{
 		case kCFStreamEventOpenCompleted:
 			theFlags |= kDidCompleteOpenForWrite;
+			theNativeSocketIsOurs = NO;
 			[self doStreamOpen];
 			break;
 		case kCFStreamEventCanAcceptBytes:
@@ -4313,6 +4519,9 @@ Failed:
 			break;
 		case kCFStreamEventErrorOccurred:
 		case kCFStreamEventEndEncountered:
+			if ((theFlags & kDidCompleteOpenForWrite) == 0 &&
+			    (theFlags & kDidCompleteOpenForRead) == 0)
+				[self abandonUnopenedStreamNativeHandle];
 			err = CFWriteStreamGetError (theWriteStream);
 			[self closeWithError: [self errorFromCFStreamError:err]];
 			break;

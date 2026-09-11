@@ -151,13 +151,15 @@ DU_stripLeadingAndTrailingSpaces(char *s)
 }
 
 OFBool
-DU_getStringDOElement(DcmItem *obj, DcmTagKey t, char *s)
+DU_getStringDOElement(DcmItem *obj, DcmTagKey t, char *s, size_t sSize)
 {
     DcmByteString *elem;
     DcmStack stack;
     OFCondition ec = EC_Normal;
     char* aString;
-    
+
+    if (s == NULL || sSize == 0) return OFFalse;
+
     ec = obj->search(t, stack);
     elem = (DcmByteString*) stack.top();
     if (ec == EC_Normal && elem != NULL) {
@@ -165,7 +167,15 @@ DU_getStringDOElement(DcmItem *obj, DcmTagKey t, char *s)
 	    s[0] = '\0';
         } else {
             ec =  elem->getString(aString);
-            strcpy(s, aString);
+            if (ec == EC_Normal) {
+                /* Refuse a value the caller's buffer cannot hold. Truncating it
+                 * would be worse than failing: a shortened UID names a
+                 * different instance, and this fills the identifiers a C-STORE
+                 * is sent under.
+                 */
+                if (aString == NULL || strlen(aString) >= sSize) return OFFalse;
+                strcpy(s, aString);
+            }
         }
     }
     return (ec == EC_Normal);
@@ -225,12 +235,14 @@ DU_putShortDOElement(DcmItem *obj, DcmTagKey t, Uint16 us)
 OFBool
 DU_findSOPClassAndInstanceInDataSet(
   DcmItem *obj,
-  char* sopClass, 
+  char* sopClass,
+  size_t sopClassSize,
   char* sopInstance,
+  size_t sopInstanceSize,
   OFBool tolerateSpacePaddedUIDs)
 {
-    OFBool result = (DU_getStringDOElement(obj, DCM_SOPClassUID, sopClass) &&
-	DU_getStringDOElement(obj, DCM_SOPInstanceUID, sopInstance));
+    OFBool result = (DU_getStringDOElement(obj, DCM_SOPClassUID, sopClass, sopClassSize) &&
+	DU_getStringDOElement(obj, DCM_SOPInstanceUID, sopInstance, sopInstanceSize));
 
     if (tolerateSpacePaddedUIDs)
     {
@@ -248,8 +260,10 @@ DU_findSOPClassAndInstanceInDataSet(
 OFBool
 DU_findSOPClassAndInstanceInFile(
   const char *fname,
-  char* sopClass, 
+  char* sopClass,
+  size_t sopClassSize,
   char* sopInstance,
+  size_t sopInstanceSize,
   OFBool tolerateSpacePaddedUIDs)
 {
     DcmFileFormat ff;
@@ -258,11 +272,11 @@ DU_findSOPClassAndInstanceInFile(
 
     /* look in the meta-header first */
     OFBool found = DU_findSOPClassAndInstanceInDataSet(
-        ff.getMetaInfo(), sopClass, sopInstance, tolerateSpacePaddedUIDs);
+        ff.getMetaInfo(), sopClass, sopClassSize, sopInstance, sopInstanceSize, tolerateSpacePaddedUIDs);
 
     if (!found) {
         found = DU_findSOPClassAndInstanceInDataSet(
-            ff.getDataset(), sopClass, sopInstance, tolerateSpacePaddedUIDs);
+            ff.getDataset(), sopClass, sopClassSize, sopInstance, sopInstanceSize, tolerateSpacePaddedUIDs);
     }
     
     return found;
@@ -432,9 +446,50 @@ DU_cmoveStatusString(Uint16 statusCode)
 const char *
 DU_cgetStatusString(Uint16 statusCode)
 {
-    
-    sprintf(staticBuf,  "Unknown Status: 0x%x", (unsigned int)statusCode);
-    return staticBuf;
+    const char *s = NULL;
+
+    switch (statusCode) {
+    case STATUS_Success:
+	s = "Success";
+	break;
+    case STATUS_Pending:
+	s = "Pending";
+	break;
+    case STATUS_GET_Refused_OutOfResourcesNumberOfMatches:
+	s = "Refused: OutOfResourcesNumberOfMatches";
+	break;
+    case STATUS_GET_Refused_OutOfResourcesSubOperations:
+	s = "Refused: OutOfResourcesSubOperations";
+	break;
+    case STATUS_GET_Failed_SOPClassNotSupported:
+	s = "Failed: SOPClassNotSupported";
+	break;
+    case STATUS_GET_Failed_IdentifierDoesNotMatchSOPClass:
+	s = "Failed: IdentifierDoesNotMatchSOPClass";
+	break;
+    case STATUS_GET_Cancel_SubOperationsTerminatedDueToCancelIndication:
+	s = "Cancel: SubOperationsTerminatedDueToCancelIndication";
+	break;
+    case STATUS_GET_Warning_SubOperationsCompleteOneOrMoreFailures:
+	s = "Warning: SubOperationsCompleteOneOrMoreFailures";
+	break;
+
+    }
+    if (s)
+	return s;
+
+    switch (statusCode & 0xf000) {	/* high nibble significant */
+    case STATUS_GET_Failed_UnableToProcess:	/* high nibble */
+	s = "Failed: UnableToProcess";
+	break;
+    }
+
+    if (s == NULL) {
+	sprintf(staticBuf, "Unknown Status: 0x%x",
+		(unsigned int)statusCode);
+	s = staticBuf;
+    }
+    return s;
 }
 
 /*

@@ -35,6 +35,7 @@
  Ê Ê PURPOSE.
  ============================================================================*/
 
+#import "Horos-Swift.h"
 #import "OrthogonalMPRViewer.h"
 #import "OrthogonalMPRPETCTViewer.h"
 #import "OpacityTransferView.h"
@@ -1201,6 +1202,9 @@ static SyncSeriesScope globalSyncSeriesScope;
                 toolbarItem = item;
         }
     }
+
+    if( toolbarItem)
+        [HorosToolbarPolicy prepareItem: toolbarItem];
     
     return toolbarItem;
 }

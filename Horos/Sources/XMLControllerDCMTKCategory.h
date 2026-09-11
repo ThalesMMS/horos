@@ -45,6 +45,11 @@
 
 + (BOOL) modifyDicom:(NSArray*) tagAndValues dicomFiles:(NSArray*) dicomFiles;
 
+/** As above, and reports why each refused field could not be written.
+    An entry of one element removes that tag; two replaces it, and an empty
+    string is a value rather than a removal. */
++ (BOOL) modifyDicom:(NSArray*) tagAndValues dicomFiles:(NSArray*) dicomFiles reasons:(NSArray**) reasons;
+
 + (int) modifyDicom:(NSArray*) params encoding: (NSStringEncoding) encoding;
 
 - (void) prepareDictionaryArray;

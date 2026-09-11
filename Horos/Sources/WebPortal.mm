@@ -36,6 +36,7 @@
  ============================================================================*/
 
 #import "WebPortal.h"
+#import "HorosWebPathSafety.h"
 #import "WebPortal+Email+Log.h"
 #import "WebPortalDatabase.h"
 #import "WebPortalSession.h"
@@ -43,14 +44,16 @@
 #import "NSUserDefaults+OsiriX.h"
 #import "NSUserDefaultsController+N2.h"
 #import "AppController.h"
+#import "AsyncSocket.h"
+#include <errno.h>
 #import "NSData+N2.h"
 #import "NSString+N2.h"
 #import "NSFileManager+N2.h"
-#import "DDData.h"
 #import "DicomDatabase.h"
 #import "N2Debug.h"
 #import "CSMailMailClient.h"
 #import "NSString+SymlinksAndAliases.h"
+#import "Horos-Swift.h"
 
 @interface WebPortalServer ()
 
@@ -158,6 +161,17 @@ static NSString* DefaultWebPortalDatabasePath = nil;
     #else
     DefaultWebPortalDatabasePath = [[NSString alloc] initWithString: [@"~/Library/Application Support/Horos/WebUsers.sql" stringByExpandingTildeInPath]];
     #endif
+    // The accounts of the Web Portal live outside the DICOM database, so a build
+    // pointed at an isolated database still read and wrote the accounts of the
+    // installed application. An explicit path keeps a development or test run
+    // from touching them; unset, the location is the one above.
+    NSString *configuredPath = [[[NSUserDefaults standardUserDefaults] stringForKey: @"WebPortalDatabasePath"] stringByExpandingTildeInPath];
+    if( configuredPath.length)
+    {
+        [DefaultWebPortalDatabasePath release];
+        DefaultWebPortalDatabasePath = [configuredPath copy];
+        NSLog( @"---- Web Portal accounts: %@", DefaultWebPortalDatabasePath);
+    }
 	[NSUserDefaultsController.sharedUserDefaultsController addObserver:(id)self forValuesKey:OsirixWadoServiceEnabledDefaultsKey options:NSKeyValueObservingOptionInitial context:NULL];
 }
 
@@ -437,8 +451,13 @@ static NSString* DefaultWebPortalDatabasePath = nil;
 	NSError* err = NULL;
 	if (![server start: &err])
 	{
+		int bindErrno = [AsyncSocket lastBindErrno];
+		if (bindErrno == 0)
+			bindErrno = errno;
 		NSLog(@"Exception: [WebPortal startAcceptingConnectionsThread:] %@", err);
-		[AppController.sharedAppController performSelectorOnMainThread:@selector(displayError:) withObject:NSLocalizedString(@"Cannot start Web Server. TCP/IP port is probably already used by another process.", NULL) waitUntilDone:YES];
+		[AppController.sharedAppController reportListenBindFailureForService:@"web portal"
+		                                                                port:self.portNumber
+		                                                           errnoCode:bindErrno];
 		return;
 	}
 	
@@ -578,7 +597,9 @@ static NSString* DefaultWebPortalDatabasePath = nil;
 		
 		for (NSString* lang in [preferredLocalizations arrayByAddingObject:DefaultLanguage]) {
 			NSString* langPath = [path stringByAppendingPathComponent:lang];
-			if ([[NSFileManager defaultManager] fileExistsAtPath: langPath isDirectory:&isDirectory] && isDirectory) {
+            NSString *resolvedLanguagePath = [langPath stringByResolvingSymlinksInPath];
+            NSString *rootPrefix = [path hasSuffix:@"/"] ? path : [path stringByAppendingString:@"/"];
+			if ([resolvedLanguagePath hasPrefix:rootPrefix] && [[NSFileManager defaultManager] fileExistsAtPath: langPath isDirectory:&isDirectory] && isDirectory) {
 				[dirsToScanForFile insertObject:langPath atIndex:i];
 				++i; break;
 			}
@@ -586,7 +607,8 @@ static NSString* DefaultWebPortalDatabasePath = nil;
 	}
 	
 	for (NSString* dirToScanForFile in dirsToScanForFile) {
-		NSString* path = [dirToScanForFile stringByAppendingPathComponent:file];
+		NSString* path = HorosWebFilePath(dirToScanForFile, file);
+        if (!path) continue;
 		@try {
 			NSData* data = [NSData dataWithContentsOfFile: path];
 			if (data) return data;
@@ -750,11 +772,14 @@ static NSString* DefaultWebPortalDatabasePath = nil;
 {
 	[sessionCreateLock lock];
 	
+	// The sid is the session: whoever presents it is the person who logged in. It
+	// used to be the MD5 of random(), whose generator this application seeds once
+	// from time(NULL) - at most 31 bits, and replayable in order by anyone who
+	// knows the second the application started.
 	NSString* sid;
-	long sidd;
-	do { // is this a dumb way to generate SIDs?
-		sidd = random();
-	} while ([self sessionForId: sid = [[[NSData dataWithBytes:&sidd length:sizeof(long)] md5Digest] hex]]);
+	do {
+		sid = [HorosWebPortalIdentifier unguessable];
+	} while ([self sessionForId: sid]);
 	
     WebPortalSession* session = [self addSession: sid];
     

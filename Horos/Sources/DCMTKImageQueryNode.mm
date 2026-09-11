@@ -42,7 +42,7 @@
 #import "DicomFile.h"
 
 #undef verify
-#include "dcdeftag.h"
+#include <dcmtk/dcmdata/dcdeftag.h>
 
 
 @implementation DCMTKImageQueryNode

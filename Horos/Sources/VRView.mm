@@ -3,7 +3,7 @@
  
  Horos is free software: you can redistribute it and/or modify
  it under the terms of the GNU Lesser General Public License as published by
- the Free Software Foundation, Êversion 3 of the License.
+ the Free Software Foundation, ?version 3 of the License.
  
  The Horos Project was based originally upon the OsiriX Project which at the time of
  the code fork was licensed as a LGPL project.  However, not all of the the source-code
@@ -15,24 +15,24 @@
  
  Horos is distributed in the hope that it will be useful, but
  WITHOUT ANY WARRANTY EXPRESS OR IMPLIED, INCLUDING ANY WARRANTY OF
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE OR USE. ÊSee the
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE OR USE. ?See the
  GNU Lesser General Public License for more details.
  
  You should have received a copy of the GNU Lesser General Public License
- along with Horos. ÊIf not, see http://www.gnu.org/licenses/lgpl.html
+ along with Horos. ?If not, see http://www.gnu.org/licenses/lgpl.html
  
  Prior versions of this file were published by the OsiriX team pursuant to
  the below notice and licensing protocol.
  ============================================================================
- Program: Ê OsiriX
- ÊCopyright (c) OsiriX Team
- ÊAll rights reserved.
- ÊDistributed under GNU - LGPL
- Ê
- ÊSee http://www.osirix-viewer.com/copyright.html for details.
- Ê Ê This software is distributed WITHOUT ANY WARRANTY; without even
- Ê Ê the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
- Ê Ê PURPOSE.
+ Program: ? OsiriX
+ ?Copyright (c) OsiriX Team
+ ?All rights reserved.
+ ?Distributed under GNU - LGPL
+ ?
+ ?See http://www.osirix-viewer.com/copyright.html for details.
+ ? ? This software is distributed WITHOUT ANY WARRANTY; without even
+ ? ? the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+ ? ? PURPOSE.
  ============================================================================*/
 
 #import "options.h"
@@ -44,6 +44,8 @@
 #endif
 
 #import "VRView.h"
+#include "VRFramebufferCapture.h"
+#import "Horos-Swift.h"
 
 #import "vtkHorosFixedPointVolumeRayCastMapper.h"
 
@@ -73,6 +75,8 @@
 #import "N2Debug.h"
 #import "PluginManager.h"
 
+#include <cmath>
+#include <vtkCallbackCommand.h>
 #include <vtkMath.h>
 #include <vtkAbstractPropPicker.h>
 #include <vtkInteractorStyle.h>
@@ -285,6 +289,120 @@ public:
 @end
 
 
+// Projected measurements have no surface depth. Anchor them in the original
+// parallel image plane and only display them when its viewing direction matches.
+static bool HorosCaptureLineProjection(vtkRenderer *renderer, vtkCamera *camera,
+    vtkPolyData *data, double world[2][3], double direction[3])
+{
+    if(!camera || !camera->GetParallelProjection() || !data || data->GetNumberOfPoints() != 2) return false;
+    camera->GetDirectionOfProjection(direction);
+    for(int i = 0; i < 2; ++i)
+    {
+        double point[3], value[4];
+        data->GetPoint(i, point);
+        renderer->SetDisplayPoint(point[0], point[1], 0);
+        renderer->DisplayToWorld();
+        renderer->GetWorldPoint(value);
+        if(!std::isfinite(value[3]) || value[3] == 0) return false;
+        for(int j = 0; j < 3; ++j)
+        {
+            world[i][j] = value[j] / value[3];
+            if(!std::isfinite(world[i][j])) return false;
+        }
+    }
+    return true;
+}
+
+static bool HorosUpdateLineProjection(vtkRenderer *renderer, vtkCamera *camera,
+    vtkPolyData *data, vtkTextActor *text, const double world[2][3], const double direction[3])
+{
+    if(!camera || !camera->GetParallelProjection() || data->GetNumberOfPoints() != 2) return false;
+    double current[3];
+    camera->GetDirectionOfProjection(current);
+    double dot = current[0]*direction[0] + current[1]*direction[1] + current[2]*direction[2];
+    if(!std::isfinite(dot) || dot < 1.0 - 1e-8) return false;
+    double points[2][3];
+    for(int i = 0; i < 2; ++i)
+    {
+        renderer->SetWorldPoint(world[i][0], world[i][1], world[i][2], 1);
+        renderer->WorldToDisplay();
+        renderer->GetDisplayPoint(points[i]);
+        if(!std::isfinite(points[i][0]) || !std::isfinite(points[i][1])) return false;
+    }
+    vtkPoints *pts = data->GetPoints();
+    for(int i = 0; i < 2; ++i) pts->SetPoint(i, points[i][0], points[i][1], 0);
+    pts->Modified();
+    text->GetPositionCoordinate()->SetCoordinateSystemToViewport();
+    if(points[0][0] > points[1][0]) text->SetPosition(points[0][0] + 3, points[0][1]);
+    else text->SetPosition(points[1][0], points[1][1]);
+    return true;
+}
+
+// 3D angle points live in patient millimetres. Reproject them after camera
+// motion; the stored coordinates, and therefore the angle, do not change.
+static bool HorosProjectPatientPoints(vtkRenderer *renderer, double factor,
+    const double patient[][3], int count, double display[][3])
+{
+    if(!renderer || count <= 0 || !std::isfinite(factor) || factor == 0) return false;
+    for(int i = 0; i < count; ++i)
+    {
+        renderer->SetWorldPoint(patient[i][0] * factor, patient[i][1] * factor,
+            patient[i][2] * factor, 1);
+        renderer->WorldToDisplay();
+        renderer->GetDisplayPoint(display[i]);
+        if(!std::isfinite(display[i][0]) || !std::isfinite(display[i][1])) return false;
+    }
+    return true;
+}
+
+// Each inactive overlay owns its VTK data and presentation independently.
+@interface HorosVRStoredMeasurement : NSObject
+{
+@public
+    vtkPolyData *data;
+    vtkPolyDataMapper2D *mapper;
+    vtkActor2D *actor;
+    vtkTextActor *text;
+    double world[2][3], direction[3];
+}
+- (id)initWithData:(vtkPolyData *)source text:(vtkTextActor *)sourceText;
+@end
+
+@implementation HorosVRStoredMeasurement
+- (id)initWithData:(vtkPolyData *)source text:(vtkTextActor *)sourceText
+{
+    if((self = [super init]))
+    {
+        data = vtkPolyData::New();
+        data->DeepCopy(source);
+        mapper = vtkPolyDataMapper2D::New();
+        mapper->SetInputData(data);
+        actor = vtkActor2D::New();
+        actor->GetPositionCoordinate()->SetCoordinateSystemToDisplay();
+        actor->SetMapper(mapper);
+        actor->GetProperty()->SetPointSize(6);
+        actor->GetProperty()->SetLineWidth(2.5);
+        actor->GetProperty()->SetColor(0, 1, 1);
+        text = vtkTextActor::New();
+        text->SetTextScaleModeToNone();
+        text->SetInput(sourceText->GetInput());
+        text->GetTextProperty()->ShallowCopy(sourceText->GetTextProperty());
+        text->GetTextProperty()->SetColor(0, 1, 1);
+        text->GetPositionCoordinate()->SetCoordinateSystemToViewport();
+        text->SetPosition(sourceText->GetPosition());
+    }
+    return self;
+}
+- (void)dealloc
+{
+    text->Delete();
+    actor->Delete();
+    mapper->Delete();
+    data->Delete();
+    [super dealloc];
+}
+@end
+
 @implementation VRView
 
 #ifdef _STEREO_VISION_
@@ -395,6 +513,7 @@ public:
 
 - (void) setClippingRangeThickness: (double) c
 {
+    [HorosVRInteractionBenchmark beginSample:@"clip"];
     c *= superSampling;
     
     clippingRangeThickness = c;
@@ -434,6 +553,7 @@ public:
     }
     
     [self setNeedsDisplay: YES];
+    [HorosVRInteractionBenchmark endSample];
 }
 
 - (void) setClipRangeActivated: (BOOL) c
@@ -634,7 +754,202 @@ public:
 }
 
 
-- (void) adaptLine2DToResize:(NSRect) newFrame before: (NSRect) beforeFrame rescale:(BOOL) rescale
+- (void) captureCurrentLineProjection
+{
+    lineMeasurementHasProjection = HorosCaptureLineProjection(aRenderer, aCamera, Line2DData,
+        lineMeasurementWorld, lineMeasurementDirection);
+}
+
+- (void) updateLineMeasurementProjections
+{
+    if(!aRenderer || !Line2DData) return;
+    if(Line2DData->GetNumberOfPoints() != 2) lineMeasurementHasProjection = NO;
+    BOOL visible = lineMeasurementHasProjection && HorosUpdateLineProjection(aRenderer, aCamera,
+        Line2DData, Line2DText, lineMeasurementWorld, lineMeasurementDirection);
+    if(Line2DActor->GetVisibility() != visible && [NSThread isMainThread])
+    {
+        // The hover field otherwise retains the last visible measurement until
+        // the mouse moves again, including after a menu-driven camera change.
+        [pixelInformation setStringValue:[NSString stringWithFormat:NSLocalizedString(@"View Size: %d x %d", nil),
+            (int)[self frame].size.width, (int)[self frame].size.height]];
+    }
+    Line2DActor->SetVisibility(visible);
+    Line2DText->SetVisibility(visible);
+    if(visible)
+    {
+        aRenderer->AddActor2D(Line2DText);
+        measureLength = sqrt(vtkMath::Distance2BetweenPoints(lineMeasurementWorld[0], lineMeasurementWorld[1])) / (10.*factor);
+    }
+    else measureLength = 0;
+    BOOL hidden = lineMeasurementHasProjection && !visible;
+    for(HorosVRStoredMeasurement *entry in storedLineMeasurements)
+    {
+        BOOL entryVisible = HorosUpdateLineProjection(aRenderer, aCamera, entry->data, entry->text, entry->world, entry->direction);
+        entry->actor->SetVisibility(entryVisible);
+        entry->text->SetVisibility(entryVisible);
+        hidden |= !entryVisible;
+    }
+    if(lineMeasurementProjectionNotice) lineMeasurementProjectionNotice->SetVisibility(hidden);
+    [self updateAngleMeasurementProjection];
+}
+
+- (void) updateAngleMeasurementProjection
+{
+    if(!aRenderer || !Angle2DData || !Angle2DActor || !Angle2DText) return;
+    vtkPoints *pts = vtkPoints::New();
+    vtkCellArray *lines = vtkCellArray::New();
+    BOOL visible = NO;
+    if(angleMeasurementCount > 0)
+    {
+        double display[3][3];
+        if(HorosProjectPatientPoints(aRenderer, factor, angleMeasurementPatient, angleMeasurementCount, display))
+        {
+            for(int i = 0; i < angleMeasurementCount; i++)
+                pts->InsertNextPoint(display[i][0], display[i][1], 0);
+            if(angleMeasurementCount >= 2)
+            {
+                lines->InsertNextCell(angleMeasurementCount);
+                for(int i = 0; i < angleMeasurementCount; i++)
+                    lines->InsertCellPoint(i);
+            }
+            visible = YES;
+            if(angleMeasurementCount == 3)
+            {
+                measureAngle = [HorosVRMeasurementGeometry angleDegreesAtX: angleMeasurementPatient[1][0]
+                    y: angleMeasurementPatient[1][1] z: angleMeasurementPatient[1][2]
+                    armAX: angleMeasurementPatient[0][0] armAY: angleMeasurementPatient[0][1] armAZ: angleMeasurementPatient[0][2]
+                    armBX: angleMeasurementPatient[2][0] armBY: angleMeasurementPatient[2][1] armBZ: angleMeasurementPatient[2][2]];
+                if(std::isfinite(measureAngle))
+                {
+                    NSString *localizedText = [NSString stringWithFormat: NSLocalizedString( @"Angle: %2.1f degrees ", @"ONLY ASCII CHARACTERS ! NO ACCENTS OR HIEROGLYPHS"), measureAngle];
+                    Angle2DText->SetInput([localizedText UTF8String]);
+                    Angle2DText->GetPositionCoordinate()->SetCoordinateSystemToViewport();
+                    Angle2DText->SetPosition(display[1][0] + 3, display[1][1]);
+                    aRenderer->AddActor2D(Angle2DText);
+                    Angle2DText->SetVisibility(true);
+                }
+                else
+                {
+                    measureAngle = 0;
+                    Angle2DText->SetVisibility(false);
+                }
+            }
+            else
+            {
+                measureAngle = 0;
+                Angle2DText->SetVisibility(false);
+            }
+        }
+    }
+    if(!visible)
+    {
+        measureAngle = 0;
+        Angle2DText->SetVisibility(false);
+    }
+    Angle2DData->SetPoints(pts);
+    Angle2DData->SetLines(lines);
+    pts->Modified();
+    pts->Delete();
+    lines->Delete();
+    Angle2DActor->SetVisibility(visible);
+    if(visible) aRenderer->AddActor2D(Angle2DActor);
+}
+
+- (void) clearAngleMeasurement
+{
+    angleMeasurementCount = 0;
+    measureAngle = 0;
+    [self updateAngleMeasurementProjection];
+}
+
+- (BOOL) patientPointAtDisplayX:(float) x Y:(float) y into:(double *) point
+{
+    long pix[3];
+    float pos[3], value;
+    if(![self get3DPixelUnder2DPositionX: x Y: y pixel: pix position: pos value: &value])
+        return NO;
+    if(!std::isfinite(pos[0]) || !std::isfinite(pos[1]) || !std::isfinite(pos[2]))
+        return NO;
+    point[0] = pos[0];
+    point[1] = pos[1];
+    point[2] = pos[2];
+    return YES;
+}
+
+- (void) storeCurrentLineMeasurement
+{
+    if(!lineMeasurementHasProjection || !Line2DData || Line2DData->GetNumberOfPoints() != 2) return;
+    if(vtkMath::Distance2BetweenPoints(lineMeasurementWorld[0], lineMeasurementWorld[1]) <= 0) return;
+    if(!storedLineMeasurements) storedLineMeasurements = [[NSMutableArray alloc] init];
+    HorosVRStoredMeasurement *entry = [[HorosVRStoredMeasurement alloc] initWithData:Line2DData text:Line2DText];
+    memcpy(entry->world, lineMeasurementWorld, sizeof(lineMeasurementWorld));
+    memcpy(entry->direction, lineMeasurementDirection, sizeof(lineMeasurementDirection));
+    [storedLineMeasurements addObject:entry];
+    aRenderer->AddActor2D(entry->actor);
+    aRenderer->AddActor2D(entry->text);
+    [entry release];
+}
+
+- (void) clearStoredLineMeasurements
+{
+    for(HorosVRStoredMeasurement *entry in storedLineMeasurements)
+    {
+        aRenderer->RemoveActor2D(entry->actor);
+        aRenderer->RemoveActor2D(entry->text);
+    }
+    [storedLineMeasurements removeAllObjects];
+}
+
+- (NSInteger) editableEndpointInData:(vtkPolyData *)data at:(NSPoint)point
+{
+    if(!data || data->GetNumberOfPoints() != 2) return -1;
+    double first[3], second[3];
+    data->GetPoint(0, first);
+    data->GetPoint(1, second);
+    return [HorosVRMeasurementGeometry editableEndpointAt:point
+        first:NSMakePoint(first[0], first[1]) second:NSMakePoint(second[0], second[1])
+        tolerance:[self convertSizeToBacking:NSMakeSize(8, 8)].width];
+}
+
+- (void) selectStoredLineMeasurementAt:(NSPoint)point
+{
+    // The active handle wins at overlaps; otherwise prefer the latest overlay.
+    if(Line2DActor->GetVisibility() && [self editableEndpointInData:Line2DData at:point] >= 0) return;
+    for(NSInteger index = (NSInteger)[storedLineMeasurements count]-1; index >= 0; --index)
+    {
+        HorosVRStoredMeasurement *entry = [storedLineMeasurements objectAtIndex:index];
+        if(!entry->actor->GetVisibility() || [self editableEndpointInData:entry->data at:point] < 0) continue;
+        [entry retain];
+        [self storeCurrentLineMeasurement];
+        Line2DData->DeepCopy(entry->data);
+        memcpy(lineMeasurementWorld, entry->world, sizeof(lineMeasurementWorld));
+        memcpy(lineMeasurementDirection, entry->direction, sizeof(lineMeasurementDirection));
+        lineMeasurementHasProjection = YES;
+        aRenderer->RemoveActor2D(entry->actor);
+        aRenderer->RemoveActor2D(entry->text);
+        [storedLineMeasurements removeObjectAtIndex:index];
+        [entry release];
+        [self computeLength];
+        return;
+    }
+}
+
+- (void) adaptLine2DToResize:(NSRect) newFrame before: (NSRect) beforeFrame cameraZoom:(double) cameraZoom
+{
+    [self adaptCurrentLine2DToResize:newFrame before:beforeFrame cameraZoom:cameraZoom];
+    vtkPolyData *activeData = Line2DData;
+    vtkTextActor *activeText = Line2DText;
+    for(HorosVRStoredMeasurement *entry in storedLineMeasurements)
+    {
+        Line2DData = entry->data;
+        Line2DText = entry->text;
+        [self adaptCurrentLine2DToResize:newFrame before:beforeFrame cameraZoom:cameraZoom];
+    }
+    Line2DData = activeData;
+    Line2DText = activeText;
+}
+
+- (void) adaptCurrentLine2DToResize:(NSRect) newFrame before: (NSRect) beforeFrame cameraZoom:(double) cameraZoom
 {
     if( Line2DData)
     {
@@ -655,16 +970,14 @@ public:
             
             pts = Line2DData->GetPoints();
             
-            if( rescale == NO)
-            {
-                pts->InsertPoint( pts->GetNumberOfPoints(), pt1[0] + (newFrame.size.width - beforeFrame.size.width)/2, pt1[ 1] + (newFrame.size.height - beforeFrame.size.height)/2 , 0);
-                pts->InsertPoint( pts->GetNumberOfPoints(), pt2[0] + (newFrame.size.width - beforeFrame.size.width)/2, pt2[ 1] + (newFrame.size.height - beforeFrame.size.height)/2, 0);
-            }
-            else
-            {
-                pts->InsertPoint( pts->GetNumberOfPoints(), pt1[0] * (newFrame.size.width/beforeFrame.size.width), pt1[ 1] * (newFrame.size.height / beforeFrame.size.height) , 0);
-                pts->InsertPoint( pts->GetNumberOfPoints(), pt2[0] * (newFrame.size.width/beforeFrame.size.width), pt2[ 1] * (newFrame.size.height / beforeFrame.size.height), 0);
-            }
+            // Line points are VTK display pixels. Preserve their projected world
+            // positions as the parallel camera's viewport changes, also for export.
+            NSSize oldSize = [self convertSizeToBacking: beforeFrame.size];
+            NSSize newSize = [self convertSizeToBacking: newFrame.size];
+            NSPoint p1 = [HorosVRMeasurementGeometry resizedPoint: NSMakePoint(pt1[0], pt1[1]) fromSize: oldSize toSize: newSize cameraZoom: cameraZoom];
+            NSPoint p2 = [HorosVRMeasurementGeometry resizedPoint: NSMakePoint(pt2[0], pt2[1]) fromSize: oldSize toSize: newSize cameraZoom: cameraZoom];
+            pts->InsertPoint(0, p1.x, p1.y, 0);
+            pts->InsertPoint(1, p2.x, p2.y, 0);
             rect = vtkCellArray::New();
             rect->InsertNextCell( pts->GetNumberOfPoints()+1);
             for( int i = 0; i < pts->GetNumberOfPoints(); i++) rect->InsertCellPoint( i);
@@ -673,6 +986,7 @@ public:
             Line2DData->SetVerts( rect);
             Line2DData->SetLines( rect);		rect->Delete();
             
+            pts->Modified(); // SetPoint/InsertPoint do not invalidate VTK point buffers.
             Line2DData->SetPoints( pts);
             
             // Move the text
@@ -699,7 +1013,7 @@ public:
 - (void) setFrame: (NSRect) r rescaleLine: (BOOL) rescale
 {
     if( [[controller style] isEqualToString:@"noNib"] == NO)
-        [self adaptLine2DToResize: r before: [self frame] rescale: rescale];
+        [self adaptLine2DToResize: r before: [self frame] cameraZoom: 1.0];
     
     [super setFrame: r];
 }
@@ -1292,28 +1606,19 @@ public:
 
 -(void) restoreViewSizeAfterMatrix3DExport
 {
-    [self setFrame: savedViewSizeFrame rescaleLine: YES];
+    [matrixExportLayout restore];
+    [matrixExportLayout release];
+    matrixExportLayout = nil;
 }
 
 -(void) setViewSizeToMatrix3DExport
 {
-    savedViewSizeFrame = [self frame];
-    
-    NSRect windowFrame;
-    
-    windowFrame.origin.x = 0;
-    windowFrame.origin.y = 0;
-    windowFrame.size.width = [[[self window] contentView] frame].size.width;
-    windowFrame.size.height = [[[self window] contentView] frame].size.height - 10;
-    
-    switch( [[NSUserDefaults standardUserDefaults] integerForKey:@"EXPORTMATRIXFOR3D"])
-    {
-        case 0:
-            break;
-            
-        case 1:		[self setFrame: [self centerRect: NSMakeRect(0,0,512,512) inRect: windowFrame] rescaleLine: YES];		[self display];		break;
-        case 2:		[self setFrame: [self centerRect: NSMakeRect(0,0,768,768) inRect: windowFrame] rescaleLine: YES];		[self display];		break;
-    }
+    [self restoreViewSizeAfterMatrix3DExport];
+    NSInteger option = [[NSUserDefaults standardUserDefaults] integerForKey:@"EXPORTMATRIXFOR3D"];
+    CGFloat pixels = option == 1 ? 512 : (option == 2 ? 768 : 0);
+    if( pixels == 0) return;
+    matrixExportLayout = [[HorosVRExportLayout alloc] initWithView:self pixelSize:pixels];
+    [self display];
 }
 
 - (NSDictionary*) exportDCMCurrentImage
@@ -1428,6 +1733,8 @@ public:
     
     if( [sender tag])
     {
+        @try
+        {
         BOOL fullDepthCapture = NO;
         
         if( [dcmExportDepth selectedTag] == 1 && [dcmExportDepth isEnabled] && (renderingMode == 1 || renderingMode == 3 || renderingMode == 2))
@@ -1441,11 +1748,10 @@ public:
         // CURRENT image only
         if( [[dcmExportMode selectedCell] tag] == 0)
         {
-            if( exportDCM == nil)
-            {
-                exportDCM = [[DICOMExport alloc] init];
-                [exportDCM setSeriesNumber:5220 + [[NSCalendarDate date] minuteOfHour]  + [[NSCalendarDate date] secondOfMinute]];
-            }
+            // Each accepted request starts a new series, even within the same second.
+            [exportDCM release];
+            exportDCM = [[DICOMExport alloc] init];
+            [exportDCM setSeriesNumber:5220 + [[NSCalendarDate date] minuteOfHour]  + [[NSCalendarDate date] secondOfMinute]];
             
             [producedFiles addObject: [self exportDCMCurrentImageIn16bit: fullDepthCapture]];
         }
@@ -1567,7 +1873,11 @@ public:
             }
         }
         
-        [self restoreViewSizeAfterMatrix3DExport];
+        }
+        @finally
+        {
+            [self restoreViewSizeAfterMatrix3DExport];
+        }
     }
 }
 
@@ -1587,6 +1897,8 @@ public:
     
     if( [sender tag])
     {
+        @try
+        {
         if( [[[self window] windowController] movieFrames] > 1)
         {
             numberOfFrames /= [[[self window] windowController] movieFrames];
@@ -1601,7 +1913,11 @@ public:
         
         [mov release];
         
-        [self restoreViewSizeAfterMatrix3DExport];
+        }
+        @finally
+        {
+            [self restoreViewSizeAfterMatrix3DExport];
+        }
     }
 }
 
@@ -1634,8 +1950,10 @@ public:
 
 -(void) Azimuth:(float) a
 {
+    [HorosVRInteractionBenchmark beginSample:@"rotate"];
     aCamera->Azimuth( a);
     aCamera->OrthogonalizeViewUp();
+    [HorosVRInteractionBenchmark endSample];
 }
 
 -(void) Vertical:(float) a
@@ -1757,8 +2075,16 @@ public:
         [self resetImage: self];
     }
     
+    NSString *measurementHelp = aCamera->GetParallelProjection()
+        ? NSLocalizedString(@"Measure projected length in the parallel view.", nil)
+        : NSLocalizedString(@"Length measurements require parallel projection. Select Parallel in the Perspective controls.", nil);
+    NSMatrix *measurementTools = [controller toolsMatrix];
+    NSCell *measurementCell = [measurementTools cellWithTag: tMesure];
+    [measurementTools setToolTip: measurementHelp forCell: measurementCell];
+    [measurementCell setAccessibilityHelp: measurementHelp];
+
     if( aCamera->GetParallelProjection())
-        [[[controller toolsMatrix] cellWithTag: tMesure] setEnabled: YES];
+        [measurementCell setEnabled: YES];
     else
     {
         [[[controller toolsMatrix] cellWithTag: tMesure] setEnabled: NO];
@@ -2218,6 +2544,12 @@ public:
 
 - (void) render
 {
+    // This renders without going through drawRect:, which is the only place
+    // that used to start the interactor. Ask for the window first, and stop if
+    // there is none: the alternative is a context that belongs to nothing.
+    if( [self prepareRenderWindow] == NO)
+        return;
+    
     if( volumeMapper)
     {
         aRenderer->SetDraw( 0);
@@ -2235,6 +2567,9 @@ public:
 
 - (void) renderBlendedVolume
 {
+    if( [self prepareRenderWindow] == NO)
+        return;
+    
     if( blendingVolumeMapper)
     {
         aRenderer->SetDraw( 0);
@@ -2258,8 +2593,7 @@ public:
         
         NSLog( @"C++ Exception during drawRect... not enough memory?");
         
-        if( NSRunAlertPanel( NSLocalizedString(@"32-bit",nil), NSLocalizedString( @"Cannot use the 3D engine.\r\rUpgrade to OsiriX 64-bit or OsiriX MD to solve this issue.",nil), NSLocalizedString(@"OK", nil), NSLocalizedString(@"OsiriX 64-bit", nil), nil) == NSAlertAlternateReturn)
-            [[AppController sharedAppController] osirix64bit: self];
+        NSRunAlertPanel( NSLocalizedString( @"Not enough memory", nil), NSLocalizedString( @"Cannot use the 3D engine.\r\rClose other studies or open a smaller series. Nothing was reduced silently.", nil), NSLocalizedString( @"OK", nil), nil, nil);
         
         [[self window] performClose: self];
     }
@@ -2288,6 +2622,7 @@ public:
         
         try
         {
+            [self updateLineMeasurementProjections];
             [self computeOrientationText];
             
             [super drawRect:aRect];
@@ -2334,6 +2669,8 @@ public:
 
 -(void)dealloc
 {
+    if(lineMeasurementRenderObserver && aRenderer) aRenderer->RemoveObserver(lineMeasurementRenderObserver);
+
     long i;
     
     NSLog(@"Dealloc VRView");
@@ -2350,6 +2687,7 @@ public:
     [exportDCM release];
     [splash close];
     [splash autorelease];
+    [matrixExportLayout release];
     [currentOpacityArray release];
     
     [[NSNotificationCenter defaultCenter] removeObserver: self];
@@ -2417,10 +2755,17 @@ public:
     if( ROI3D) ROI3D->Delete();
     if( ROI3DActor) ROI3DActor->Delete();
     
+    [self clearStoredLineMeasurements];
+    [storedLineMeasurements release];
+    if(lineMeasurementProjectionNotice) lineMeasurementProjectionNotice->Delete();
     if( Line2DData) Line2DData->Delete();
     if( Line2D) Line2D->Delete();
     if( Line2DActor) Line2DActor->Delete();
     if( Line2DText) Line2DText->Delete();
+    if( Angle2DData) Angle2DData->Delete();
+    if( Angle2D) Angle2D->Delete();
+    if( Angle2DActor) Angle2DActor->Delete();
+    if( Angle2DText) Angle2DText->Delete();
     
     [pixList release];
     pixList = nil;
@@ -2686,13 +3031,13 @@ public:
         double zd = point2[ 2]- point1[ 2];
         double length = sqrt(xd*xd + yd*yd + zd*zd);
         
-        if( isnan( length) || length < 0.00001 || length > 1000)
+        NSString *viewportDiagnosis = [HorosCurvedMPRPathSession diagnoseViewportWorldLength:length];
+        if( [viewportDiagnosis isEqualToString: @"ready"] == NO)
         {
-            NSLog( @"****** vrView getResolution: isnan(%f) == %d",length, isnan(length));
-        }
-        else
-        {
-            //NSLog( @"****** vrView getResolution: isnan(%f) == %d",length, isnan(length));
+            // A length of zero is the renderer answering before it has a
+            // viewport: display-to-world maps both points onto the same place.
+            // The Swift diagnosis names that "no viewport yet"; do not hide it.
+            NSLog( @"****** vrView getResolution: %@ (%f)", viewportDiagnosis, length);
         }
         
         return (length/factor);
@@ -2703,9 +3048,10 @@ public:
 
 - (void) computeLength
 {
+    [self updateLineMeasurementProjections];
     vtkPoints *pts = Line2DData->GetPoints();
     
-    if( pts->GetNumberOfPoints() == 2)
+    if( pts->GetNumberOfPoints() == 2 && Line2DActor->GetVisibility())
     {
         double point1[ 4], point2[ 4];
         
@@ -3021,11 +3367,12 @@ public:
     long	pix[ 3];
     float	pos[ 3], value;
     
-    NSPoint mouseLocStart = [self convertPointToBacking: [theEvent locationInWindow]];
+    NSPoint mouseLocStart = [HorosVRInteractionGeometry backingPoint: [theEvent locationInWindow] inView: self];
     
     if( isViewportResizable)
     {
-        if( mouseLocStart.x < 20 && mouseLocStart.y < 20 && isViewportResizable)
+        CGFloat resizeThreshold = [HorosVTKRetinaGeometry resizeHandleDisplayThresholdForPointThreshold:20 scale:[HorosVTKRetinaGeometry displayScaleOfView:self]];
+        if( [HorosVTKRetinaGeometry isViewportResizeHandleAtX:mouseLocStart.x y:mouseLocStart.y threshold:resizeThreshold] && isViewportResizable)
             [self setCursorForView: tTranslate];
         else [self setCursorForView: [self getTool: theEvent]];
         
@@ -3054,6 +3401,8 @@ public:
         else
             [s appendFormat: NSLocalizedString( @"   Measurement: %2.2f cm ", nil), measureLength];
     }
+    if( angleMeasurementCount == 3 && std::isfinite(measureAngle) && measureAngle > 0)
+        [s appendFormat: NSLocalizedString( @"   Angle: %2.1f degrees ", nil), measureAngle];
     
     if( aCamera->GetParallelProjection())
     {
@@ -3207,17 +3556,21 @@ public:
         newFrame.size.width = [[[self window] contentView] frame].size.width - mouseLoc.x*2;
         newFrame.size.height = [[[self window] contentView] frame].size.height - 10 - mouseLoc.y*2;
         
-        [self setFrame: newFrame];
+        // Internal viewport resizing compensates the camera zoom to keep the
+        // pixel scale fixed, unlike ordinary window resizing and matrix export.
+        double cameraZoom = beforeFrame.size.height / newFrame.size.height;
+        [self adaptLine2DToResize: newFrame before: beforeFrame cameraZoom: cameraZoom];
+        [super setFrame: newFrame];
         
         [self mouseMoved: theEvent];
         
-        aCamera->Zoom( beforeFrame.size.height / newFrame.size.height);
+        aCamera->Zoom(cameraZoom);
         
         [[self window] display];
     }
     else
     {
-        NSPoint mouseLoc = [self convertPointToBacking: [theEvent locationInWindow]];
+        NSPoint mouseLoc = [HorosVRInteractionGeometry backingPoint: [theEvent locationInWindow] inView: self];
         float WWAdapter, endlevel, startlevel;
         int shiftDown;
         int controlDown;
@@ -3308,11 +3661,30 @@ public:
                     Line2DData->SetVerts( rect);
                     Line2DData->SetLines( rect);		rect->Delete();
                     
+                    pts->Modified(); // SetPoint/InsertPoint do not invalidate VTK point buffers.
                     Line2DData->SetPoints( pts);
                     
+                    [self captureCurrentLineProjection];
                     [self computeLength];
                     
                     [self setNeedsDisplay: YES];
+                }
+            }
+                break;
+                
+            case tAngle:
+            {
+                [self deleteMouseDownTimer];
+                if( angleMeasurementCount > 0)
+                {
+                    NSPoint loc = [HorosVRInteractionGeometry backingPoint: [theEvent locationInWindow] inView: self];
+                    double patient[3];
+                    if( [self patientPointAtDisplayX: loc.x Y: loc.y into: patient])
+                    {
+                        memcpy(angleMeasurementPatient[angleMeasurementCount - 1], patient, sizeof(patient));
+                        [self updateAngleMeasurementProjection];
+                        [self setNeedsDisplay: YES];
+                    }
                 }
             }
                 break;
@@ -3355,7 +3727,7 @@ public:
                             blendingWw = endlevel - startlevel;
                             
                             if( blendingWw < 0.1) blendingWw = 0.1;
-                            if( blendingWl - blendingWw/2 < 0) wl = blendingWw/2;
+                            if( blendingWl - blendingWw/2 < 0) blendingWl = blendingWw/2;
                             break;
                     }
                 }
@@ -3457,8 +3829,9 @@ public:
                 break;
                 
             case t3DCut:
-                
-                if( fabs(mouseLoc.x - _previousLoc.x) > 5. || fabs(mouseLoc.y - _previousLoc.y) > 5.)
+            {
+                CGFloat scissorsThreshold = [HorosVTKRetinaGeometry scissorsDragThresholdForPointThreshold:5 scale:[HorosVTKRetinaGeometry displayScaleOfView:self]];
+                if( fabs(mouseLoc.x - _previousLoc.x) > scissorsThreshold || fabs(mouseLoc.y - _previousLoc.y) > scissorsThreshold)
                 {
                     double	*pp;
                     
@@ -3481,20 +3854,24 @@ public:
                     
                     _previousLoc = mouseLoc;
                 }
+            }
                 break;
                 
             case tRotate:
+                [HorosVRInteractionBenchmark beginSample:@"rotate"];
                 shiftDown = 0;
                 controlDown = 1;
                 [self getInteractor]->SetEventInformation((int) mouseLoc.x, (int) mouseLoc.y, controlDown, shiftDown);
                 [self computeOrientationText];
                 [self getInteractor]->InvokeEvent(vtkCommand::MouseMoveEvent, NULL);
                 [[NSNotificationCenter defaultCenter] postNotificationName: OsirixVRCameraDidChangeNotification object:self  userInfo: nil];
+                [HorosVRInteractionBenchmark endSample];
                 break;
                 
             case t3DRotate:
             case tCamera3D:
             {
+                [HorosVRInteractionBenchmark beginSample: clipRangeActivated ? @"clip" : @"rotate"];
                 if( _tool == tCamera3D || clipRangeActivated == YES)
                 {
                     aCamera->Yaw( -([theEvent deltaX]) / 5.);
@@ -3520,14 +3897,17 @@ public:
                     [self getInteractor]->InvokeEvent(vtkCommand::MouseMoveEvent, NULL);
                     [[NSNotificationCenter defaultCenter] postNotificationName: OsirixVRCameraDidChangeNotification object:self  userInfo: nil];
                 }
+                [HorosVRInteractionBenchmark endSample];
             }
                 break;
             case tTranslate:
+                [HorosVRInteractionBenchmark beginSample:@"pan"];
                 shiftDown = 1;
                 controlDown = 0;
                 [self getInteractor]->SetEventInformation((int) mouseLoc.x, (int) mouseLoc.y, controlDown, shiftDown);
                 [self getInteractor]->InvokeEvent(vtkCommand::MouseMoveEvent, NULL);
                 [[NSNotificationCenter defaultCenter] postNotificationName: OsirixVRCameraDidChangeNotification object:self  userInfo: nil];
+                [HorosVRInteractionBenchmark endSample];
                 break;
                 
             case tZoom:
@@ -3553,7 +3933,7 @@ public:
     
     _hasChanged = YES;
     [drawLock lock];
-    NSPoint mouseLoc = [self convertPointToBacking: [theEvent locationInWindow]];
+    NSPoint mouseLoc = [HorosVRInteractionGeometry backingPoint: [theEvent locationInWindow] inView: self];
     float distance ;
     
     if (([theEvent deltaX] != 0 || [theEvent deltaY] != 0))
@@ -3629,13 +4009,14 @@ public:
                         
                         double pWC[ 2];
                         aCamera->GetWindowCenter( pWC);
-                        pWC[ 0] *= ([self frame].size.width/2.);
-                        pWC[ 1] *= ([self frame].size.height/2.);
+                        NSSize display = [HorosVTKRetinaGeometry displaySizeOfView:self];
+                        pWC[ 0] *= (display.width/2.);
+                        pWC[ 1] *= (display.height/2.);
                         
                         if( pWC[ 0] != xx || pWC[ 1] != yy)
                         {
                             aCamera->SetWindowCenter( 0, 0);
-                            [self panX: ([self frame].size.width/2.) -(pWC[ 0] - xx)*10000. Y: ([self frame].size.height/2.) -(pWC[ 1] - yy) *10000.];
+                            [self panX: (display.width/2.) -(pWC[ 0] - xx)*10000. Y: (display.height/2.) -(pWC[ 1] - yy) *10000.];
                         }
                     }
                     [self setNeedsDisplay:YES];
@@ -3673,6 +4054,7 @@ public:
                 [self zoomMouseUp:(NSEvent *)theEvent];
                 break;
             case tMesure:
+            case tAngle:
             case tOval:
             case t3DCut:
                 [self displayIfNeeded];
@@ -3758,26 +4140,28 @@ public:
 {
     double pWC[ 2];
     aCamera->GetWindowCenter( pWC);
-    pWC[ 0] *= ([self frame].size.width/2.);
-    pWC[ 1] *= ([self frame].size.height/2.);
+    NSSize display = [HorosVTKRetinaGeometry displaySizeOfView:self];
+    pWC[ 0] *= (display.width/2.);
+    pWC[ 1] *= (display.height/2.);
     
     return NSMakePoint( -pWC[ 0], pWC[ 1]);
 }
 
 - (void) setWindowCenter: (NSPoint) loc
 {
-    double xx = -(loc.x - [self frame].size.width/2.);
-    double yy = -(loc.y - [self frame].size.height/2.);
+    NSSize display = [HorosVTKRetinaGeometry displaySizeOfView:self];
+    double xx = -(loc.x - display.width/2.);
+    double yy = -(loc.y - display.height/2.);
     
     double pWC[ 2];
     aCamera->GetWindowCenter( pWC);
-    pWC[ 0] *= ([self frame].size.width/2.);
-    pWC[ 1] *= ([self frame].size.height/2.);
+    pWC[ 0] *= (display.width/2.);
+    pWC[ 1] *= (display.height/2.);
     
     if( pWC[ 0] != xx || pWC[ 1] != yy)
     {
-        aCamera->SetWindowCenter( xx / ([self frame].size.width/2.), yy / ([self frame].size.height/2.));
-        [self panX: ([self frame].size.width/2.) -(pWC[ 0] - xx)*10000. Y: ([self frame].size.height/2.) -(pWC[ 1] - yy) *10000.];
+        aCamera->SetWindowCenter( xx / (display.width/2.), yy / (display.height/2.));
+        [self panX: (display.width/2.) -(pWC[ 0] - xx)*10000. Y: (display.height/2.) -(pWC[ 1] - yy) *10000.];
     }
 }
 
@@ -3815,7 +4199,7 @@ public:
             _mouseDownTimer = [[NSTimer scheduledTimerWithTimeInterval:1.0 target:self selector:@selector(startDrag:) userInfo:theEvent  repeats:NO] retain];
     }
     
-    mouseLocPre = _mouseLocStart = [self convertPointToBacking: [theEvent locationInWindow]];
+    mouseLocPre = _mouseLocStart = [HorosVRInteractionGeometry backingPoint: [theEvent locationInWindow] inView: self];
     
     int clickCount = 1;
     
@@ -3841,9 +4225,10 @@ public:
             [self getOrigin: position];
             [self getCosMatrix: cos];
             
-            position[0] = ([self frame].size.height - _mouseLocStart.y)*cos[3]*r + _mouseLocStart.x*cos[0]*r +position[0];
-            position[1] = ([self frame].size.height - _mouseLocStart.y)*cos[4]*r + _mouseLocStart.x*cos[1]*r +position[1];
-            position[2] = ([self frame].size.height - _mouseLocStart.y)*cos[5]*r + _mouseLocStart.x*cos[2]*r +position[2];
+            NSSize display = [HorosVTKRetinaGeometry displaySizeOfView:self];
+            position[0] = (display.height - _mouseLocStart.y)*cos[3]*r + _mouseLocStart.x*cos[0]*r +position[0];
+            position[1] = (display.height - _mouseLocStart.y)*cos[4]*r + _mouseLocStart.x*cos[1]*r +position[1];
+            position[2] = (display.height - _mouseLocStart.y)*cos[5]*r + _mouseLocStart.x*cos[2]*r +position[2];
             
             [firstObject convertDICOMCoords: position toSliceCoords: sc pixelCenter: YES];
             
@@ -3867,7 +4252,8 @@ public:
         return;
     }
     
-    if( _mouseLocStart.x < 20 && _mouseLocStart.y < 20 && isViewportResizable)
+    CGFloat resizeThreshold = [HorosVTKRetinaGeometry resizeHandleDisplayThresholdForPointThreshold:20 scale:[HorosVTKRetinaGeometry displayScaleOfView:self]];
+    if( [HorosVTKRetinaGeometry isViewportResizeHandleAtX:_mouseLocStart.x y:_mouseLocStart.y threshold:resizeThreshold] && isViewportResizable)
     {
         _resizeFrame = YES;
     }
@@ -3899,62 +4285,117 @@ public:
             double	*pp;
             long	i;
             
+            [self updateLineMeasurementProjections];
+            [self selectStoredLineMeasurementAt:_mouseLocStart];
+
             vtkPoints		*pts = Line2DData->GetPoints();
             
-            if( pts->GetNumberOfPoints() >= 2)
+            double endpoints[2][3];
+            NSInteger editableEndpoint = -1;
+            if( pts->GetNumberOfPoints() == 2 && Line2DActor->GetVisibility())
             {
-                // Delete current ROI
-                pts = vtkPoints::New();
-                vtkCellArray *rect = vtkCellArray::New();
-                Line2DData-> SetPoints( pts);		pts->Delete();
-                Line2DData-> SetLines( rect);		rect->Delete();
-                
-                pts = Line2DData->GetPoints();
+                pts->GetPoint(0, endpoints[0]);
+                pts->GetPoint(1, endpoints[1]);
+                CGFloat tolerance = [self convertSizeToBacking: NSMakeSize(8, 8)].width;
+                editableEndpoint = [HorosVRMeasurementGeometry editableEndpointAt: _mouseLocStart
+                    first: NSMakePoint(endpoints[0][0], endpoints[0][1])
+                    second: NSMakePoint(endpoints[1][0], endpoints[1][1]) tolerance: tolerance];
             }
-            
-            // Click point 3D to 2D
-            
-            _mouseLocStart = [self convertPointToBacking: [theEvent locationInWindow]];
-            
-            aRenderer->SetDisplayPoint( _mouseLocStart.x, _mouseLocStart.y, 0);
-            aRenderer->DisplayToWorld();
-            pp = aRenderer->GetWorldPoint();
-            
-            // Create the 2D Actor
-            
-            aRenderer->SetWorldPoint(pp[0], pp[1], pp[2], 1.0);
-            aRenderer->WorldToDisplay();
-            
-            double *tempPoint = aRenderer->GetDisplayPoint();
-            
-            NSLog(@"New pt: %2.2f %2.2f", tempPoint[0] , tempPoint[ 1]);
-            
-            vtkCellArray *rect;
-            
-            pts->InsertPoint( pts->GetNumberOfPoints(), tempPoint[0], tempPoint[ 1], 0);
-            
-            rect = vtkCellArray::New();
-            rect->InsertNextCell( pts->GetNumberOfPoints()+1);
-            for( i = 0; i < pts->GetNumberOfPoints(); i++) rect->InsertCellPoint( i);
-            rect->InsertCellPoint( 0);
-            
-            Line2DData->SetVerts( rect);
-            Line2DData->SetLines( rect);		rect->Delete();
-            
-            pts->InsertPoint( pts->GetNumberOfPoints(), tempPoint[0], tempPoint[ 1], 0);
-            
-            rect = vtkCellArray::New();
-            rect->InsertNextCell( pts->GetNumberOfPoints()+1);
-            for( i = 0; i < pts->GetNumberOfPoints(); i++) rect->InsertCellPoint( i);
-            rect->InsertCellPoint( 0);
-            
-            Line2DData->SetVerts( rect);
-            Line2DData->SetLines( rect);		rect->Delete();
-            
-            Line2DData->SetPoints( pts);
-            
+            if( editableEndpoint >= 0)
+            {
+                // The drag path updates the last endpoint. Reverse only the point
+                // order when editing the first handle, preserving the segment.
+                if( editableEndpoint == 0)
+                {
+                    pts->SetPoint(0, endpoints[1]);
+                    pts->SetPoint(1, endpoints[0]);
+                    pts->Modified();
+                }
+            }
+            else
+            {
+                if( pts->GetNumberOfPoints() >= 2)
+                {
+                    [self storeCurrentLineMeasurement];
+                    // Delete current ROI
+                    pts = vtkPoints::New();
+                    vtkCellArray *rect = vtkCellArray::New();
+                    Line2DData-> SetPoints( pts);		pts->Delete();
+                    Line2DData-> SetLines( rect);		rect->Delete();
+
+                    pts = Line2DData->GetPoints();
+                }
+
+                // Click point 3D to 2D
+
+                _mouseLocStart = [HorosVRInteractionGeometry backingPoint: [theEvent locationInWindow] inView: self];
+
+                aRenderer->SetDisplayPoint( _mouseLocStart.x, _mouseLocStart.y, 0);
+                aRenderer->DisplayToWorld();
+                pp = aRenderer->GetWorldPoint();
+
+                // Create the 2D Actor
+
+                aRenderer->SetWorldPoint(pp[0], pp[1], pp[2], 1.0);
+                aRenderer->WorldToDisplay();
+
+                double *tempPoint = aRenderer->GetDisplayPoint();
+
+                NSLog(@"New pt: %2.2f %2.2f", tempPoint[0] , tempPoint[ 1]);
+
+                vtkCellArray *rect;
+
+                pts->InsertPoint( pts->GetNumberOfPoints(), tempPoint[0], tempPoint[ 1], 0);
+
+                rect = vtkCellArray::New();
+                rect->InsertNextCell( pts->GetNumberOfPoints()+1);
+                for( i = 0; i < pts->GetNumberOfPoints(); i++) rect->InsertCellPoint( i);
+                rect->InsertCellPoint( 0);
+
+                Line2DData->SetVerts( rect);
+                Line2DData->SetLines( rect);		rect->Delete();
+
+                pts->InsertPoint( pts->GetNumberOfPoints(), tempPoint[0], tempPoint[ 1], 0);
+
+                rect = vtkCellArray::New();
+                rect->InsertNextCell( pts->GetNumberOfPoints()+1);
+                for( i = 0; i < pts->GetNumberOfPoints(); i++) rect->InsertCellPoint( i);
+                rect->InsertCellPoint( 0);
+
+                Line2DData->SetVerts( rect);
+                Line2DData->SetLines( rect);		rect->Delete();
+
+                pts->Modified(); // SetPoint/InsertPoint do not invalidate VTK point buffers.
+                Line2DData->SetPoints( pts);
+
+            }
+
+            [self captureCurrentLineProjection];
             [self computeLength];
             
+            [self setNeedsDisplay: YES];
+        }
+        else if( tool == tAngle)
+        {
+            [self deleteMouseDownTimer];
+            
+            if( bestRenderingWasGenerated)
+            {
+                bestRenderingWasGenerated = NO;
+                [self display];
+            }
+            dontRenderVolumeRenderingOsiriX = 1;
+            
+            _mouseLocStart = [HorosVRInteractionGeometry backingPoint: [theEvent locationInWindow] inView: self];
+            double patient[3];
+            if( [self patientPointAtDisplayX: _mouseLocStart.x Y: _mouseLocStart.y into: patient])
+            {
+                if( angleMeasurementCount >= 3)
+                    angleMeasurementCount = 0;
+                memcpy(angleMeasurementPatient[angleMeasurementCount], patient, sizeof(patient));
+                angleMeasurementCount++;
+                [self updateAngleMeasurementProjection];
+            }
             [self setNeedsDisplay: YES];
         }
         else if( tool == tOval)
@@ -3973,7 +4414,7 @@ public:
             dontRenderVolumeRenderingOsiriX = 1;
             
             // Click point 3D to 2D
-            _mouseLocStart = [self convertPointToBacking: [theEvent locationInWindow]];
+            _mouseLocStart = [HorosVRInteractionGeometry backingPoint: [theEvent locationInWindow] inView: self];
             
             aRenderer->SetDisplayPoint( _mouseLocStart.x, _mouseLocStart.y, 0);
             aRenderer->DisplayToWorld();
@@ -4009,7 +4450,7 @@ public:
             
             // Click point 3D to 2D
             
-            _mouseLocStart = [self convertPointToBacking: [theEvent locationInWindow]];
+            _mouseLocStart = [HorosVRInteractionGeometry backingPoint: [theEvent locationInWindow] inView: self];
             
             aRenderer->SetDisplayPoint( _mouseLocStart.x, _mouseLocStart.y, 0);
             aRenderer->DisplayToWorld();
@@ -4042,7 +4483,7 @@ public:
             _startMin = wl - ww/2;
             _startMax = wl + ww/2;
             
-            _mouseLocStart = [self convertPointToBacking: [theEvent locationInWindow]];
+            _mouseLocStart = [HorosVRInteractionGeometry backingPoint: [theEvent locationInWindow] inView: self];
             
             if( volumeMapper)
                 volumeMapper->SetMinimumImageSampleDistance( LOD*lowResLODFactor);
@@ -4057,7 +4498,7 @@ public:
             _startMin = blendingWl - blendingWw/2;
             _startMax = blendingWl + blendingWw/2;
             
-            _mouseLocStart = [self convertPointToBacking: [theEvent locationInWindow]];
+            _mouseLocStart = [HorosVRInteractionGeometry backingPoint: [theEvent locationInWindow] inView: self];
             
             if( volumeMapper)
                 volumeMapper->SetMinimumImageSampleDistance( LOD*lowResLODFactor);
@@ -4076,7 +4517,7 @@ public:
             if( blendingVolumeMapper)
                 blendingVolumeMapper->SetMinimumImageSampleDistance( LOD*lowResLODFactor);
             
-            mouseLoc = _mouseLocStart = [self convertPointToBacking: [theEvent locationInWindow]];
+            mouseLoc = _mouseLocStart = [HorosVRInteractionGeometry backingPoint: [theEvent locationInWindow] inView: self];
             [self getInteractor]->SetEventInformation((int) mouseLoc.x, (int) mouseLoc.y, controlDown, shiftDown);
             [self getInteractor]->InvokeEvent(vtkCommand::LeftButtonPressEvent,NULL);
         }
@@ -4084,7 +4525,7 @@ public:
         {
             if( _tool == tCamera3D || clipRangeActivated == YES)
             {
-                mouseLocPre = _mouseLocStart = [self convertPointToBacking: [theEvent locationInWindow]];
+                mouseLocPre = _mouseLocStart = [HorosVRInteractionGeometry backingPoint: [theEvent locationInWindow] inView: self];
                 
                 if( volumeMapper) volumeMapper->SetMinimumImageSampleDistance( LOD*lowResLODFactor);
                 if( blendingVolumeMapper) blendingVolumeMapper->SetMinimumImageSampleDistance( LOD*lowResLODFactor);
@@ -4093,18 +4534,19 @@ public:
                 {
                     if( keep3DRotateCentered == NO)
                     {
-                        double xx = -(mouseLocPre.x - [self frame].size.width/2.);
-                        double yy = -(mouseLocPre.y - [self frame].size.height/2.);
+                        NSSize display = [HorosVTKRetinaGeometry displaySizeOfView:self];
+                        double xx = -(mouseLocPre.x - display.width/2.);
+                        double yy = -(mouseLocPre.y - display.height/2.);
                         
                         double pWC[ 2];
                         aCamera->GetWindowCenter( pWC);
-                        pWC[ 0] *= ([self frame].size.width/2.);
-                        pWC[ 1] *= ([self frame].size.height/2.);
+                        pWC[ 0] *= (display.width/2.);
+                        pWC[ 1] *= (display.height/2.);
                         
                         if( pWC[ 0] != xx || pWC[ 1] != yy)
                         {
-                            aCamera->SetWindowCenter( xx / ([self frame].size.width/2.), yy / ([self frame].size.height/2.));
-                            [self panX: ([self frame].size.width/2.) -(pWC[ 0] - xx)*10000. Y: ([self frame].size.height/2.) -(pWC[ 1] - yy) *10000.];
+                            aCamera->SetWindowCenter( xx / (display.width/2.), yy / (display.height/2.));
+                            [self panX: (display.width/2.) -(pWC[ 0] - xx)*10000. Y: (display.height/2.) -(pWC[ 1] - yy) *10000.];
                         }
                     }
                 }
@@ -4120,7 +4562,7 @@ public:
                 if( blendingVolumeMapper)
                     blendingVolumeMapper->SetMinimumImageSampleDistance( LOD*lowResLODFactor);
                 
-                mouseLoc = [self convertPointToBacking: [theEvent locationInWindow]];
+                mouseLoc = [HorosVRInteractionGeometry backingPoint: [theEvent locationInWindow] inView: self];
                 
                 [self getInteractor]->SetEventInformation((int)mouseLoc.x, (int)mouseLoc.y, controlDown, shiftDown);
                 [self getInteractor]->InvokeEvent(vtkCommand::LeftButtonPressEvent,NULL);
@@ -4142,7 +4584,7 @@ public:
             if( blendingVolumeMapper)
                 blendingVolumeMapper->SetMinimumImageSampleDistance( LOD*lowResLODFactor);
             
-            mouseLoc = [self convertPointToBacking: [theEvent locationInWindow]];
+            mouseLoc = [HorosVRInteractionGeometry backingPoint: [theEvent locationInWindow] inView: self];
             [self getInteractor]->SetEventInformation((int)mouseLoc.x, (int)mouseLoc.y, controlDown, shiftDown);
             [self getInteractor]->InvokeEvent(vtkCommand::LeftButtonPressEvent,NULL);
         }
@@ -4159,14 +4601,14 @@ public:
                 int shiftDown = 0;
                 int controlDown = 1;
                 
-                mouseLoc = [self convertPointToBacking: [theEvent locationInWindow]];
+                mouseLoc = [HorosVRInteractionGeometry backingPoint: [theEvent locationInWindow] inView: self];
                 [self getInteractor]->SetEventInformation((int) mouseLoc.x, (int) mouseLoc.y, controlDown, shiftDown);
                 [self getInteractor]->InvokeEvent(vtkCommand::RightButtonPressEvent,NULL);
             }
             else
             {
                 // vtkCamera
-                mouseLocPre = _mouseLocStart = [self convertPointToBacking: [theEvent locationInWindow]];
+                mouseLocPre = _mouseLocStart = [HorosVRInteractionGeometry backingPoint: [theEvent locationInWindow] inView: self];
                 
                 if( volumeMapper) volumeMapper->SetMinimumImageSampleDistance( LOD*lowResLODFactor);
                 if( blendingVolumeMapper) blendingVolumeMapper->SetMinimumImageSampleDistance( LOD*lowResLODFactor);
@@ -4240,7 +4682,7 @@ public:
             NSLog( @"**** Undo");
             
             // clicked point (2D coordinate)
-            _mouseLocStart = [self convertPointToBacking: [theEvent locationInWindow]];
+            _mouseLocStart = [HorosVRInteractionGeometry backingPoint: [theEvent locationInWindow] inView: self];
             
             long pix[ 3];
             float pos[ 3], value;
@@ -5113,7 +5555,7 @@ public:
     {
         if( aCamera->GetParallelProjection() == NO && flyto == NO)
         {
-            NSPoint mousePoint = [self convertPointToBacking: [[self window] mouseLocationOutsideOfEventStream]];
+            NSPoint mousePoint = [HorosVRInteractionGeometry backingPoint: [[self window] mouseLocationOutsideOfEventStream] inView: self];
             long	pix[ 3];
             float	value;
             
@@ -5172,6 +5614,14 @@ public:
         
         dontRenderVolumeRenderingOsiriX = 0;
     }
+    else if( currentTool == tAngle)
+    {
+        if( c == 27 || c == NSDeleteFunctionKey || c == NSDeleteCharacter || c == NSBackspaceCharacter || c == NSDeleteCharFunctionKey)
+        {
+            [self clearAngleMeasurement];
+            [self setNeedsDisplay: YES];
+        }
+    }
     else if( currentTool == tMesure || currentTool == tOval)
     {
         if( c == 27 || c == NSDeleteFunctionKey || c == NSDeleteCharacter || c == NSBackspaceCharacter || c == NSDeleteCharFunctionKey)
@@ -5187,7 +5637,7 @@ public:
                 }
                 dontRenderVolumeRenderingOsiriX = 1;
                 
-                if( pts->GetNumberOfPoints() != 0)
+                if( pts->GetNumberOfPoints() != 0 && Line2DActor->GetVisibility())
                 {
                     // Delete current ROI
                     vtkPoints *pts = vtkPoints::New();
@@ -5311,6 +5761,18 @@ public:
 
 - (void) setCurrentTool:(ToolMode) i
 {
+    // Hotkeys and programmatic actions must obey the same projection restriction
+    // as the disabled toolbar cell. Keep the current tool when rejecting a request.
+    if( i == tMesure && aCamera && !aCamera->GetParallelProjection())
+    {
+        NSAlert *alert = [[[NSAlert alloc] init] autorelease];
+        [alert setAlertStyle: NSAlertStyleInformational];
+        [alert setMessageText: NSLocalizedString(@"Length Measurement", nil)];
+        [alert setInformativeText: NSLocalizedString(@"Length measurements require parallel projection. Select Parallel in the Perspective controls.", nil)];
+        [alert addButtonWithTitle: NSLocalizedString(@"OK", nil)];
+        [alert runModal];
+        return;
+    }
     ToolMode previousTool = currentTool;
     
     currentTool = i;
@@ -5348,33 +5810,8 @@ public:
         dontRenderVolumeRenderingOsiriX = 0;
     }
     
-    if( currentTool == tMesure || previousTool == tMesure)
-    {
-        if( bestRenderingWasGenerated)
-        {
-            bestRenderingWasGenerated = NO;
-            [self display];
-        }
-        dontRenderVolumeRenderingOsiriX = 1;
-        
-        vtkPoints *pts = Line2DData->GetPoints();
-        
-        if( pts->GetNumberOfPoints() != 0)
-        {
-            // Delete current ROI
-            vtkPoints *pts = vtkPoints::New();
-            vtkCellArray *rect = vtkCellArray::New();
-            Line2DData-> SetPoints( pts);		pts->Delete();
-            Line2DData-> SetLines( rect);		rect->Delete();
-            aRenderer->RemoveActor( Line2DText);
-            measureLength = 0;
-            
-            [self display];
-        }
-        
-        dontRenderVolumeRenderingOsiriX = 0;
-    }
-    
+    [self updateLineMeasurementProjections];
+
     if( (currentTool == t3DCut && previousTool == t3DCut) || currentTool != t3DCut)
     {
         if( bestRenderingWasGenerated)
@@ -6159,20 +6596,20 @@ public:
         blendingWw = [blendingFirstObject ww];
         
         blendingReader = vtkImageImport::New();
-        blendingReader->SetWholeExtent(0, [blendingFirstObject pwidth]-1, 0, [blendingFirstObject pheight]-1, 1, [blendingPixList count]-2);
+        blendingReader->SetWholeExtent(0, [blendingFirstObject pwidth]-1, 0, [blendingFirstObject pheight]-1, 0, [blendingPixList count]-1);
         blendingReader->SetDataExtentToWholeExtent();
         
         if( isBlendingRGB)
         {
             blendingReader->SetDataScalarTypeToUnsignedChar();
             blendingReader->SetNumberOfScalarComponents( 4);
-            blendingReader->SetImportVoidPointer( blendingData );					//AVOID VTK BUG
+            blendingReader->SetImportVoidPointer( blendingData );
         }
         else
         {
             blendingReader->SetNumberOfScalarComponents( 1);
             blendingReader->SetDataScalarTypeToUnsignedShort();
-            blendingReader->SetImportVoidPointer( blendingData8 );					//AVOID VTK BUG
+            blendingReader->SetImportVoidPointer( blendingData8 );
         }
         
         blendingReader->Update();
@@ -6282,7 +6719,7 @@ public:
         
         blendingData = [blendingController volumePtr: index];
         
-        blendingReader->SetImportVoidPointer( blendingData);	//AVOID VTK BUG
+        blendingReader->SetImportVoidPointer( blendingData);
         blendingReader->Update();
         
         // Force min/max recomputing
@@ -6349,6 +6786,9 @@ public:
         reader->Update();
         if( volumeMapper)
         {
+            // Preset filters can update the source while a preview context is current.
+            // Release context-owned VAOs before replacing the main volume mapper.
+            volumeMapper->ReleaseGraphicsResources( aRenderer->GetRenderWindow());
             volumeMapper->Delete();
             volumeMapper = nil;
             
@@ -6376,7 +6816,7 @@ public:
             {
                 blendingData = [blendingController volumePtr];
                 
-                if( isRGB)
+                if( isBlendingRGB)
                 {
                     blendingReader->SetImportVoidPointer( blendingData);
                     blendingReader->GetOutput()->Modified();
@@ -6576,7 +7016,7 @@ public:
         if( isRGB)
         {
             reader->SetImportVoidPointer(data);
-            reader->SetWholeExtent(0, [firstObject pwidth]-1, 0, [firstObject pheight]-1, 1, [pixList count]-2);	//AVOID VTK BUG
+            reader->SetWholeExtent(0, [firstObject pwidth]-1, 0, [firstObject pheight]-1, 0, [pixList count]-1);
             reader->SetDataExtentToWholeExtent();
             reader->SetDataScalarTypeToUnsignedChar();
             reader->SetNumberOfScalarComponents( 4);
@@ -6585,7 +7025,7 @@ public:
         else
         {
             reader->SetImportVoidPointer(data8);
-            reader->SetWholeExtent( 0, [firstObject pwidth]-1, 0, [firstObject pheight]-1, 1, [pixList count]-2);	//AVOID VTK BUG
+            reader->SetWholeExtent( 0, [firstObject pwidth]-1, 0, [firstObject pheight]-1, 0, [pixList count]-1);
             reader->SetDataExtentToWholeExtent();
             //	reader->SetDataScalarTypeToFloat();
             reader->SetDataScalarTypeToUnsignedShort();
@@ -6793,8 +7233,9 @@ public:
         oText[ 1]->GetTextProperty()->SetJustificationToRight();
         
         oText[ 2]->GetPositionCoordinate()->SetValue( 0.5, 0.03);
-        oText[ 2]->GetTextProperty()->SetVerticalJustificationToTop();
+        oText[ 2]->GetTextProperty()->SetVerticalJustificationToBottom();
         oText[ 3]->GetPositionCoordinate()->SetValue( 0.5, 0.97);
+        oText[ 3]->GetTextProperty()->SetVerticalJustificationToTop();
         
         oText[ 4]->GetPositionCoordinate()->SetValue( 0.99, 0.01);
         oText[ 4]->GetTextProperty()->SetBold( false);
@@ -6897,6 +7338,48 @@ public:
         Line2DText->GetTextProperty()->SetShadowOffset(1, 1);
         
         aRenderer->AddActor2D( Line2DActor);
+        
+        pts = vtkPoints::New();
+        rect = vtkCellArray::New();
+        Angle2DData = vtkPolyData::New();
+        Angle2DData->SetPoints( pts);
+        pts->Delete();
+        Angle2DData->SetLines( rect);
+        rect->Delete();
+        Angle2D = vtkPolyDataMapper2D::New();
+        Angle2D->SetInputData( Angle2DData);
+        Angle2DActor = vtkActor2D::New();
+        Angle2DActor->GetPositionCoordinate()->SetCoordinateSystemToDisplay();
+        Angle2DActor->SetMapper( Angle2D);
+        Angle2DActor->GetProperty()->SetPointSize( 6);
+        Angle2DActor->GetProperty()->SetLineWidth( 2.5);
+        Angle2DActor->GetProperty()->SetColor(1, 0.6, 0);
+        Angle2DText = vtkTextActor::New();
+        Angle2DText->SetInput( " ");
+        Angle2DText->SetTextScaleModeToNone();
+        Angle2DText->GetPositionCoordinate()->SetCoordinateSystemToViewport();
+        Angle2DText->GetTextProperty()->SetColor( 1.0, 0.6, 0.0);
+        Angle2DText->GetTextProperty()->SetBold( true);
+        Angle2DText->GetTextProperty()->SetShadow(true);
+        Angle2DText->GetTextProperty()->SetShadowOffset(1, 1);
+        aRenderer->AddActor2D( Angle2DActor);
+        
+        lineMeasurementProjectionNotice = vtkTextActor::New();
+        lineMeasurementProjectionNotice->SetInput([NSLocalizedString(@"Return to the original parallel view to show stored measurements.", nil) UTF8String]);
+        lineMeasurementProjectionNotice->SetTextScaleModeToNone();
+        lineMeasurementProjectionNotice->SetPosition(20, 40);
+        lineMeasurementProjectionNotice->GetTextProperty()->SetColor(1, 1, 1);
+        lineMeasurementProjectionNotice->SetVisibility(false);
+        aRenderer->AddActor2D(lineMeasurementProjectionNotice);
+        vtkCallbackCommand *measurementRenderCallback = vtkCallbackCommand::New();
+        measurementRenderCallback->SetClientData(self);
+        measurementRenderCallback->SetCallback([](vtkObject *, unsigned long, void *context, void *) {
+            [(VRView *)context updateLineMeasurementProjections];
+        });
+        lineMeasurementRenderObserver = aRenderer->AddObserver(vtkCommand::StartEvent, measurementRenderCallback);
+        measurementRenderCallback->Delete();
+
+
         
         [self saView:self];
         
@@ -7329,85 +7812,36 @@ public:
         }
         else
         {
-            int i;
-            
-            NSRect size = [self bounds];
-            
-            *width = (long) size.size.width;
-            *width/=4;
-            *width*=4;
-            *height = (long) size.size.height;
             *spp = 3;
             *bpp = 8;
-            
-            [self getVTKRenderWindow]->MakeCurrent();
-            
-            buf = (unsigned char*) malloc( *width * *height * 4 * *bpp/8);
+            buf = HorosCopyVRFramebuffer([self getVTKRenderWindow], width, height);
             if( buf)
             {
-                CGLContextObj cgl_ctx = (CGLContextObj) [[NSOpenGLContext currentContext] CGLContextObj];
-                
-                glReadBuffer(GL_FRONT);
-                
-#if __BIG_ENDIAN__
-                glReadPixels(0, 0, *width, *height, GL_RGB, GL_UNSIGNED_BYTE, buf);
-#else
-                glReadPixels(0, 0, *width, *height, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV, buf);
-                i = *width * *height;
-                unsigned char	*t_argb = buf;
-                unsigned char	*t_rgb = buf;
-                while( i-->0)
-                {
-                    *((int*) t_rgb) = *((int*) t_argb);
-                    t_argb+=4;
-                    t_rgb+=3;
-                }
-#endif
-                
-                long rowBytes = *width**spp**bpp/8;
-                
-                {
-                    unsigned char	*tempBuf = (unsigned char*) malloc( rowBytes);
-                    
-                    if( tempBuf)
-                    {
-                        for( i = 0; i < *height/2; i++)
-                        {
-                            memcpy( tempBuf, buf + (*height - 1 - i)*rowBytes, rowBytes);
-                            memcpy( buf + (*height - 1 - i)*rowBytes, buf + i*rowBytes, rowBytes);
-                            memcpy( buf + i*rowBytes, tempBuf, rowBytes);
-                        }
-                        
-                        free( tempBuf);
-                    }
-                }
-                
-                //Add the small OsiriX logo at the bottom right of the image
+                long rowBytes = *width * 3;
+                // Add the small logo at the lower-left corner of the image.
                 NSImage	 *logo = [NSImage imageNamed:@"SmallLogo.tif"];
                 NSBitmapImageRep *TIFFRep = [[NSBitmapImageRep alloc] initWithData: [logo TIFFRepresentation]];
                 
                 if( TIFFRep)
                 {
-                    for( i = 0; i < [TIFFRep pixelsHigh]; i++)
+                    long rows = MIN([TIFFRep pixelsHigh], *height);
+                    long columns = MAX(0L, MIN([TIFFRep pixelsWide], *width - 2));
+                    for( long y = 0; y < rows && columns > 0; y++)
                     {
-                        unsigned char	*srcPtr = ([TIFFRep bitmapData] + i*[TIFFRep bytesPerRow]);
-                        unsigned char	*dstPtr = (buf + (*height - [TIFFRep pixelsHigh] + i)*rowBytes + 2*3);
-                        
-                        long x = [TIFFRep bytesPerRow]/3;
-                        while( x-->0)
+                        unsigned char *destination = buf + (*height - rows + y) * rowBytes + 2 * 3;
+                        for( long x = 0; x < columns; x++)
                         {
-                            if( srcPtr[ 0] != 0 || srcPtr[ 1] != 0 || srcPtr[ 2] != 0)
+                            NSColor *color = [[TIFFRep colorAtX:x y:y] colorUsingColorSpace:[NSColorSpace deviceRGBColorSpace]];
+                            if( color && (color.redComponent != 0 || color.greenComponent != 0 || color.blueComponent != 0))
                             {
-                                dstPtr[ 0] = srcPtr[ 0];
-                                dstPtr[ 1] = srcPtr[ 1];
-                                dstPtr[ 2] = srcPtr[ 2];
+                                destination[0] = lround(color.redComponent * 255);
+                                destination[1] = lround(color.greenComponent * 255);
+                                destination[2] = lround(color.blueComponent * 255);
                             }
-                            
-                            dstPtr += 3;
-                            srcPtr += 3;
+                            destination += 3;
                         }
                     }
-                    
+
                     [TIFFRep release];
                 }
             }
@@ -7434,6 +7868,7 @@ public:
     [self resetAutorotate: self];
     
     dataPtr = [self getRawPixels :&width :&height :&spp :&bpp :!originalSize : YES];
+    if( !dataPtr) return nil;
     
     if( spp == 3) colorSpace = NSCalibratedRGBColorSpace;
     else colorSpace = NSCalibratedWhiteColorSpace;
@@ -7485,9 +7920,10 @@ public:
 {
     if( croppingBox)
     {
-        if( croppingBox->GetEnabled()) croppingBox->Off();
-        else
+        BOOL enable = [HorosVTKRetinaGeometry cropBoxEnabledAfterToggle: croppingBox->GetEnabled()];
+        if( enable)
         {
+            croppingBox->PlaceWidget();
             croppingBox->On();
             
             [self setCurrentTool: t3DRotate];
@@ -7495,6 +7931,8 @@ public:
             
             cropcallback->Execute(croppingBox, 0, nil);
         }
+        else
+            croppingBox->Off();
     }
 }
 
@@ -7817,11 +8255,14 @@ public:
     eyeAngle = [cam eyeAngle];
     parallelScale = [cam parallelScale];
     
-    // window level
+    // window level: apply the transfer before capture. Skip only the 0,0
+    // sentinel; a spline overshoot of ww <= 1 used to leave a stale table.
     if( !advancedCLUT)
     {
-        if( [cam ww] > 1)
-            [self setWLWW:[cam wl] :[cam ww]];
+        double resolvedLevel = [cam wl];
+        double resolvedWidth = [cam ww];
+        if( [HorosFlyThruWindow resolveLevel:&resolvedLevel width:&resolvedWidth])
+            [self setWLWW:resolvedLevel :resolvedWidth];
     }
     
     // cropping box
@@ -8706,7 +9147,7 @@ public:
 {
     NSCursor	*c;
     
-    if (tool == tMesure || tool == t3Dpoint)
+    if (tool == tMesure || tool == tAngle || tool == t3Dpoint)
         c = [NSCursor crosshairCursor];
     else if( tool == t3DCut)
         c = [NSCursor crosshairCursor];
@@ -8772,7 +9213,7 @@ static NSString * const O2PasteboardTypeEventModifierFlags = @"com.opensource.os
         [pbi setString:(id)kUTTypeImage forType:(id)kPasteboardTypeFilePromiseContent];
 
         NSDraggingItem* di = [[[NSDraggingItem alloc] initWithPasteboardWriter:pbi] autorelease];
-        NSPoint p = [self convertPointToBacking:event.locationInWindow];
+        NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
         [di setDraggingFrame:NSMakeRect(p.x-thumbnail.size.width/2, p.y-thumbnail.size.height/2, thumbnail.size.width, thumbnail.size.height) contents:thumbnail];
         
         NSDraggingSession* session = [self beginDraggingSessionWithItems:@[di] event:event source:self];
@@ -8806,25 +9247,29 @@ static NSString * const O2PasteboardTypeEventModifierFlags = @"com.opensource.os
             if (!description.length)
                 description = firstObject.imageObj.series.seriesDescription;
             
-            NSString *name = firstObject.imageObj.series.study.name;
-            if (description.length)
-                name = [name stringByAppendingFormat:@" - %@", description];
+            // Study and series descriptions are free text from the DICOM data,
+            // so they cannot become a path component unexamined.
+            NSString *name = [HorosDraggedImageFile nameForStudy: firstObject.imageObj.series.study.name
+                                                          series: description];
+            NSURL *url = [HorosDraggedImageFile urlInDirectory: (NSURL *)urlRef
+                                                          name: name
+                                                 pathExtension: @"jpg"];
             
-            if (!name.length)
-                name = @"Horos";
+            NSEventModifierFlags mf = 0;
+            NSData *flags = [item dataForType: O2PasteboardTypeEventModifierFlags];
+            if( flags.length == sizeof( mf))
+                [flags getBytes: &mf length: sizeof( mf)];
             
-            NSURL *url = [(NSURL *)urlRef URLByAppendingPathComponent:[name stringByAppendingPathExtension:@"jpg"]];
-            size_t i = 0;
-            while ([url checkResourceIsReachableAndReturnError:NULL])
-                url = [(NSURL *)urlRef URLByAppendingPathComponent:[name stringByAppendingFormat:@" (%lu).jpg", ++i]];
-            
-            NSEventModifierFlags mf; [[item dataForType:O2PasteboardTypeEventModifierFlags] getBytes:&mf];
             NSImage *image = [self nsimage:(mf&NSShiftKeyMask)];
             
-            NSData *idata = [[NSBitmapImageRep imageRepWithData:image.TIFFRepresentation] representationUsingType:NSJPEGFileType properties:[NSDictionary dictionaryWithObject:[NSNumber numberWithFloat:0.9] forKey:NSImageCompressionFactor]];
-            [idata writeToURL:url atomically:YES];
+            NSData *idata = [[NSBitmapImageRep imageRepWithData:image.TIFFRepresentation] representationUsingType:NSBitmapImageFileTypeJPEG properties:[NSDictionary dictionaryWithObject:[NSNumber numberWithFloat:0.9] forKey:NSImageCompressionFactor]];
             
-            [item setString:[url absoluteString] forType:type];
+            // Advertise the file only once it exists. Naming it regardless left
+            // the destination holding a path to a file that was never written.
+            if( url && idata.length && [idata writeToURL: url options: NSDataWritingAtomic error: NULL])
+                [item setString:[url absoluteString] forType:type];
+            else
+                NSLog( @"**** dragged image could not be written for %@", name);
             
             CFRelease(urlRef);
         }
@@ -8954,6 +9399,7 @@ static NSString * const O2PasteboardTypeEventModifierFlags = @"com.opensource.os
                 case RotateHotKeyAction:
                 case ScrollHotKeyAction:
                 case LengthHotKeyAction:
+                case AngleHotKeyAction:
                 case OvalHotKeyAction:
                 case Rotate3DHotKeyAction:
                 case Camera3DotKeyAction:

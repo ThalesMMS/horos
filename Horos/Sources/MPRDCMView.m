@@ -47,6 +47,7 @@
 #import "OSIROI.h"
 #import "OSIVolumeWindow.h"
 #import "OSIGeometry.h"
+#import "Horos-Swift.h"
 
 static float deg2rad = M_PI/180.0; 
 
@@ -547,6 +548,12 @@ unsigned int minimumStep;
                     else
                         [r setOriginAndSpacing: resolution : resolution :[DCMPix originCorrectedAccordingToOrientation: pix] :NO];
                 }
+
+                if( [HorosROITemporalStatistics mustRefreshCachedValuesAfterReconstructedBufferChange])
+                {
+                    for( ROI *r in curRoiList)
+                        [r recompute];
+                }
                 
                 [pix orientation: previousOrientation];
                 previousOrigin[ 0] = currentCamera.position.x;
@@ -878,36 +885,43 @@ unsigned int minimumStep;
 	glLineWidth(1.0 * self.window.backingScaleFactor);
 	
 	if( displayCrossLines && frameZoomed == NO && windowController.displayMousePosition && !windowController.mprView1.rotateLines && !windowController.mprView2.rotateLines && !windowController.mprView3.rotateLines
-																					&& !windowController.mprView1.moveCenter && !windowController.mprView2.moveCenter && !windowController.mprView3.moveCenter)
+																					&& !windowController.mprView1.moveCenter && !windowController.mprView2.moveCenter && !windowController.mprView3.moveCenter
+																					&& vrView != nil && pix != nil)
 	{
+		DCMPix *pixA = nil, *pixB = nil;
+		int viewIDA = 0, viewIDB = 0;
+		switch (viewID)
+		{
+			case 1:
+				pixA = [windowController.mprView2 pix];
+				pixB = [windowController.mprView3 pix];
+				viewIDA = 2;
+				viewIDB = 3;
+				break;
+			case 2:
+				pixA = [windowController.mprView1 pix];
+				pixB = [windowController.mprView3 pix];
+				viewIDA = 1;
+				viewIDB = 3;
+				break;
+			case 3:
+				pixA = [windowController.mprView1 pix];
+				pixB = [windowController.mprView2 pix];
+				viewIDA = 1;
+				viewIDB = 2;
+				break;
+		}
+		if ([HorosMPROpenGeometry canConvertSliceCoordsWithDestinationPix:YES
+															 companionA:(pixA != nil)
+															 companionB:(pixB != nil)
+															   spacingX: pix.pixelSpacingX
+															   spacingY: pix.pixelSpacingY
+															 vrAttached:YES
+												   displayMousePosition:YES])
+		{
 		// Mouse Position
 		if( viewID == windowController.mouseViewID)
 		{
-			DCMPix *pixA, *pixB;
-			int viewIDA, viewIDB;
-			
-			switch (viewID)
-			{	
-				case 1:
-					pixA = [windowController.mprView2 pix];
-					pixB = [windowController.mprView3 pix];
-					viewIDA = 2;
-					viewIDB = 3;
-					break;
-				case 2:
-					pixA = [windowController.mprView1 pix];
-					pixB = [windowController.mprView3 pix];
-					viewIDA = 1;
-					viewIDB = 3;					
-					break;
-				case 3:
-					pixA = [windowController.mprView1 pix];
-					pixB = [windowController.mprView2 pix];
-					viewIDA = 1;
-					viewIDB = 2;
-					break;		
-			}
-			
 			[self colorForView:viewIDA];
 			Point3D *pt = windowController.mousePosition;
 			float sc[ 3], dc[ 3] = { pt.x, pt.y, pt.z}, location[ 3];
@@ -963,6 +977,7 @@ unsigned int minimumStep;
 			sc[1] -= self.curDCM.pheight * 0.5f;
 			glVertex2f( scaleValue*sc[ 0], scaleValue*sc[ 1]);
 			glEnd();
+		}
 		}
 	}
     

@@ -67,6 +67,7 @@
  *
  */
 
+#include "HorosDICOMGlobalAbort.h"
 #import "BrowserController.h"
 #import "ThreadsManager.h"
 #import "DicomDatabase.h"
@@ -219,7 +220,7 @@ static int numberOfActiveAssociations = 0;
     [dbLock unlock];
     dbLock = nil;
     
-	if( [[NSFileManager defaultManager] fileExistsAtPath: @"/tmp/kill_all_storescu"] == NO)
+	if( HorosDICOMGlobalAbortRequested() == NO)
 	{
 		NSString *str = [NSString stringWithContentsOfFile: @"/tmp/error_message" usedEncoding:NULL error:NULL];
 		[[NSFileManager defaultManager] removeItemAtPath: @"/tmp/error_message" error:NULL];
@@ -378,6 +379,13 @@ static void moveCallback(
         [[NSThread currentThread] setProgress:1.0/(response->NumberOfCompletedSubOperations+response->NumberOfFailedSubOperations+response->NumberOfWarningSubOperations+response->NumberOfRemainingSubOperations)*(response->NumberOfCompletedSubOperations+response->NumberOfFailedSubOperations+response->NumberOfWarningSubOperations)];
 }
 
+struct HorosStoreCallbackContext {
+    DcmQueryRetrieveStoreContext *store;
+    T_ASC_Association *association;
+    OFBool cancellable;
+    OFBool aborted;
+};
+
 static void storeCallback(
     /* in */
     void *callbackData,
@@ -391,8 +399,32 @@ static void storeCallback(
     T_DIMSE_C_StoreRSP *rsp,            /* final store response */
     DcmDataset **stDetail)
 {
-  DcmQueryRetrieveStoreContext *context = OFstatic_cast(DcmQueryRetrieveStoreContext *, callbackData);
+  HorosStoreCallbackContext *info = static_cast<HorosStoreCallbackContext *>(callbackData);
+  DcmQueryRetrieveStoreContext *context = info->store;
+  // C-GET stores on its own worker. Stop a streaming object on that same
+  // thread, before publication; no other thread touches the association.
+  if (info->cancellable && NSThread.currentThread.isCancelled) {
+      context->setStatus(STATUS_STORE_Refused_OutOfResources);
+      rsp->DimseStatus = STATUS_STORE_Refused_OutOfResources;
+      if (!info->aborted) {
+          info->aborted = OFTrue;
+          ASC_abortAssociation(info->association);
+      }
+      return;
+  }
   context->callbackHandler(progress, req, imageFileName, sourceAETitle, destinationAETitle, imageDataSet, rsp, stDetail);
+  if (progress->state == DIMSE_StoreEnd && !forkedProcess) {
+      OFString study, series;
+      if (imageDataSet && *imageDataSet) {
+          (*imageDataSet)->findAndGetOFString(DCM_StudyInstanceUID, study);
+          (*imageDataSet)->findAndGetOFString(DCM_SeriesInstanceUID, series);
+      }
+      [[NSNotificationCenter defaultCenter] postNotificationName:@"HorosDICOMStoreCompleted" object:nil userInfo:@{
+          @"uid":[NSString stringWithUTF8String:req->AffectedSOPInstanceUID] ?: @"",
+          @"study":[NSString stringWithUTF8String:study.c_str()] ?: @"",
+          @"series":[NSString stringWithUTF8String:series.c_str()] ?: @"",
+          @"status":@(rsp->DimseStatus)}];
+  }
 }
 
 
@@ -755,23 +787,29 @@ OFCondition DcmQueryRetrieveSCP::handleAssociation(T_ASC_Association * assoc, OF
             ASC_dropSCPAssociation(assoc);
         }
     }
-    else if (cond == DUL_PEERABORTEDASSOCIATION)
-    {
-        if (options_.verbose_)
-            printf("Association Aborted\n");
-    }
     else
     {
-        DcmQueryRetrieveOptions::errmsg("DIMSE Failure (aborting association):\n");
-        DimseCondition::dump(cond);
-        
-        if( cond == DIMSE_NODATAAVAILABLE)
-            NSLog( @"----- DIMSE_NODATAAVAILABLE no data available : %d (block mode: %d)", options_.dimse_timeout_, options_.blockMode_);
-        
-        AbortAssociationTimeOut = 2;
-        /* some kind of error so abort the association */
-        cond = ASC_abortAssociation(assoc);
-        AbortAssociationTimeOut = -1;
+        // Keep the DIMSE result separate from association cleanup. A successful
+        // abort reports Normal; it does not mean the failed operation succeeded.
+        char message[4096];
+        snprintf(message, sizeof(message),
+                 "DICOM association from %.64s to %.64s ended: %04x:%04x %s",
+                 peerAETitle, myAETitle,
+                 cond.module(), cond.code(), cond.text());
+        DcmQueryRetrieveOptions::errmsg("%s", message);
+        writeErrorMessage(message);
+
+        if (cond != DUL_PEERABORTEDASSOCIATION)
+        {
+            AbortAssociationTimeOut = 2;
+            OFCondition cleanupCondition = ASC_abortAssociation(assoc);
+            AbortAssociationTimeOut = -1;
+            if (cleanupCondition.bad())
+            {
+                DcmQueryRetrieveOptions::errmsg("Association abort cleanup also failed:");
+                DimseCondition::dump(cleanupCondition);
+            }
+        }
     }
     
     return cond;
@@ -884,7 +922,7 @@ OFCondition DcmQueryRetrieveSCP::moveSCP(T_ASC_Association * assoc, T_DIMSE_C_Mo
 OFCondition DcmQueryRetrieveSCP::storeSCP(T_ASC_Association * assoc, T_DIMSE_C_StoreRQ * request,
              T_ASC_PresentationContextID presId,
              DcmQueryRetrieveDatabaseHandle& dbHandle,
-             OFBool correctUIDPadding)
+             OFBool correctUIDPadding, OFBool cancellable)
 {
 	DcmFileFormat dcmff;
     OFCondition cond = EC_Normal;
@@ -921,10 +959,9 @@ OFCondition DcmQueryRetrieveSCP::storeSCP(T_ASC_Association * assoc, T_DIMSE_C_S
         }
     }
 	
-	FILE * pFile = fopen ("/tmp/kill_all_storescu", "r");
-	if( pFile)
+	BOOL globalAbort = HorosDICOMGlobalAbortRequested();
+	if( globalAbort)
 	{
-		fclose (pFile);
 		cond = ASC_abortAssociation(assoc);
 	}
 	
@@ -952,6 +989,7 @@ OFCondition DcmQueryRetrieveSCP::storeSCP(T_ASC_Association * assoc, T_DIMSE_C_S
     context.setFileName(imageFileName);
 
     DcmDataset *dset = dcmff.getDataset();
+    HorosStoreCallbackContext callbackContext = {&context, assoc, cancellable, OFFalse};
 
     /* we must still retrieve the data set even if some error has occured */
 
@@ -959,13 +997,13 @@ OFCondition DcmQueryRetrieveSCP::storeSCP(T_ASC_Association * assoc, T_DIMSE_C_S
 	{ /* the bypass option can be set on the command line */
         cond = DIMSE_storeProvider(assoc, presId, request, imageFileName, (int)options_.useMetaheader_,
                                    NULL, storeCallback,
-                                   (void*)&context, options_.blockMode_, options_.dimse_timeout_);
+                                   (void*)&callbackContext, options_.blockMode_, options_.dimse_timeout_);
     }
 	else
 	{
         cond = DIMSE_storeProvider(assoc, presId, request, (char *)NULL, (int)options_.useMetaheader_,
                                    &dset, storeCallback,
-                                   (void*)&context, options_.blockMode_, options_.dimse_timeout_);
+                                   (void*)&callbackContext, options_.blockMode_, options_.dimse_timeout_);
     }
 	
 	static_cast<DcmQueryRetrieveOsiriXDatabaseHandle *>(&dbHandle) -> updateLogEntry(dset);
@@ -998,12 +1036,10 @@ OFCondition DcmQueryRetrieveSCP::storeSCP(T_ASC_Association * assoc, T_DIMSE_C_S
     }
 #endif
 
-	if (strcmp(imageFileName, NULL_DEVICE_NAME) != 0)
-	{
-		char dir[ 1024];
-		sprintf( dir, "%s/%s", [[DicomDatabase activeLocalDatabase] incomingDirPathC], last( imageFileName, '/'));
-		rename( imageFileName, dir);
-        
+    if (!options_.ignoreStoreData_ && cond.good() && context.getStatus() == STATUS_Success &&
+        strcmp(imageFileName, NULL_DEVICE_NAME) != 0)
+    {
+        // storeRequest already published the file before acknowledging it.
         if( forkedProcess == NO && index == 0)
         {
             [[DicomDatabase activeLocalDatabase] initiateImportFilesFromIncomingDirUnlessAlreadyImporting];

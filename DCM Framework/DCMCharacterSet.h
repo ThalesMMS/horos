@@ -54,4 +54,8 @@
 + (NSString *) stringWithBytes:(char *) str length:(unsigned) length encodings: (NSStringEncoding*) encodings;
 + (NSStringEncoding)encodingForDICOMCharacterSet:(NSString *)characterSet;
 
+/** The character set to assume for a file that does not state one, from the
+    `DefaultCharacterSetWhenAbsent` preference, or nil to keep the default. */
++ (NSString*) characterSetWhenAbsent;
+
 @end

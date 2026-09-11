@@ -123,9 +123,28 @@
 @interface N2ManagedObjectContext : NSManagedObjectContext {
     N2ManagedObjectContext *_confinementParentContext;
 	N2ManagedDatabase* _database;
+    NSMutableArray *_afterSuccessfulSaveActions;
+    NSMutableArray *_nextSuccessfulSaveActions;
+    NSMutableArray *_discardedChangesActions;
+    BOOL _defersSaves;
+    BOOL _atomicChangesCancelled;
 }
 
 @property(readonly) N2ManagedDatabase* database;
+
+// Validation callbacks may schedule side effects only during an active save.
+// Failed saves discard these actions; standalone validation has no side effects.
+- (void)performAfterSuccessfulSave:(void (^)(void))action;
+
+// Import work prepared before save. Rollback, reset, and failed saves discard it.
+- (void)performAfterNextSuccessfulSave:(void (^)(void))action;
+// Clean up newly prepared resources only if their changes are discarded.
+- (void)performAfterDiscardingChanges:(void (^)(void))action;
+
+@property(readonly) BOOL defersSaves;
+// Requires a clean, store-backed context. Nested save calls are preparation only;
+// one final save commits the block, or rollback discards the entire batch.
+- (BOOL)performAtomicChanges:(BOOL (^)(NSError **error))changes error:(NSError **)error;
 
 - (instancetype)initWithDatabase:(N2ManagedDatabase *)db concurrencyType:(NSManagedObjectContextConcurrencyType)ct NS_DESIGNATED_INITIALIZER;
 - (instancetype)initWithConcurrencyType:(NSManagedObjectContextConcurrencyType)ct NS_UNAVAILABLE;

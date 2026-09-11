@@ -35,6 +35,7 @@
      PURPOSE.
  ============================================================================*/
 
+#import "Horos-Swift.h"
 #import "N2ManagedDatabase.h"
 #import "NSMutableDictionary+N2.h"
 #import "N2Debug.h"
@@ -99,29 +100,126 @@ static int gTotalN2ManagedObjectContext = 0;
     
     [NSNotificationCenter.defaultCenter removeObserver:self];
 
+    [_nextSuccessfulSaveActions release];
+    _nextSuccessfulSaveActions = nil;
+    [self runDiscardedChangesActions];
     self.confinementParentContext = nil;
     _database = nil;
 	
     [super dealloc]; //test if db is deallocated
 }
 
+- (void)performAfterSuccessfulSave:(void (^)(void))action {
+    if (_afterSuccessfulSaveActions && action)
+        [_afterSuccessfulSaveActions addObject:[[action copy] autorelease]];
+}
+
+- (void)performAfterNextSuccessfulSave:(void (^)(void))action {
+    if (!action) return;
+    if (!_nextSuccessfulSaveActions)
+        _nextSuccessfulSaveActions = [[NSMutableArray alloc] init];
+    [_nextSuccessfulSaveActions addObject:[[action copy] autorelease]];
+}
+
+- (void)performAfterDiscardingChanges:(void (^)(void))action {
+    if (!action) return;
+    if (!_discardedChangesActions) _discardedChangesActions = [[NSMutableArray alloc] init];
+    [_discardedChangesActions addObject:[[action copy] autorelease]];
+}
+
+- (void)runDiscardedChangesActions {
+    NSArray *actions = [_discardedChangesActions autorelease];
+    _discardedChangesActions = nil;
+    for (void (^action)(void) in actions) {
+        @try { action(); }
+        @catch (NSException *exception) { NSLog(@"Discard action failed: %@", exception.name); }
+    }
+}
+
+- (BOOL)defersSaves { return _defersSaves; }
+
+- (BOOL)performAtomicChanges:(BOOL (^)(NSError **error))changes error:(NSError **)error {
+    [self lock];
+    @try {
+        if (!changes || _defersSaves || self.hasChanges || self.parentContext || !self.persistentStoreCoordinator.persistentStores.count || _nextSuccessfulSaveActions.count || _discardedChangesActions.count) {
+            if (error) *error = [NSError errorWithDomain:@"N2AtomicChanges" code:1 userInfo:
+                @{NSLocalizedDescriptionKey: @"Atomic changes require a clean, independent store context."}];
+            return NO;
+        }
+        _defersSaves = YES;
+        _atomicChangesCancelled = NO;
+        @try {
+            NSError *operationError = nil;
+            BOOL ready = changes(&operationError) && !_atomicChangesCancelled;
+            _defersSaves = NO;
+            BOOL committed = ready && [self save:&operationError];
+            if (!committed) {
+                [self rollback];
+                if (error) *error = operationError ?: [NSError errorWithDomain:@"N2AtomicChanges" code:2 userInfo:
+                    @{NSLocalizedDescriptionKey: @"The prepared changes were not committed."}];
+            }
+            return committed;
+        } @catch (...) {
+            _defersSaves = NO;
+            [self rollback];
+            @throw;
+        } @finally {
+            _defersSaves = NO;
+            _atomicChangesCancelled = NO;
+        }
+    } @finally {
+        [self unlock];
+    }
+}
+
+- (void)rollback {
+    if (_defersSaves) _atomicChangesCancelled = YES;
+    [_nextSuccessfulSaveActions release];
+    _nextSuccessfulSaveActions = nil;
+    [super rollback];
+    [self runDiscardedChangesActions];
+}
+
+- (void)reset {
+    if (_defersSaves) _atomicChangesCancelled = YES;
+    [_nextSuccessfulSaveActions release];
+    _nextSuccessfulSaveActions = nil;
+    [super reset];
+    [self runDiscardedChangesActions];
+}
+
 -(BOOL)save:(NSError**)error {
+    if (_defersSaves) return !_atomicChangesCancelled;
     [self lock];
 #ifndef NDEBUG
     [_database checkForCorrectContextThread: self];
 #endif
+    NSMutableArray *previousActions = _afterSuccessfulSaveActions;
+    _afterSuccessfulSaveActions = _nextSuccessfulSaveActions ?: [[NSMutableArray alloc] init];
+    _nextSuccessfulSaveActions = nil;
     @try {
-        return [super save:error];
-//        for (NSPersistentStore* ps in [[self persistentStoreCoordinator] persistentStores])
-//            if (ps.URL.isFileURL)
-//                [NSFileManager.defaultManager applyFileModeOfParentToItemAtPath:ps.URL.path];
-    } @catch (...) {
-        @throw;
+        BOOL saved = [super save:error];
+        if (saved) {
+            [_discardedChangesActions release];
+            _discardedChangesActions = nil;
+            // Stop accepting work before executing callbacks. A callback may save
+            // again; its actions belong to that new save, not this iteration.
+            NSArray *actions = [[_afterSuccessfulSaveActions copy] autorelease];
+            [_afterSuccessfulSaveActions release];
+            _afterSuccessfulSaveActions = nil;
+            for (void (^action)(void) in actions) {
+                @try { action(); }
+                @catch (NSException *exception) {
+                    NSLog(@"Post-save action failed: %@", exception.name);
+                }
+            }
+        }
+        return saved;
     } @finally {
+        [_afterSuccessfulSaveActions release];
+        _afterSuccessfulSaveActions = previousActions;
         [self unlock];
     }
-    
-    return NO;
 }
 
 -(NSManagedObject*)existingObjectWithID:(NSManagedObjectID*)objectID error:(NSError**)error {
@@ -346,6 +444,8 @@ static int gTotalN2ManagedObjectContext = 0;
                     //[persistentStoreCoordinatorsDictionary setObject:persistentStoreCoordinator forKey:sqlFilePath];
                     
                     NSPersistentStore* pStore = nil;
+                    NSString *reportedDiagnosis = nil, *reportedKeptIndex = nil;
+                    NSInteger reportedRecoverableFiles = -1;
                     int i = 0;
                     do { // try 2 times
                         ++i;
@@ -363,27 +463,58 @@ static int gTotalN2ManagedObjectContext = 0;
                         
                         if (!pStore && i == 1)
                         {
+                            // The index holds the studies, the albums, the
+                            // comments and the ROIs; the images are files beside
+                            // it. Deleting it - which is what used to happen
+                            // here, on the first failed attempt, whether or not
+                            // anyone agreed and with no answer to why it would
+                            // not open - loses everything that is not in a file.
+                            NSString *diagnosis = [HorosIndexRecovery diagnosisForError: err path: sqlFilePath];
+                            NSInteger recoverable = [HorosIndexRecovery recoverableFileCountBesideIndexAtPath: sqlFilePath];
                             NSLog(@"Error: [N2ManagedDatabase contextAtPath:] %@", [err description]);
-                            if ([NSThread isMainThread]) {
-                                NSInteger result = NSRunCriticalAlertPanel( [NSString stringWithFormat:NSLocalizedString(@"%@ Storage Error", nil), [self className]], @"%@\r\r%@\r\r%@", NSLocalizedString(@"Continue", nil), NSLocalizedString(@"Delete the SQL index", nil), nil, err.localizedDescription, sqlFilePath, NSLocalizedString(@"I could delete the SQL index file to reset it.", nil));
-                                
-                                if( result == NSAlertAlternateReturn) {
-                                    NSInteger result = NSRunCriticalAlertPanel( [NSString stringWithFormat:NSLocalizedString(@"%@ Storage Error", nil), [self className]], @"%@\r\r%@", NSLocalizedString(@"Cancel", nil), NSLocalizedString(@"Delete", nil), nil, NSLocalizedString( @"Do you confirm to delete this index file? This operation cannot be undone.", nil), sqlFilePath);
-                                    
-                                    if( result == NSAlertAlternateReturn) {
-                                        [NSFileManager.defaultManager removeItemAtPath:sqlFilePath error: nil];
-                                        i = 0;
-                                    }
+                            NSLog(@"---- index: %@", diagnosis);
+                            if( recoverable >= 0)
+                                NSLog(@"---- index: %ld files are in the image folder beside it and can be indexed again", (long) recoverable);
+                            
+                            NSString *kept = nil;
+                            BOOL setAside = self.deleteSQLFileIfOpeningFailed && [HorosIndexRecovery indexCanBeSetAsideForError: err];
+                            
+                            if (setAside)
+                            {
+                                NSString *preserved = [HorosIndexRecovery preservedPathForIndexAtPath: sqlFilePath];
+                                NSError *moveError = nil;
+                                if ([NSFileManager.defaultManager moveItemAtPath:sqlFilePath toPath:preserved error:&moveError])
+                                {
+                                    kept = preserved;
+                                    NSLog(@"---- index: kept as %@; a new index will be created", [preserved lastPathComponent]);
+                                    i = 0; // try again, on the new index
                                 }
+                                else
+                                    NSLog(@"---- index: could not be set aside (%@); it is left exactly as it is", moveError.localizedDescription);
                             }
+                            else if (self.deleteSQLFileIfOpeningFailed)
+                                NSLog(@"---- index: left exactly as it is - this is not a damaged file, and replacing it would destroy a database that is intact");
                             
-                            // error = [NSError osirixErrorWithCode:0 underlyingError:error localizedDescriptionFormat:NSLocalizedString(@"Store Configuration Failure: %@", nil), error.localizedDescription? error.localizedDescription : NSLocalizedString(@"Unknown Error", nil)];
-                            
-                            // delete the old file... for the Database.sql model ONLY (Dont do this for the WebUser db)
-                            if (self.deleteSQLFileIfOpeningFailed)
-                                [NSFileManager.defaultManager removeItemAtPath:sqlFilePath error:nil];
+                            reportedDiagnosis = [diagnosis retain];
+                            reportedKeptIndex = [kept retain];
+                            reportedRecoverableFiles = recoverable;
                         }
                     } while (!pStore && i < 2);
+                    
+                    // Said after the recovery rather than instead of it: the file
+                    // has already been dealt with without destroying anything, so
+                    // there is nothing to ask and nothing to hold up the launch
+                    // for. It is still worth saying, because a database that
+                    // opens empty otherwise looks like one that was erased.
+                    if (reportedDiagnosis && [NSThread isMainThread])
+                    {
+                        NSString *outcome = reportedKeptIndex
+                            ? [NSString stringWithFormat: NSLocalizedString(@"It has been kept as %@, and a new index was created. The %ld files in the image folder can be indexed again with Rebuild Database.", nil), [reportedKeptIndex lastPathComponent], (long) reportedRecoverableFiles]
+                            : NSLocalizedString(@"The file has not been touched. Once the cause is gone it will open as it is.", nil);
+                        NSRunCriticalAlertPanel( [NSString stringWithFormat:NSLocalizedString(@"%@ Storage Error", nil), [self className]], @"%@\r\r%@\r\r%@", NSLocalizedString(@"Continue", nil), nil, nil, reportedDiagnosis, sqlFilePath, outcome);
+                    }
+                    [reportedDiagnosis release];
+                    [reportedKeptIndex release];
                     
                     // Save the models for forward compatibility with old OsiriX versions that don't know the current model
                     if (self.saveDatabaseModel){

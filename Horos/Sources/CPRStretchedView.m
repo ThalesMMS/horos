@@ -42,6 +42,7 @@
 //  Copyright 2011 OsiriX Team. All rights reserved.
 //
 
+#import "Horos-Swift.h"
 #import "options.h"
 
 #import "CPRStretchedView.h"
@@ -431,19 +432,35 @@ extern int splitPosition[ 3];
 {
 	if( rect.size.width > 10)
 	{
+		HorosCPRRenderDecision *decision = [HorosCPRRenderLifecycle beginDrawNamed:@"stretched"];
+		if( decision.accepted == NO)
+		{
+			NSLog(@"CPR draw skipped: %@", decision.diagnosis);
+			return;
+		}
 		_processingRequest = YES;
-		[self _sendNewRequestIfNeeded];
-		_processingRequest = NO;    
-		
-//		[self _adjustROIs];
-		
-		[super drawRect: rect];
+		@try
+		{
+			if( self.curDCM)
+			{
+				NSString *geo = [HorosCPRRenderLifecycle diagnoseSpacingX:self.curDCM.pixelSpacingX spacingY:self.curDCM.pixelSpacingY];
+				if( [geo isEqualToString:@"ready"] == NO)
+					NSLog(@"CPR invalid geometry: %@", geo);
+			}
+			[self _sendNewRequestIfNeeded];
+			[super drawRect: rect];
+		}
+		@finally
+		{
+			_processingRequest = NO;
+			[HorosCPRRenderLifecycle endDrawNamed:@"stretched"];
+		}
 	}
 }
 
 - (void)setNeedsDisplay:(BOOL)flag
 {
-    if (_processingRequest == NO) {
+    if ([HorosCPRRenderLifecycle shouldDisplaySynchronouslyWhileDrawing:_processingRequest]) {
         [super setNeedsDisplay:flag];
     }
 }
@@ -1282,7 +1299,6 @@ extern int splitPosition[ 3];
         }
         [self _sendDidUpdateCurvedPath];
         [self _setNeedsNewRequest];
-        [self display];
         [self mouseMoved: event];
     }
     else if (_draggingTransverse)

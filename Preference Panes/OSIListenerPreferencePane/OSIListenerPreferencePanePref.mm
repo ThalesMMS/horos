@@ -66,6 +66,12 @@
 //    return (char*) inet_ntoa(*((struct in_addr *)h->h_addr));
 //}
 
+@interface NSObject (HorosListenerPortFormatterBridge)
+- (id)initWithField:(NSString*)field;
++ (NSInteger)alternativePortTo:(NSInteger)port;
++ (id)installInView:(NSView*)view;
+@end
+
 @implementation OSIListenerPreferencePanePref
 
 @synthesize TLSAuthenticationCertificate;
@@ -132,8 +138,27 @@
 	[super dealloc];
 }
 
+- (void)installPortFormattersInView:(NSView*)view
+{
+    if ([view isKindOfClass:[NSTextField class]]) {
+        NSString *key = [[view infoForBinding:NSValueBinding] objectForKey:NSObservedKeyPathKey];
+        if ([@[@"values.AEPORT", @"values.TLSStoreSCPAEPORT", @"values.httpXMLRPCServerPort"] containsObject:key]) {
+            id formatter = [[[NSClassFromString(@"HorosDICOMNodeFormatter") alloc] initWithField:@"Port"] autorelease];
+            [(NSTextField*)view setFormatter:formatter];
+        }
+    }
+    for (NSView *child in view.subviews) [self installPortFormattersInView:child];
+}
+
 - (void) mainViewDidLoad
 {
+    [self installPortFormattersInView:mainWindow.contentView];
+    [self installPortFormattersInView:TLSSettingsWindow.contentView];
+    // The XML-RPC interface answers loopback only unless the user says
+    // otherwise, and saying otherwise needs a password. That does not fit the
+    // remaining space in the nib, so the button beside the port field opens a
+    // sheet for it. Resolved at runtime, like the port formatters above.
+    [NSClassFromString(@"HorosXMLRPCRemoteAccessPanel") performSelector:@selector(installInView:) withObject:mainWindow.contentView];
 	NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
 	
 	if( [defaults integerForKey:@"DICOMTimeout"] < 1)
@@ -247,7 +272,7 @@
 	}
 	
 	if( [[NSUserDefaults standardUserDefaults] integerForKey: @"TLSStoreSCPAEPORT"] <= 0)
-		[[NSUserDefaults standardUserDefaults] setInteger: [[NSUserDefaults standardUserDefaults] integerForKey: @"AEPORT"] + 1 forKey: @"TLSStoreSCPAEPORT"]; 
+		[[NSUserDefaults standardUserDefaults] setInteger: [NSClassFromString(@"HorosDICOMNodeFormatter") alternativePortTo:[[NSUserDefaults standardUserDefaults] integerForKey:@"AEPORT"]] forKey: @"TLSStoreSCPAEPORT"];
 		
 	[NSApp beginSheet: TLSSettingsWindow
 	   modalForWindow: [[self mainView] window]
@@ -270,7 +295,7 @@
 		}
 		
 		if( [[NSUserDefaults standardUserDefaults] integerForKey: @"TLSStoreSCPAEPORT"] <= 0)
-			[[NSUserDefaults standardUserDefaults] setInteger: [[NSUserDefaults standardUserDefaults] integerForKey: @"AEPORT"] + 1 forKey: @"TLSStoreSCPAEPORT"]; 
+			[[NSUserDefaults standardUserDefaults] setInteger: [NSClassFromString(@"HorosDICOMNodeFormatter") alternativePortTo:[[NSUserDefaults standardUserDefaults] integerForKey:@"AEPORT"]] forKey: @"TLSStoreSCPAEPORT"];
 		
 		[[NSUserDefaults standardUserDefaults] setObject:self.TLSSupportedCipherSuite forKey:@"TLSStoreSCPCipherSuites"];
 		[[NSUserDefaults standardUserDefaults] setObject:[NSNumber numberWithBool:self.TLSUseDHParameterFileURL] forKey:@"TLSStoreSCPUseDHParameterFileURL"];
@@ -412,9 +437,7 @@
 		
 		if(submittedPort == port)
 		{		
-			int newPort = submittedPort;
-			if(submittedPort+1<131072) newPort = submittedPort+1;
-			else if(submittedPort-1>1) newPort = submittedPort-1;
+			int newPort = (int)[NSClassFromString(@"HorosDICOMNodeFormatter") alternativePortTo:submittedPort];
 			
 			NSString *newStr = [NSString stringWithFormat:@"%d", newPort];
 			

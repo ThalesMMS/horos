@@ -53,7 +53,7 @@
 #include <stdlib.h>
 #include <iostream>
 
-#include "ofthread.h"
+#include <dcmtk/ofstd/ofthread.h>
 
 //#define WITH_OPJ_BUFFER_STREAM
 #define WITH_OPJ_FILE_STREAM
@@ -494,7 +494,12 @@ void* OPJSupport::decompressJPEG2KWithBuffer(void* inputBuffer,
         
         alpha = NULL;
         
-        has_rgb = (decodeInfo.image->numcomps == 3);
+        // The guard above admits numcomps >= 3, and the comment there says
+        // RGB[A]: four components are RGB with alpha, not greyscale. Testing
+        // for exactly 3 sent an RGBA image down the greyscale branch, which
+        // read all three channels from comps[0] and left alpha NULL while
+        // hasAlpha was true - a null dereference in the loop below.
+        has_rgb = (decodeInfo.image->numcomps >= 3);
         has_alpha4 = (decodeInfo.image->numcomps == 4);
         has_alpha2 = (decodeInfo.image->numcomps == 2);
         hasAlpha = (has_alpha4 || has_alpha2);

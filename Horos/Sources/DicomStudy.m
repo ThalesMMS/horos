@@ -736,12 +736,14 @@ static NSRecursiveLock *dbModifyLock = nil;
     if( [self.hasDICOM boolValue] == YES)
     {
         [self.managedObjectContext lock];
+        NSString *archiveDirectory = nil;
         @try
         {
             BOOL isMainDB = self.managedObjectContext.persistentStoreCoordinator == BrowserController.currentBrowser.database.managedObjectContext.persistentStoreCoordinator;
             
             // Report
-            NSString *zippedFile = @"/tmp/zippedReport.zip";
+            archiveDirectory = [NSFileManager.defaultManager tmpDirectoryPathInTmp];
+            NSString *zippedFile = [archiveDirectory stringByAppendingPathComponent:@"report.zip"];
             BOOL needToArchive = NO;
             NSString *dstPath = nil;
             DicomImage *reportImage = [self reportImage];
@@ -759,10 +761,8 @@ static NSRecursiveLock *dbModifyLock = nil;
             }
             else if( [[NSFileManager defaultManager] fileExistsAtPath: self.reportURL])
             {
-                NSDate *storedModifDate = [reportImage valueForKey: @"date"];
-                NSDate *fileModifDate = [[[NSFileManager defaultManager] attributesOfItemAtPath: self.reportURL error: nil] valueForKey: NSFileModificationDate];
-                
-                if( reportImage == nil || [[storedModifDate description] isEqualToString: [fileModifDate description]] == NO) // We want to compare only date and time, without milliseconds
+                // Dates lose subsecond precision in SR. Compare archive contents
+                // even when both timestamps describe the same second.
                 {
                     [BrowserController encryptFileOrFolder: self.reportURL inZIPFile: zippedFile password: nil deleteSource: NO showGUI: NO];
                     
@@ -805,7 +805,8 @@ static NSRecursiveLock *dbModifyLock = nil;
                     r = [[[SRAnnotation alloc] initWithFileReport: zippedFile path: dstPath forImage: [[[self.series anyObject] valueForKey:@"images"] anyObject] contentDate: modifDate] autorelease];
                 }
                 
-                [r writeToFileAtPath: dstPath];
+                if (![r writeToFileAtPath:dstPath])
+                    [NSException raise:@"ReportArchive" format:@"Could not write the DICOM report archive."];
                 
                 [self.managedObjectContext save: nil];
                 
@@ -836,6 +837,7 @@ static NSRecursiveLock *dbModifyLock = nil;
             N2LogExceptionWithStackTrace(e);
         }
         @finally {
+            if (archiveDirectory) [NSFileManager.defaultManager removeItemAtPath:archiveDirectory error:NULL];
             [self.managedObjectContext unlock];
         }
     }
@@ -850,8 +852,12 @@ static NSRecursiveLock *dbModifyLock = nil;
     BOOL delete = [super validateForDelete: error];
     if (delete)
     {
-        if( self.reportURL && [[NSFileManager defaultManager] fileExistsAtPath: self.reportURL])
-            [[NSFileManager defaultManager] removeItemAtPath: self.reportURL error: nil];
+        NSString *reportPath = self.reportURL;
+        N2ManagedObjectContext *context = (N2ManagedObjectContext *)self.managedObjectContext;
+        if (reportPath && [context respondsToSelector:@selector(performAfterSuccessfulSave:)])
+            [context performAfterSuccessfulSave:^{
+                [[NSFileManager defaultManager] removeItemAtPath:reportPath error:NULL];
+            }];
     }
     return delete;
 }
@@ -980,16 +986,15 @@ static NSRecursiveLock *dbModifyLock = nil;
         if( [dict objectForKey: @"value"] == nil || [(NSString*)[dict objectForKey: @"value"] length] == 0)
         {
             
-            [tagAndValues addObjectsFromArray:
-             [NSArray  arrayWithObjects:[DCMAttributeTag tagWithTagString:[dict objectForKey: @"field"]],
-              @"",nil]
+            [tagAndValues addObject:
+             [NSArray  arrayWithObjects:[DCMAttributeTag tagWithTagString:[dict objectForKey: @"field"]], nil]
              ];
             
             //[params addObjectsFromArray: [NSArray arrayWithObjects: @"-e", [dict objectForKey: @"field"], nil]];
         }
         else
         {
-            [tagAndValues addObjectsFromArray:
+            [tagAndValues addObject:
              [NSArray  arrayWithObjects:[DCMAttributeTag tagWithTagString:[dict objectForKey: @"field"]],
               [dict objectForKey: @"value"],nil]
              ];
@@ -1171,6 +1176,11 @@ static NSRecursiveLock *dbModifyLock = nil;
                 
                 @try {
                     [self saveReportAsDicomAtPath: filePath];
+                    
+                    // Conversion failure must not import an empty path or
+                    // replace the Pages report (#129). reportURL is untouched.
+                    if ([[NSFileManager defaultManager] fileExistsAtPath: filePath] == NO)
+                        [NSException raise:NSGenericException format:@"%@", @"The DICOM PDF could not be written. The original report has been left unchanged."];
                     
                     DicomDatabase *idb = nil;
                     if( [[NSThread currentThread] isMainThread])
