@@ -10,6 +10,11 @@ process footprint. Three warm-up reconstructions precede each measured state.
 This measures reconstruction, not input-to-display latency or FPS. The current
 Metal route skips the CPU ray cast; historical builds ran both paths.
 
+Since #620 each timed reconstruction drains its own autorelease pool, as the
+app's event loop does after each frame: without it every frame's command buffer,
+and the output plane it holds, lived until the whole loop ended, which is not
+what the app does between frames.
+
     python3 tools/measure-native-mpr-metal.py ct-500 --pid 123 --iterations 30
 """
 import argparse
@@ -54,7 +59,9 @@ for (int m374State = 0; m374State < 2; ++m374State) {
   NSMutableArray *m374GPU = [NSMutableArray array];
   for (int m374I = 0; m374I < ITERATIONS; ++m374I) {
     uint64_t m374T0 = mach_absolute_time();
+    void *m374Pool = (void *)objc_autoreleasePoolPush();
     (void)[m374V restoreCamera]; (void)[(id)[m374V camera] setForceUpdate:YES]; (void)[m374V updateViewMPR];
+    (void)objc_autoreleasePoolPop(m374Pool);
     uint64_t m374T1 = mach_absolute_time();
     (void)[m374Times addObject:@((double)(m374T1 - m374T0) * m374TB.numer / m374TB.denom / 1e6)];
     (void)[m374GPU addObject:@((double)[m374C horosMPRLastMilliseconds])];

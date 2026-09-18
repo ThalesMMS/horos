@@ -86,6 +86,7 @@ typedef NSInteger CPRExportRotationSpan;
 @class CPRDisplayInfo;
 @class CPRTransverseView;
 @class CPRVolumeData;
+@class HorosCPRRenderLifecycle;
 
 @interface CPRController : Window3DController <CPRViewDelegate, NSToolbarDelegate, NSSplitViewDelegate>
 {
@@ -234,6 +235,11 @@ typedef NSInteger CPRExportRotationSpan;
 @property (nonatomic) CPRType cprType;
 @property (nonatomic) ViewsPosition viewsPosition;
 @property (nonatomic, readonly) CPRView *cprView;
+
+// The render lifecycle belongs to this window, not to the process: a second
+// Curved MPR window must not gate this one's drawRect, and closing either must
+// not leave the other refusing to paint.
+@property (nonatomic, readonly) HorosCPRRenderLifecycle *renderLifecycle;
 
 //@property (nonatomic) BOOL assistantPathMode;3
 

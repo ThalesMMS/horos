@@ -17,12 +17,14 @@ import io
 import json
 import zipfile
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
 import numpy
 from pydicom.dataset import Dataset, FileMetaDataset
 from pydicom.uid import CTImageStorage, ExplicitVRLittleEndian, generate_uid
+# Run as tools/serve-url-import-fixture.py: this folder is already on the path.
+from local_http import ThreadingLocalHTTPServer
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--port', type=int, default=11190)
@@ -108,7 +110,7 @@ class Handler(BaseHTTPRequestHandler):
             self.answer(404, 'text/html', b'<html><body>Not found</body></html>')
 
 
-server = ThreadingHTTPServer(('127.0.0.1', arguments.port), Handler)
+server = ThreadingLocalHTTPServer(('127.0.0.1', arguments.port), Handler)
 print('study %s' % STUDY)
 print('series %s' % SERIES)
 print('instance %d bytes, archive %d bytes' % (len(INSTANCE), len(ARCHIVE)))

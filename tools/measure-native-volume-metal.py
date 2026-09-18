@@ -10,6 +10,10 @@ volume, camera, transfer function and size; VTK's own image-sample distance
 (LOD) is reported because it decides how many rays it casts. No gain is
 presumed and none is claimed.
 
+Since #621 each timed frame drains its own autorelease pool, as the app's event
+loop does after each frame; without it every frame's command buffer and picture
+lived until the loop ended.
+
     python3 tools/measure-native-volume-metal.py phantom --pid 123 --iterations 20
 """
 import argparse
@@ -52,7 +56,7 @@ f375R[@"lod"] = @((float)[f375V lodDisplayed]);
 f375R[@"shading"] = @((long)[f375V shading]);
 NSMutableArray *f375VTK = [NSMutableArray array];
 for (int f375I = 0; f375I < ITERATIONS; ++f375I) {
-  uint64_t t0 = mach_absolute_time(); (void)[f375V render]; uint64_t t1 = mach_absolute_time();
+  uint64_t t0 = mach_absolute_time(); void *f375Pool = (void *)objc_autoreleasePoolPush(); (void)[f375V render]; (void)objc_autoreleasePoolPop(f375Pool); uint64_t t1 = mach_absolute_time();
   (void)[f375VTK addObject:@((double)(t1 - t0) * f375TB.numer / f375TB.denom / 1e6)];
 }
 f375R[@"vtkMilliseconds"] = f375VTK;
@@ -65,10 +69,10 @@ f375R[@"metalFirstFrameMilliseconds"] = @((double)(f1 - f0) * f375TB.numer / f37
 f375R[@"metalFirstFrameBytes"] = @((long)[f375First length]);
 NSMutableArray *f375Metal = [NSMutableArray array]; NSMutableArray *f375GPU = [NSMutableArray array];
 for (int f375I = 0; f375I < ITERATIONS; ++f375I) {
-  uint64_t t0 = mach_absolute_time(); NSData *d = (NSData *)[f375C horosVolumeMetalRenderWithWidth:f375W height:f375H scalarOut:nil error:&f375E]; uint64_t t1 = mach_absolute_time();
+  uint64_t t0 = mach_absolute_time(); void *f375Pool = (void *)objc_autoreleasePoolPush(); NSUInteger f375Length = (NSUInteger)[(NSData *)[f375C horosVolumeMetalRenderWithWidth:f375W height:f375H scalarOut:nil error:&f375E] length]; (void)objc_autoreleasePoolPop(f375Pool); uint64_t t1 = mach_absolute_time();
   (void)[f375Metal addObject:@((double)(t1 - t0) * f375TB.numer / f375TB.denom / 1e6)];
   (void)[f375GPU addObject:@((double)[f375C horosVolumeMetalLastMilliseconds])];
-  (void)[d length];
+  (void)f375Length;
 }
 f375R[@"metalMilliseconds"] = f375Metal; f375R[@"metalGPUMilliseconds"] = f375GPU;
 f375R[@"metalVolumeBytes"] = @((long)[f375C horosVolumeMetalBytes]);

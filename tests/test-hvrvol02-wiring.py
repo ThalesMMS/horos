@@ -36,7 +36,7 @@ require('SendController.h' in browser,
 web = text('Horos/Sources/DICOMwebClient.swift')
 require('QIDO' in web and 'WADO' in web, 'DICOMweb client lost QIDO/WADO')
 
-require('TPT6TVH8UY' not in config, 'ystarrev DEVELOPMENT_TEAM was copied into Config.xcconfig')
+require('TPT6TVH8UY' not in config, 'the donor DEVELOPMENT_TEAM was copied into Config.xcconfig')
 require('HOROS_DEVELOPMENT_TEAM' in config, 'local signing override was dropped')
 
 require('native gap' in docs.lower() or 'gap nativo' in docs.lower(),

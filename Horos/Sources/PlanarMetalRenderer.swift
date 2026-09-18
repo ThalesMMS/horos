@@ -76,9 +76,9 @@ struct PlanarFrame: Equatable {
     }
 }
 
-/// The scalar sampling -> window -> CLUT order follows the planar fragment in
-/// ystarrev/horos MetalShaders.metal at 23722fb552d96fa2d60c7f58a6d4ac2c27950f86.
-/// Host decoding, geometry and sessions are deliberately not imported from it.
+/// The scalar sampling -> window -> CLUT order follows the donor fork's planar
+/// fragment shader; provenance in NOTICE. Host decoding, geometry and sessions
+/// are deliberately not imported from it.
 final class PlanarMetalRenderer {
     static let shader = #"""
     #include <metal_stdlib>

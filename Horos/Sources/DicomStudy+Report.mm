@@ -37,9 +37,7 @@
 
 #import "DicomStudy+Report.h"
 #import "Horos-Swift.h"
-#import "HorosBoundedTask.h"
 #import "DicomSeries.h"
-#import "N2Shell.h"
 #import "NSString+N2.h"
 #import "N2Debug.h"
 #import "NSAppleScript+N2.h"
@@ -116,9 +114,9 @@
     }
     else
     {
-        // Alert user to install preferred application.
-        //
-        NSRunAlertPanel( NSLocalizedString(@"Report Error", nil), NSLocalizedString(@"LibreOffice is required to convert '.odt' reports to PDF. Please install the latest version of LibreOffice.", nil), nil, nil, nil);
+        // The caller tells the user, on its own thread's terms: this may run for the web portal or a
+        // background validation, where a modal panel does not belong (#649).
+        [NSException raise:NSGenericException format:@"%@", NSLocalizedString(@"LibreOffice is required to convert '.odt' reports to PDF. Please install the latest version of LibreOffice.", nil)];
     }
 }
 
@@ -144,33 +142,23 @@
 
 +(void)transformReportAtPath:(NSString*)reportPath toPdfAtPath:(NSString*)outPdfPath
 {
+    // A PDF already at the destination is not this conversion's result: were the conversion to
+    // fail without writing, it must not pass for one (#649).
+    if (outPdfPath.length && ![outPdfPath.stringByStandardizingPath isEqualToString:reportPath.stringByStandardizingPath])
+        [NSFileManager.defaultManager removeItemAtPath:outPdfPath error:NULL];
+    
     if ([reportPath.pathExtension.lowercaseString isEqualToString:@"odt"])
     {
         [[self class] _transformOdtAtPath:reportPath toPdfAtPath:outPdfPath];
     }
     else  if ([reportPath.pathExtension.lowercaseString isEqualToString:@"rtf"] || [reportPath.pathExtension.lowercaseString isEqualToString:@"rtfd"])
     {
-        int result = 0;
-        
-        if( [[NSFileManager defaultManager] fileExistsAtPath: @"/System/Library/Printers/Libraries/convert"]) // Not available anymore in 10.8
-            [N2Shell execute:@"/System/Library/Printers/Libraries/convert" arguments:[NSArray arrayWithObjects: @"-f", reportPath, @"-o", outPdfPath, nil] outStatus:&result];
-        else if( [[NSFileManager defaultManager] fileExistsAtPath: @"/usr/sbin/cupsfilter"])
-        {
-            [NSFileManager.defaultManager removeItemAtPath: outPdfPath error:nil];
-            [NSFileManager.defaultManager createFileAtPath: outPdfPath contents:[NSData data] attributes:nil];
-            
-            NSTask* task = [[[NSTask alloc] init] autorelease];
-            [task setLaunchPath: @"/usr/sbin/cupsfilter"];
-            [task setArguments: [NSArray arrayWithObjects: reportPath, nil]];
-            [task setStandardOutput:[NSFileHandle fileHandleForWritingAtPath: outPdfPath]];
-            [task setStandardError:[NSPipe pipe]];
-            
-            NSError *taskError = nil;
-            if( HorosRunTaskUntilExit( task, 120, &taskError) == NO)
-                NSLog( @"****** cupsfilter failed for %@: %@", reportPath, taskError.localizedDescription);
-        }
-        else
-            NSLog( @"************* no converter tool available");
+        // Drawn by the app. /System/Library/Printers/Libraries/convert is gone since OS X 10.8, and
+        // cupsfilter has no RTF filter on macOS 27: it exited 1 over the empty PDF made for its
+        // output, and that empty PDF went on to every caller (#649).
+        NSError *error = nil;
+        if (![HorosRichTextReportPDF convertReportAtPath:reportPath toPDFAtPath:outPdfPath error:&error])
+            [NSException raise:NSGenericException format:@"%@", error.localizedDescription ?: NSLocalizedString(@"The report could not be converted to PDF. The original report has been left unchanged.", nil)];
     }
     else if ([reportPath.pathExtension.lowercaseString isEqualToString:@"pages"])
     {
@@ -189,6 +177,14 @@
     }
     else
         [NSException raise:NSGenericException format:@"Can't transform report to PDF: %@", reportPath];
+    
+    // Whatever converted it - LibreOffice, Word's script - a missing or empty PDF is a failure for
+    // every caller, not a result to export, encapsulate, serve or burn (#649).
+    if (![HorosPagesPDFConversion isUsablePDFAtPath:outPdfPath])
+    {
+        [NSFileManager.defaultManager removeItemAtPath:outPdfPath error:NULL];
+        [NSException raise:NSGenericException format:@"%@", NSLocalizedString(@"The report could not be converted to PDF. The original report has been left unchanged.", nil)];
+    }
 }
 
 -(void)saveReportAsPdfAtPath:(NSString*)path

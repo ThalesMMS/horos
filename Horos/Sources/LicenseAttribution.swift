@@ -43,14 +43,15 @@ public final class LicensedComponent: NSObject {
 /// Provenance, credits and the notices that belong in the checkout and app bundle.
 ///
 /// This is not legal advice. It records what is actually in this workbench and
-/// which origin texts were snapshotted. It does not copy ystarrev source.
+/// which origin texts were snapshotted. It does not copy donor-fork source.
 @objc(HorosLicenseAttribution)
 public final class LicenseAttribution: NSObject {
-    @objc public static let ystarrevRevision = "23722fb552d96fa2d60c7f58a6d4ac2c27950f86"
-    @objc public static let ystarrevRepository = "ystarrev/horos"
-    @objc public static let ystarrevAuthor = "Yves Starreveld"
+    /// The donor fork this workbench adapted excerpts from. Credited by author,
+    /// not by repository handle; NOTICE records which components were adapted.
+    @objc public static let donorRevision = "23722fb552d96fa2d60c7f58a6d4ac2c27950f86"
+    @objc public static let donorAuthor = "Yves Starreveld"
     @objc public static let snapshotDirectory =
-        "docs/third-party/ystarrev-horos-23722fb552d96fa2d60c7f58a6d4ac2c27950f86"
+        "docs/third-party/donor-horos-23722fb552d96fa2d60c7f58a6d4ac2c27950f86"
     @objc public static let originLicenseSHA256 =
         "d885acd3300b5464fe5e6774610b35fb2d83192f272be3325d69b89d2d666f38"
     @objc public static let originCopyingLesserSHA256 =
@@ -79,21 +80,13 @@ public final class LicenseAttribution: NSObject {
                 origin: "host",
                 distributionNote: "Historical fork. Keep OsiriX Team credit and file headers."),
             LicensedComponent(
-                identifier: "ystarrev",
-                name: "ystarrev/horos (Yves Starreveld)",
+                identifier: "donor",
+                name: "Yves Starreveld (donor fork)",
                 license: "LGPLv3 with Grok AGPLv3 notice",
-                sourcePath: "docs/third-party/ystarrev-horos-23722fb552d96fa2d60c7f58a6d4ac2c27950f86/LICENSE",
+                sourcePath: "docs/third-party/donor-horos-23722fb552d96fa2d60c7f58a6d4ac2c27950f86/LICENSE",
                 incorporated: true,
                 origin: "adapted-source",
                 distributionNote: "The query/retrieve server uses adapted excerpts from the recorded revision. Preserve their headers and distinguish local changes."),
-            LicensedComponent(
-                identifier: "grok",
-                name: "Grok JPEG 2000",
-                license: "AGPLv3",
-                sourcePath: "Grok/LICENSE",
-                incorporated: true,
-                origin: "host",
-                distributionNote: "Linked library. AGPLv3 is not LGPL. Offer Grok source with network use in mind. Not a legal opinion."),
             LicensedComponent(
                 identifier: "dcmtk",
                 name: "DCMTK",
@@ -157,7 +150,7 @@ public final class LicenseAttribution: NSObject {
                 sourcePath: "LICENSE",
                 incorporated: true,
                 origin: "local-workbench",
-                distributionNote: "Present in this workbench, absent from ystarrev LICENSE. Do not import that removal. Do not drop the plugin to simplify licensing."),
+                distributionNote: "Present in this workbench, absent from the donor fork's LICENSE. Do not import that removal. Do not drop the plugin to simplify licensing."),
             LicensedComponent(
                 identifier: "weights",
                 name: "External model weights",
@@ -175,9 +168,9 @@ public final class LicenseAttribution: NSObject {
 
     @objc public static func materialQuestions() -> [String] {
         [
-            "Grok is AGPLv3 and Horos is LGPLv3; do not treat the tree as uniformly LGPL.",
-            "The Purview/HorosCloud notice is local; replacing LICENSE with the ystarrev file would delete it.",
-            "ystarrev/horos source is not copied here. Credit that project without claiming exclusive authorship of Horos.",
+            "Horos is LGPLv3 and its linked libraries keep their own terms; do not treat the tree as uniformly LGPL.",
+            "The Purview/HorosCloud notice is local; replacing LICENSE with the donor fork's file would delete it.",
+            "The donor fork's source tree is not copied here. Credit its author without claiming exclusive authorship of Horos.",
             "This catalog is not a legal opinion and does not authorise distribution of an incompatible combination.",
         ]
     }
@@ -186,8 +179,8 @@ public final class LicenseAttribution: NSObject {
         licenseText.contains("Purview") && licenseText.contains("HorosCloud")
     }
 
-    @objc public static func creditsYstarrev(in text: String) -> Bool {
-        text.contains("ystarrev/horos") && text.contains("Yves Starreveld")
+    @objc public static func creditsDonor(in text: String) -> Bool {
+        text.contains(donorAuthor)
     }
 
     @objc public static func isBlindOriginReplacement(originLicense: String,
@@ -236,7 +229,7 @@ public final class LicenseAttribution: NSObject {
         return """
         <h2>Credits and licenses</h2>
         <p>Horos is published by the Horos Project and remains based on OsiriX. Contributors to this workbench are not exclusive authors of Horos.</p>
-        <p>Selected future adaptations may come from <strong>ystarrev/horos</strong>, authored by <strong>Yves Starreveld</strong>, snapshot \(ystarrevRevision). License texts from that revision are versioned; reused excerpts keep their headers and are distinct from local modifications such as the Purview/HorosCloud notice.</p>
+        <p>Selected excerpts were adapted from a donor fork of Horos authored by <strong>\(donorAuthor)</strong>, snapshot \(donorRevision). License texts from that revision are versioned; reused excerpts keep their headers and are distinct from local modifications such as the Purview/HorosCloud notice.</p>
         <ul>
         \(rows)
         </ul>
@@ -245,7 +238,7 @@ public final class LicenseAttribution: NSObject {
 
     @objc public static func attributionSummary() -> String {
         let names = components().map(\.name).joined(separator: ", ")
-        return "Horos LGPLv3; OsiriX; ystarrev/horos (\(ystarrevAuthor)); \(names)"
+        return "Horos LGPLv3; OsiriX; \(donorAuthor); \(names)"
     }
 
     private static func escape(_ text: String) -> String {

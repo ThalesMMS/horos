@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The delta manifest describes the repository it ships with (#610).
 
-`docs/ystarrev-delta3-manifest.json` records which origin commits were read,
+`docs/donor-delta3-manifest.json` records which origin commits were read,
 which workbench commits carry the adoption, what each delivery decided and what
 stands behind it. It is written for a possible later incorporation, and a
 record that drifts from the tree is worse than none: this regenerates it and
@@ -12,7 +12,7 @@ import json
 import subprocess
 
 root = Path(__file__).resolve().parents[1]
-manifest = root / 'docs/ystarrev-delta3-manifest.json'
+manifest = root / 'docs/donor-delta3-manifest.json'
 failures = []
 
 if not manifest.exists():

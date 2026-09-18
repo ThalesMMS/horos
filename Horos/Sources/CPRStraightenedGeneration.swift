@@ -135,8 +135,15 @@ public final class CPRStraightenedSession: NSObject {
         if spacing < Self.minimumSampleSpacing {
             return refused("degenerate spacing", pixelsWide: pixelsWide)
         }
+        // A centreline that crosses itself is reported, not refused. The gate
+        // exists to keep a degenerate polyline out of the sampling loop, and
+        // those cases are named above. Refusing here left the panel blank with
+        // no way back, and the 0.5 mm proximity test calls a crossing on two
+        // nearly parallel segments of an ordinary tortuous vessel.
         if hasSelfIntersection() {
-            return refused("self-intersecting loop", pixelsWide: pixelsWide)
+            return makeDecision(accepted: true, phase: "ready",
+                                diagnosis: "self-intersecting loop",
+                                pixelsWide: pixelsWide)
         }
         return makeDecision(accepted: true, phase: "ready",
                             diagnosis: "valid centerline",

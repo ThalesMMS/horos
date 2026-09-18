@@ -32,8 +32,8 @@ mock = helper.read_text(encoding='utf-8')
 if '--job' not in mock or 'mock-threshold' not in mock:
     print('FAIL: mock helper is not the --job smoke backend')
     sys.exit(1)
-if 'ystarrev' in mock.lower() and '23722fb552d96fa2d60c7f58a6d4ac2c27950f86' not in mock:
-    print('FAIL: mock helper must cite the ystarrev SHA it was adapted from')
+if 'adapted from' in mock.lower() and 'NOTICE' not in mock:
+    print('FAIL: mock helper says it was adapted but does not point at NOTICE for its provenance')
     sys.exit(1)
 if not contract.is_file():
     print('FAIL: docs/tumor-segmentation-contract.md is missing')

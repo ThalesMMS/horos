@@ -252,6 +252,7 @@ final class PlanarMetal4Renderer: NSObject {
     func submit(into target: MTLTexture, coalescing: Bool = true,
                 completion: @escaping (Error?) -> Void) throws -> Bool {
         let encodeStartedAt = ProcessInfo.processInfo.systemUptime
+        let traceStart = MetalPerformanceTrace.now()
         lock.lock()
         defer { lock.unlock() }
         guard let frame, let image, let clut else { throw PlanarMetalRenderer.failure() }
@@ -311,9 +312,15 @@ final class PlanarMetal4Renderer: NSObject {
         // thread-safe and the handler is retained by the options themselves.
         let options = MTL4CommitOptions()
         let once = OnceFlag()
+        let committedAt = MetalPerformanceTrace.now()
+        let targetWidth = target.width, targetHeight = target.height
         options.addFeedbackHandler { [weak self] feedback in
             // Exactly once, whatever the driver does with a reused handler.
             guard once.claim() else { return }
+            MetalPerformanceTrace.record("planar.metal4.render", startedAt: traceStart, committedAt: committedAt,
+                                         observedAt: MetalPerformanceTrace.now(), gpuStartTime: feedback.gpuStartTime,
+                                         gpuEndTime: feedback.gpuEndTime, failed: feedback.error != nil,
+                                         extra: ["width": targetWidth, "height": targetHeight])
             var pending: (() -> Void)?
             if let self {
                 // Metal 4 does not retain what a submission used; this handler
@@ -321,9 +328,13 @@ final class PlanarMetal4Renderer: NSObject {
                 self.lock.lock()
                 if feedback.error != nil { self._failedCount += 1 } else { self._completedCount += 1 }
                 let gpu = feedback.gpuEndTime - feedback.gpuStartTime
-                // A missing timestamp is not a measurement of zero.
+                // A missing timestamp is not a measurement of zero, and not the
+                // previous submission's either: -1, which the host reads as
+                // "not measured" (#619).
                 if feedback.gpuEndTime > 0, feedback.gpuStartTime > 0, gpu >= 0 {
                     self._lastGPUMilliseconds = gpu * 1000
+                } else {
+                    self._lastGPUMilliseconds = -1
                 }
                 slot.release()
                 pending = self.coalesced

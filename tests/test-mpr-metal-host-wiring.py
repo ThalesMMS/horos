@@ -48,7 +48,9 @@ for forbidden in ('valueForKey', 'managedObjectContext', 'DicomImage', 'DicomSer
     assert forbidden not in bridge, 'the bridge must not reach ' + forbidden
 assert 'horosSetPlanarFallbackReason' in bridge and 'horosSetPlanarFallbackReason' in planar
 assert 'Original renderer (Metal paused)' in dcmview, 'the paused-renderer notice is drawn by DCMView for every subclass'
-assert 'memcpy(image, plane.bytes, plane.length)' in bridge, 'return an owned image for the common DCMPix update'
+assert 'into:image error:&error]' in bridge and 'free(image);' in bridge, \
+    'return an owned image for the common DCMPix update, filled by the engine and freed when the reslice fails'
+assert 'plane.bytes' not in bridge, 'the plane is copied once, into the image, not through an intermediate NSData (#620)'
 assert '[vrView prepareMPRGeometryWidth:width height:height]' in bridge
 assert '[vrView getOrigin:position windowCentered:YES sliceMiddle:YES]' in bridge
 assert 'mprVoxelToWorldTransform' in bridge and 'voxelToWorld:transform' in bridge
@@ -70,7 +72,8 @@ assert '[self convertRect: [self bounds] toView: nil]' in frame
 # statistics go through -[DCMPix getROIValue:::], the one place that reads
 # -computefImageForMeasurement. No CPR source may grow a measurement path of
 # its own that would see the presentation filter again.
-for name in sorted((root / 'Horos/Sources').glob('CPR*.m')) + [root / 'Horos/Sources/CurvedMPR.m']:
+# CurvedMPR.m was here too, compiled by nothing and removed with the other dead sources (#652).
+for name in sorted((root / 'Horos/Sources').glob('CPR*.m')):
     text = name.read_bytes().decode('latin1')
     for forbidden in ('getROIValue', 'computefImage', 'applyConvolutionOnImage'):
         assert forbidden not in text, '%s must not reimplement the measurement path (%s)' % (name.name, forbidden)

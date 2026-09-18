@@ -219,9 +219,9 @@ def measure_mpr_control(directory: Path) -> dict:
         'omitted_slices': 0,
         'event_to_frame_ms': summarize(times),
         'native_mpr2d_window': False,
-        'note': ('MPR2DView.scrollWheelInt moves the original-view crosshair; '
-                 'this control is a full sequential walk of the same volume, '
-                 'not a launched MPR window.'),
+        'note': ('The MPR crosshair of the original view moved with the wheel in the old '
+                 'MPR2DView, removed with the other uncompiled sources (#652); this control '
+                 'is a full sequential walk of the same volume, not a launched MPR window.'),
     }
 
 

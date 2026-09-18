@@ -1,6 +1,6 @@
 import Foundation
 
-/// Product-level macOS policy for the ystarrev-era Horos (#369).
+/// Product-level macOS policy for the donor-era Horos (#369).
 ///
 /// The product minimum is macOS 26.0. That is not the same as the value encoded
 /// in `MACOSX_DEPLOYMENT_TARGET`: Apple requires the encoded target to be at
@@ -12,7 +12,7 @@ import Foundation
 public final class HorosPlatformPolicy: NSObject {
     @objc public static let productMinimumMajor = 26
     @objc public static let productMinimumMinor = 0
-    @objc public static let ystarrevSigningTeamThatMustNotBeCopied = "TPT6TVH8UY"
+    @objc public static let donorSigningTeamThatMustNotBeCopied = "TPT6TVH8UY"
 
     public struct Version: Equatable, Comparable {
         public var major: Int
@@ -72,13 +72,13 @@ public final class HorosPlatformPolicy: NSObject {
         return "This Horos build requires macOS \(productMinimum.display) or later. This Mac is running macOS \(runtime.display)."
     }
 
-    /// Empty team is the tracked default. The ystarrev checkout's team ID must
+    /// Empty team is the tracked default. The donor checkout's team ID must
     /// never land in a tracked xcconfig.
     public static func trackedSigningTeamIsAllowed(_ team: String) -> Bool {
         let trimmed = team.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty { return true }
         if trimmed == "$(HOROS_DEVELOPMENT_TEAM)" { return true }
-        return trimmed != ystarrevSigningTeamThatMustNotBeCopied
+        return trimmed != donorSigningTeamThatMustNotBeCopied
     }
 
     @objc(productMinimumDisplay)

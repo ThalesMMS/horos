@@ -141,6 +141,15 @@ public enum ResliceFailure: Error, CustomStringConvertible {
 
 /// The GPU side. One instance owns one uploaded volume; a second upload
 /// replaces the first and any token still outstanding on it is cancelled.
+///
+/// The output plane (#620): one shared buffer is kept between reconstructions,
+/// sized for the largest plane asked for since the last `release()`, rounded up
+/// to a whole MiB. A reconstruction has it to itself from encoding to the copy
+/// out; one that runs meanwhile, on another thread, makes a buffer of its own,
+/// and the larger of the two is kept. `release()` drops it. The kernel writes
+/// every pixel of the plane, so nothing of an earlier frame survives in one,
+/// and the pixels are always copied out: what a caller holds never changes
+/// when the next reconstruction reuses the buffer.
 public final class MPRMetalReslicer {
     static let shader = #"""
     #include <metal_stdlib>
@@ -203,19 +212,58 @@ public final class MPRMetalReslicer {
     public let device: MTLDevice
     let queue: MTLCommandQueue
     let pipeline: MTLComputePipelineState
+    /// How reconstructions reach the GPU (#623); the kernel and its result are the same on either.
+    public let backend: MetalComputeBackend
+    private let submitter: Metal4ComputeSubmitter?
+    /// The Metal 4 submission slots: made, in flight and idle; nil on Metal 3.
+    var submissionSlots: (made: Int, inFlight: Int, idle: Int)? { submitter?.slots }
+    /// Which Metal 4 submitter this engine uses; the same for every engine on a device.
+    var submitterIdentity: ObjectIdentifier? { submitter.map { ObjectIdentifier($0) } }
     private let uploads = DispatchQueue(label: "org.horosproject.mpr.reslice.upload")
-    private var texture: MTLTexture?
+    private var texture: MTLTexture? {
+        didSet {
+            volumeResidency = submitter == nil ? nil : Self.residency(device: device, keeping: texture)
+            volumeResidentResources = volumeResidency == nil ? [] : Set(texture.map { [ObjectIdentifier($0)] } ?? [])
+        }
+    }
+    /// On Metal 4, a residency set holding the installed volume, used by every reconstruction on it instead of
+    /// adding the volume to each job's set again (#623).
+    private var volumeResidency: MTLResidencySet?
+    private var volumeResidentResources: Set<ObjectIdentifier> = []
     private var uploaded: ResliceVolume?
     private var uploadGeneration = 0
     public private(set) var volumeBytes = 0
+    private static let outputRounding = 1 << 20
+    private let outputLock = NSLock()
+    // Under outputLock.
+    private var keptOutput: MTLBuffer?
+    private var outputGeneration = 0
+    private var outputAllocationCount = 0
 
-    public init(device: MTLDevice) throws {
+    public init(device: MTLDevice, backend: MetalComputeBackend = .metal3) throws {
+        let traceStart = MetalPerformanceTrace.now()
         self.device = device
         guard let queue = device.makeCommandQueue() else { throw ResliceFailure.device("Metal cannot create a command queue.") }
         self.queue = queue
-        let library = try device.makeLibrary(source: Self.shader, options: nil)
-        guard let function = library.makeFunction(name: "reslice") else { throw ResliceFailure.device("The reslice kernel is missing.") }
-        pipeline = try device.makeComputePipelineState(function: function)
+        self.backend = backend
+        submitter = backend == .metal4
+            ? try Metal4ComputeSubmitter.shared(for: device)
+            : nil
+        // Compiled once per device and shared with every other MPR engine (#622).
+        let (pipelines, compiled) = try MetalComputePipelineCache.pipelines(
+            device: device, configuration: MetalComputePipelineCache.Configuration(source: Self.shader, functions: ["reslice"]))
+        pipeline = pipelines["reslice"]!
+        MetalPerformanceTrace.record("mpr.pipeline", startedAt: traceStart, extra: ["cold": compiled])
+    }
+
+    /// A committed residency set holding `resource`; nil for nil. Residency is not requested here: asking for it
+    /// at once made opening a window slower than on Metal 3, and the command buffers that use the set make its
+    /// allocations resident when they are committed.
+    static func residency(device: MTLDevice, keeping resource: MTLAllocation?) -> MTLResidencySet? {
+        guard let resource, let set = try? device.makeResidencySet(descriptor: MTLResidencySetDescriptor()) else { return nil }
+        set.addAllocation(resource)
+        set.commit()
+        return set
     }
 
     /// True once a volume is on the GPU and no later upload has replaced it.
@@ -261,6 +309,7 @@ public final class MPRMetalReslicer {
     /// Uploads synchronously. The host's reconstruction loop is synchronous
     /// too, so this is what it calls once per volume generation.
     public func upload(_ volume: ResliceVolume) throws {
+        let traceStart = MetalPerformanceTrace.now()
         let bytes = try memoryRequirement(width: volume.width, height: volume.height, depth: volume.depth)
         let descriptor = MTLTextureDescriptor()
         descriptor.textureType = .type3D; descriptor.pixelFormat = .r32Float
@@ -275,6 +324,7 @@ public final class MPRMetalReslicer {
                             withBytes: raw.baseAddress!, bytesPerRow: rowBytes, bytesPerImage: sliceBytes)
         }
         self.texture = texture; uploaded = volume; volumeBytes = bytes; uploadGeneration += 1
+        MetalPerformanceTrace.record("mpr.upload", startedAt: traceStart, extra: ["bytes": bytes])
     }
 
     /// Uploads off the calling thread. A token cancelled before delivery
@@ -315,9 +365,45 @@ public final class MPRMetalReslicer {
         return token
     }
 
-    /// Drops the GPU volume. Command buffers in flight keep their own
-    /// references, so this is safe during a render.
-    public func release() { texture = nil; uploaded = nil; volumeBytes = 0; uploadGeneration += 1 }
+    /// Drops the GPU volume and the kept output plane. Command buffers in flight
+    /// keep their own references, so this is safe during a render.
+    public func release() {
+        texture = nil; uploaded = nil; volumeBytes = 0; uploadGeneration += 1
+        outputLock.withLock { keptOutput = nil; outputGeneration += 1 }
+    }
+
+    /// Output buffers made so far; a repeated reconstruction of planes that fit adds none.
+    public var outputAllocations: Int { outputLock.withLock { outputAllocationCount } }
+
+    /// Bytes of the output buffer kept for the next reconstruction; 0 after `release()`.
+    public var outputCapacity: Int { outputLock.withLock { keptOutput?.length ?? 0 } }
+
+    /// A buffer of at least `bytes` for one reconstruction, its own until `checkIn`.
+    private func checkOutOutput(bytes: Int) throws -> (buffer: MTLBuffer, generation: Int) {
+        let (kept, generation): (MTLBuffer?, Int) = outputLock.withLock {
+            if let buffer = keptOutput, buffer.length >= bytes {
+                keptOutput = nil
+                return (buffer, outputGeneration)
+            }
+            outputAllocationCount += 1
+            return (nil, outputGeneration)
+        }
+        if let kept { return (kept, generation) }
+        // A window that grows a row at a time needs a new buffer only once per MiB.
+        let length = (bytes + Self.outputRounding - 1) / Self.outputRounding * Self.outputRounding
+        guard let buffer = device.makeBuffer(length: length, options: .storageModeShared) else {
+            throw ResliceFailure.memory("Metal refused a \(VolumeAllocation.describe(byteCount: length)) output plane.")
+        }
+        return (buffer, generation)
+    }
+
+    /// Keeps the larger of the returned buffer and the one kept, unless `release()` came in between.
+    private func checkIn(_ buffer: MTLBuffer, generation: Int) {
+        outputLock.withLock {
+            guard generation == outputGeneration else { return }
+            if keptOutput.map({ buffer.length > $0.length }) ?? true { keptOutput = buffer }
+        }
+    }
 
     struct Params {
         var worldToVoxel: simd_float4x4
@@ -329,11 +415,22 @@ public final class MPRMetalReslicer {
     /// Produces `plane.width * plane.height` floats, row-major, top row first.
     /// Runs the kernel and waits: the host consumes the pixels immediately.
     public func reslice(_ plane: ReslicePlane) throws -> Data {
+        var pixels = Data(count: plane.width * plane.height * MemoryLayout<Float>.stride)
+        try pixels.withUnsafeMutableBytes { try reslice(plane, into: $0) }
+        return pixels
+    }
+
+    /// Writes the plane into `destination`, which the caller owns and which holds at
+    /// least `plane.width * plane.height` floats: the one copy of the pixels.
+    public func reslice(_ plane: ReslicePlane, into destination: UnsafeMutableRawBufferPointer) throws {
+        let traceStart = MetalPerformanceTrace.now()
         guard let texture, let uploaded else { throw ResliceFailure.device("No volume is uploaded.") }
-        let count = plane.width * plane.height
-        guard let output = device.makeBuffer(length: count * 4, options: .storageModeShared) else {
-            throw ResliceFailure.memory("Metal refused a \(VolumeAllocation.describe(byteCount: count * 4)) output plane.")
+        let bytes = plane.width * plane.height * MemoryLayout<Float>.stride
+        guard let destinationBytes = destination.baseAddress, destination.count >= bytes else {
+            throw ResliceFailure.memory("The plane needs \(VolumeAllocation.describe(byteCount: bytes)); its destination holds \(VolumeAllocation.describe(byteCount: destination.count)).")
         }
+        let (output, outputGeneration) = try checkOutOutput(bytes: bytes)
+        defer { checkIn(output, generation: outputGeneration) }
         let slabDirection = plane.sampleCount > 1 ? plane.normal * (plane.thickness / Float(plane.sampleCount - 1)) : SIMD3<Float>(0, 0, 0)
         var params = Params(
             worldToVoxel: uploaded.voxelToWorld.inverse,
@@ -341,6 +438,29 @@ public final class MPRMetalReslicer {
             slabStep: SIMD4(slabDirection, Float(plane.sampleCount - 1) * 0.5),
             size: SIMD4(UInt32(plane.width), UInt32(plane.height), UInt32(plane.sampleCount), UInt32(plane.projection.rawValue)),
             extent: SIMD4(Float(uploaded.width), Float(uploaded.height), Float(uploaded.depth), plane.background))
+        let w = pipeline.threadExecutionWidth, h = max(1, pipeline.maxTotalThreadsPerThreadgroup / w)
+        let grid = MTLSize(width: plane.width, height: plane.height, depth: 1), group = MTLSize(width: w, height: h, depth: 1)
+        if let submitter {
+            // Metal 4 (#623): the slot's uniforms carry the parameters, and the output is copied after the feedback.
+            let times: Metal4ComputeSubmitter.Times
+            do {
+                times = try withUnsafeBytes(of: &params) { parameters in
+                    try submitter.dispatch(pipeline: pipeline, textures: [texture], buffers: [output, nil], uniformsIndex: 1,
+                                           parameters: parameters, size: grid, threadsPerThreadgroup: group,
+                                           resident: volumeResidency, residentResources: volumeResidentResources)
+                }
+            } catch {
+                MetalPerformanceTrace.record("mpr.reslice.metal4", startedAt: traceStart, committedAt: nil, completedAt: nil,
+                                             gpuStartTime: 0, gpuEndTime: 0, failed: true, finishedAt: nil)
+                throw error
+            }
+            destinationBytes.copyMemory(from: output.contents(), byteCount: bytes)
+            MetalPerformanceTrace.record("mpr.reslice.metal4", startedAt: traceStart, committedAt: times.committedAt,
+                                         completedAt: times.observedAt, gpuStartTime: times.gpuStartTime,
+                                         gpuEndTime: times.gpuEndTime, failed: false, finishedAt: MetalPerformanceTrace.now(),
+                                         extra: ["width": plane.width, "height": plane.height, "samples": plane.sampleCount])
+            return
+        }
         guard let command = queue.makeCommandBuffer(), let encoder = command.makeComputeCommandEncoder() else {
             throw ResliceFailure.device("Metal cannot encode the reslice.")
         }
@@ -348,13 +468,20 @@ public final class MPRMetalReslicer {
         encoder.setTexture(texture, index: 0)
         encoder.setBuffer(output, offset: 0, index: 0)
         encoder.setBytes(&params, length: MemoryLayout<Params>.stride, index: 1)
-        let w = pipeline.threadExecutionWidth, h = max(1, pipeline.maxTotalThreadsPerThreadgroup / w)
-        encoder.dispatchThreads(MTLSize(width: plane.width, height: plane.height, depth: 1),
-                                threadsPerThreadgroup: MTLSize(width: w, height: h, depth: 1))
+        encoder.dispatchThreads(grid, threadsPerThreadgroup: group)
         encoder.endEncoding()
+        let committedAt = MetalPerformanceTrace.now()
         command.commit(); command.waitUntilCompleted()
-        guard command.status == .completed else { throw command.error ?? ResliceFailure.device("The reslice command failed.") }
-        return Data(bytes: output.contents(), count: count * 4)
+        let completedAt = MetalPerformanceTrace.now()
+        guard command.status == .completed else {
+            MetalPerformanceTrace.record("mpr.reslice", startedAt: traceStart, committedAt: committedAt,
+                                         completedAt: completedAt, command: command)
+            throw command.error ?? ResliceFailure.device("The reslice command failed.")
+        }
+        destinationBytes.copyMemory(from: output.contents(), byteCount: bytes)
+        MetalPerformanceTrace.record("mpr.reslice", startedAt: traceStart, committedAt: committedAt, completedAt: completedAt,
+                                     command: command, finishedAt: MetalPerformanceTrace.now(),
+                                     extra: ["width": plane.width, "height": plane.height, "samples": plane.sampleCount])
     }
 }
 
@@ -367,15 +494,24 @@ public final class MPRReslicerBridge: NSObject {
 
     private init(engine: MPRMetalReslicer) { self.engine = engine; super.init() }
 
-    /// `[HorosMPRReslicer makeAndReturnError:]` from Objective-C.
+    /// `[HorosMPRReslicer makeAndReturnError:]` from Objective-C, on the backend the host asks for (#623).
     @objc public static func make() throws -> MPRReslicerBridge {
         guard let device = MTLCreateSystemDefaultDevice() else { throw ResliceFailure.device("No Metal device is available.").nsError }
-        do { return MPRReslicerBridge(engine: try MPRMetalReslicer(device: device)) }
+        return try make(device: device, backend: MetalComputeBackend.host(device: device).backend)
+    }
+
+    public static func make(device: MTLDevice, backend: MetalComputeBackend) throws -> MPRReslicerBridge {
+        do { return MPRReslicerBridge(engine: try MPRMetalReslicer(device: device, backend: backend)) }
         catch let failure as ResliceFailure { throw failure.nsError }
     }
 
+    /// "Metal 3" or "Metal 4".
+    @objc public var backendName: String { engine.backend.name }
+
     @objc public var isReady: Bool { engine.isReady }
     @objc public var volumeBytes: Int { engine.volumeBytes }
+    @objc public var outputAllocations: Int { engine.outputAllocations }
+    @objc public var outputCapacity: Int { engine.outputCapacity }
     @objc public func releaseVolume() { engine.release() }
 
     /// Column-major voxel-to-world matrix in millimetres, including the host's
@@ -403,20 +539,40 @@ public final class MPRReslicerBridge: NSObject {
     /// `origin` the centre of pixel (0, 0), both in the uploaded frame.
     @objc public func reslice(origin: [NSNumber], orientation: [NSNumber], spacing: Double, width: Int, height: Int,
                               thickness: Double, sampleStep: Double, projection: Int, background: Double) throws -> NSData {
-        guard origin.count == 3, orientation.count == 9, let mode = ResliceProjection(rawValue: projection) else {
-            throw ResliceFailure.geometry("The plane description is incomplete.").nsError
-        }
-        let o = origin.map { $0.floatValue }, c = orientation.map { $0.floatValue }
         do {
-            let plane = try ReslicePlane(origin: SIMD3(o[0], o[1], o[2]),
-                                         rowStep: SIMD3(c[0], c[1], c[2]) * Float(spacing),
-                                         columnStep: SIMD3(c[3], c[4], c[5]) * Float(spacing),
-                                         width: width, height: height, thickness: Float(thickness), sampleStep: Float(sampleStep),
-                                         projection: mode, background: Float(background))
+            let plane = try Self.plane(origin: origin, orientation: orientation, spacing: spacing, width: width, height: height,
+                                       thickness: thickness, sampleStep: sampleStep, projection: projection, background: background)
             let started = DispatchTime.now().uptimeNanoseconds
             let data = try engine.reslice(plane)
             lastMilliseconds = Double(DispatchTime.now().uptimeNanoseconds - started) / 1e6
             return data as NSData
         } catch let failure as ResliceFailure { throw failure.nsError }
+    }
+
+    /// The same plane into the host's own `float[width * height]`, which it then owns (#620).
+    @objc public func reslice(origin: [NSNumber], orientation: [NSNumber], spacing: Double, width: Int, height: Int,
+                              thickness: Double, sampleStep: Double, projection: Int, background: Double,
+                              into destination: UnsafeMutablePointer<Float>) throws {
+        do {
+            let plane = try Self.plane(origin: origin, orientation: orientation, spacing: spacing, width: width, height: height,
+                                       thickness: thickness, sampleStep: sampleStep, projection: projection, background: background)
+            let started = DispatchTime.now().uptimeNanoseconds
+            try engine.reslice(plane, into: UnsafeMutableRawBufferPointer(start: destination,
+                                                                          count: plane.width * plane.height * MemoryLayout<Float>.stride))
+            lastMilliseconds = Double(DispatchTime.now().uptimeNanoseconds - started) / 1e6
+        } catch let failure as ResliceFailure { throw failure.nsError }
+    }
+
+    private static func plane(origin: [NSNumber], orientation: [NSNumber], spacing: Double, width: Int, height: Int,
+                              thickness: Double, sampleStep: Double, projection: Int, background: Double) throws -> ReslicePlane {
+        guard origin.count == 3, orientation.count == 9, let mode = ResliceProjection(rawValue: projection) else {
+            throw ResliceFailure.geometry("The plane description is incomplete.")
+        }
+        let o = origin.map { $0.floatValue }, c = orientation.map { $0.floatValue }
+        return try ReslicePlane(origin: SIMD3(o[0], o[1], o[2]),
+                                rowStep: SIMD3(c[0], c[1], c[2]) * Float(spacing),
+                                columnStep: SIMD3(c[3], c[4], c[5]) * Float(spacing),
+                                width: width, height: height, thickness: Float(thickness), sampleStep: Float(sampleStep),
+                                projection: mode, background: Float(background))
     }
 }

@@ -26,7 +26,7 @@ import tempfile
 
 root = Path(__file__).resolve().parents[1]
 sources = ['VolumeAllocation.swift', 'VolumeSession.swift', 'PlanarComparison.swift',
-           'PlanarMetalRenderer.swift', 'PlanarMetal4Renderer.swift']
+           'PlanarMetalRenderer.swift', 'PlanarMetal4Renderer.swift', 'MetalPerformanceTrace.swift']
 project = (root / 'Horos.xcodeproj/project.pbxproj').read_text()
 failures = []
 if project.count('PlanarMetal4Renderer.swift in Sources') < 1:

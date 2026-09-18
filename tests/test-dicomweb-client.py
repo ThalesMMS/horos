@@ -2,6 +2,9 @@
 """Exercise HTTP failures, timeout, cancellation and redirect isolation locally."""
 import http.server, threading, time, subprocess, tempfile, json, urllib.parse
 from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
+from local_http import ThreadingLocalHTTPServer  # a fixture binds without the DNS (#647)
 root=Path(__file__).resolve().parents[1]
 redirect_hits=[]
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -26,7 +29,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
   if path=='/slow':time.sleep(3)
   try:self.wfile.write(body)
   except (BrokenPipeError,ConnectionResetError):pass
-server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Handler)
+server=ThreadingLocalHTTPServer(('127.0.0.1',0),Handler)
 threading.Thread(target=server.serve_forever,daemon=True).start()
 source=r'''
 import Foundation

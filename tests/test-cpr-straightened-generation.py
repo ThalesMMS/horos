@@ -40,14 +40,18 @@ expect(!short.accepted && short.diagnosis == "curve too short",
        "a sub-millimetre curve is refused: \(short.diagnosis)")
 expect(short.nodeCount == 3, "short curve keeps its three nodes")
 
-// Closed / self-crossing loop: first and last segments meet.
+// Closed / self-crossing loop: first and last segments meet. It is named, but
+// it generates: the gate exists to keep a degenerate polyline out of the sample
+// walk, and those cases are refused above. Refusing a crossing left the panel
+// blank with no way back, and the 0.5 mm proximity test calls a crossing on two
+// nearly parallel segments of an ordinary tortuous vessel.
 session.replacePackedNodes(packed([
     (0, 0, 0), (20, 0, 0), (20, 20, 0), (0.1, 0.1, 0)
 ]))
 let loop = session.evaluate(pixelsWide: 200)
-expect(!loop.accepted && loop.diagnosis == "self-intersecting loop",
-       "a loop is named instead of entering the sample walk: \(loop.diagnosis)")
-expect(loop.nodeCount == 4 && loop.originalVolumePreserved, "loop refusal keeps original volume")
+expect(loop.accepted && loop.diagnosis == "self-intersecting loop",
+       "a loop is named but still generates: \(loop.diagnosis)")
+expect(loop.nodeCount == 4 && loop.originalVolumePreserved, "the loop keeps original volume")
 
 // Valid phantom centerline.
 let validNodes: [(Double, Double, Double)] = [(0, 0, 0), (20, 0, 0), (20, 15, 4)]

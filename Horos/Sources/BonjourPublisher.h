@@ -41,12 +41,12 @@
 
 /** \brief  Shares DB with Bonjour */
 
-@class N2ConnectionListener;
+@class HorosDatabaseServer;
 @class HorosBonjourAdvertisement;
 
 @interface BonjourPublisher : NSObject <NSNetServiceDelegate>
 {
-    N2ConnectionListener* _listener;
+    HorosDatabaseServer* _listener; // the Network.framework listener (#615)
 	
     NSNetService* _bonjour;
     HorosBonjourAdvertisement* _advertisement;

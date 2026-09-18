@@ -9,7 +9,7 @@ import argparse
 import json
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -19,6 +19,8 @@ from pydicom.uid import CTImageStorage, ExplicitVRLittleEndian, generate_uid
 from pynetdicom import AE, evt
 from pynetdicom.sop_class import Verification
 from pynetdicom.sop_class import StudyRootQueryRetrieveInformationModelFind as FIND
+# Run as tools/serve-wado-fixture.py: this folder is already on the path.
+from local_http import ThreadingLocalHTTPServer
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('fixture', type=Path, help='directory for the generated study')
@@ -265,7 +267,7 @@ class WADOHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-wado = ThreadingHTTPServer(('127.0.0.1', args.wado_port), WADOHandler)
+wado = ThreadingLocalHTTPServer(('127.0.0.1', args.wado_port), WADOHandler)
 threading.Thread(target=wado.serve_forever, daemon=True).start()
 
 ae = AE(ae_title=args.aetitle)

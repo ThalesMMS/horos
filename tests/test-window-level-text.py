@@ -62,8 +62,8 @@ print("PASS: integers stay integers, fractions survive the round trip, commas pa
 sources = {
     'Horos/Sources/ViewerController.m': [
         'AddCurrentWLWW', 'endNameWLWW', 'SetWLWW', 'endSetWLWW', 'updateSetWLWW'],
-    'Horos/Sources/MPR2DController.mm': ['AddCurrentWLWW'],
-    'Horos/Sources/VRControllerVPRO.mm': ['AddCurrentWLWW'],
+    # MPR2DController.mm and VRControllerVPRO.mm had -AddCurrentWLWW: too, and no target
+    # compiled either of them (#652).
     'Horos/Sources/VRController.mm': ['AddCurrentWLWW'],
     'Horos/Sources/Window3DController.m': [
         'endNameWLWW', 'SetWLWW', 'endSetWLWW', 'updateSetWLWW'],

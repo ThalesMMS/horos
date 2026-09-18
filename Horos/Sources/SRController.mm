@@ -463,7 +463,22 @@ static NSString*	BackgroundColorViewToolbarItemIdentifier		= @"BackgroundColorVi
 
 - (void)renderSurfaces
 {
-	WaitRendering *www = [[WaitRendering alloc] init: NSLocalizedString( @"Preparing 3D Iso Surface...", nil)];
+	// The wait window stays up for at least 0.1 s (#616): open it when a surface is built, unless the
+	// surfaces to build took less than that last time, when the window would only add its own wait.
+	NSTimeInterval expected = 0;
+	BOOL unknown = NO;
+	for( long surface = 0; surface < 2; surface++)
+	{
+		BOOL used = surface == 0 ? _useFirstSurface : _useSecondSurface;
+		float iso = surface == 0 ? _firstSurface : _secondSurface;
+		if( used && [view changeActorBuildsGeometry: surface :_resolution :iso :_shouldDecimate :_decimate :_shouldSmooth :_smooth])
+		{
+			NSTimeInterval last = [view surfaceBuildSeconds: surface];
+			if( last < 0) unknown = YES;
+			else expected += last;
+		}
+	}
+	WaitRendering *www = unknown || expected >= 0.1 ? [[WaitRendering alloc] init: NSLocalizedString( @"Preparing 3D Iso Surface...", nil)] : nil;
 	[www start];
     
     NSColor *color = [_firstColor colorUsingColorSpaceName: NSCalibratedRGBColorSpace];
@@ -496,7 +511,7 @@ static NSString*	BackgroundColorViewToolbarItemIdentifier		= @"BackgroundColorVi
 								:_secondSurface
 								:_shouldDecimate
 								:_decimate
-								:_shouldDecimate
+								:_shouldSmooth
 								:_smooth];
 		else
 			[view deleteActor: (long) 1];

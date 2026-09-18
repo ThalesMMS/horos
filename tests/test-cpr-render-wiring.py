@@ -15,6 +15,7 @@ straight = (root / 'Horos/Sources/CPRStraightenedView.m').read_text(encoding='la
 stretched = (root / 'Horos/Sources/CPRStretchedView.m').read_text(encoding='latin1')
 transverse = (root / 'Horos/Sources/CPRTransverseView.m').read_text(encoding='latin1')
 controller = (root / 'Horos/Sources/CPRController.m').read_text(encoding='latin1')
+controller_header = (root / 'Horos/Sources/CPRController.h').read_text(encoding='latin1')
 swift = (root / 'Horos/Sources/CPRRenderLifecycle.swift').read_text(encoding='utf-8')
 pbx = (root / 'Horos.xcodeproj/project.pbxproj').read_text(encoding='utf-8')
 curved = (root / 'Horos/Sources/CurvedMPRPath.swift').read_text(encoding='utf-8')
@@ -63,12 +64,30 @@ check('class RayCastZBuffer' in zbuffer or 'RayCastZBuffer' in zbuffer,
 
 mpr_draw = method(mpr, '- (void) drawRect:(NSRect)rect')
 for item in (
-    'HorosCPRRenderLifecycle beginDrawNamed',
+    'beginDrawNamed',
     'endDrawNamed',
     '@finally',
     'mpr-%d',
 ):
     check(item in mpr_draw, 'CPRMPRDCMView drawRect is missing %s' % item)
+
+# The phase and the draw depth belong to one window. As statics a second Curved
+# MPR window shared them, and closing either blanked the other's panels.
+check('private static var sessionPhase' not in swift and 'private static var drawDepth' not in swift,
+      'the CPR lifecycle phase and draw depth must not be process-wide statics')
+check('renderLifecycle' in controller_header,
+      'CPRController must expose the render lifecycle its views draw through')
+for name, source in (('CPRMPRDCMView', mpr), ('CPRStraightenedView', straight),
+                     ('CPRStretchedView', stretched), ('CPRTransverseView', transverse)):
+    check('[HorosCPRRenderLifecycle beginDrawNamed' not in source
+          and '[HorosCPRRenderLifecycle endDrawNamed' not in source
+          and '[HorosCPRRenderLifecycle markCurveReady' not in source,
+          '%s must take the lifecycle from its window, not from the class' % name)
+    check('renderLifecycle' in source, '%s must ask its window controller for the lifecycle' % name)
+    # A refused draw paints nothing and nothing marks the view again; only the
+    # nested pass is unwanted, so the view has to ask for another one.
+    check('setNeedsDisplay' in source and 'dispatch_async' in source,
+          '%s must ask for another pass when a nested draw is refused' % name)
 check('diagnoseSpacingX' in mpr, 'CPRMPRDCMView must name spacing in drawCurvedPathInGL')
 check('markCurveReady' in mpr, 'concluding a curve must mark the lifecycle ready')
 # Zero spacing on first open is "no viewport yet" (#31). Skipping the whole
@@ -90,11 +109,22 @@ for item in (
 ):
     check(item in straight, 'CPRStraightenedView is missing %s' % item)
 check('_processingRequest = YES' in straight_draw, 'straightened still generates the request inside drawRect')
-yes_at = straight_draw.find('_processingRequest = YES')
-super_at = straight_draw.find('[super drawRect:')
-no_at = straight_draw.rfind('_processingRequest = NO')
-check(0 <= yes_at < super_at < no_at,
-      'straightened must keep _processingRequest through super.drawRect')
+
+# _processingRequest suppresses setNeedsDisplay: while the request is built. It
+# has to be down before super draws: the generator's callback is delivered
+# inside that draw, and a repaint asked for while the flag is up is dropped for
+# good, because nothing marks the view a second time.
+stretched_draw = method(stretched, '- (void)drawRect:(NSRect)rect')
+transverse_draw = method(transverse, '- (void)drawRect:(NSRect)r')
+for name, body_text in (('straightened', straight_draw), ('stretched', stretched_draw),
+                        ('transverse', transverse_draw)):
+    yes_at = body_text.find('_processingRequest = YES')
+    no_at = body_text.find('_processingRequest = NO')
+    super_at = body_text.find('[super drawRect:')
+    check(0 <= yes_at < no_at < super_at,
+          '%s must clear _processingRequest before super.drawRect' % name)
+    check(body_text.rfind('_processingRequest = NO') > super_at,
+          '%s must also clear _processingRequest in @finally' % name)
 
 for item in (
     'beginDrawNamed:@"stretched"',
@@ -118,7 +148,7 @@ for item in (
 show = method(controller, '- (void) showWindow:(id) sender', 3500)
 close = method(controller, '- (void)windowWillClose:(NSNotification *)notification', 4000)
 for item in (
-    'HorosCPRRenderLifecycle reset',
+    'renderLifecycle reset',
     'beginOpeningResampled',
     'markOpen',
 ):

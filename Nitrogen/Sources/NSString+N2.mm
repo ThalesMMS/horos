@@ -72,13 +72,6 @@ NSString* N2NonNullString(NSString* s) {
 	else return self;
 }
 
--(NSString*)markedString {
-	NSString* str = [self stringByReplacingOccurrencesOfString:@"\n" withString:@"\\n"];
-	str = [str stringByReplacingOccurrencesOfString:@"\r" withString:@"\\r"];
-	str = [str stringByReplacingOccurrencesOfString:@"\t" withString:@"\\t"];
-	return str;
-}
-
 +(NSString*)sizeString:(unsigned long long)size { // from http://snippets.dzone.com/posts/show/3038 with slight modifications
     if (size<1023)
         return [NSString stringWithFormat:NSLocalizedString(@"%i bytes", nil), size];
@@ -139,10 +132,6 @@ NSString* N2NonNullString(NSString* s) {
 	return s;
 }
 
-+(NSString*)dateString:(NSTimeInterval)date {
-	return [[NSDate dateWithTimeIntervalSinceReferenceDate:date] descriptionWithCalendarFormat:@"le %d.%m.%Y à %Hh%M" timeZone:NULL locale:[[NSUserDefaults standardUserDefaults] dictionaryRepresentation]];
-}
-
 -(NSString*)stringByTrimmingStartAndEnd {
 	NSCharacterSet* whitespaceAndNewline = [NSCharacterSet whitespaceAndNewlineCharacterSet];
 	unsigned i;
@@ -151,34 +140,6 @@ NSString* N2NonNullString(NSString* s) {
 	unsigned start = i;
 	for (i = [self length]-1; i > start && [whitespaceAndNewline characterIsMember:[self characterAtIndex:i]]; --i);
 	return [self substringWithRange:NSMakeRange(start, i-start+1)];
-}
-
--(NSString*)urlEncodedString /* deprecated */ {
-	static const NSDictionary* chars = [[NSDictionary dictionaryWithObjectsAndKeys:
-											@"%3B", @";",
-											@"%2F", @"/",
-											@"%3F", @"?",
-											@"%3A", @":",
-											@"%40", @"@",
-											@"%26", @"&",
-											@"%3D", @"=",
-											@"%2B", @"+",
-											@"%24", @"$",
-											@"%2C", @",",
-											@"%5B", @"[",
-											@"%5D", @"]",
-											@"%23", @"#",
-											@"%21", @"!",
-											@"%27", @"'",
-											@"%28", @"(",
-											@"%29", @")",
-											@"%2A", @"*",
-										NULL] retain];
-	
-	NSMutableString* temp = [[self mutableCopy] autorelease];
-	for (NSString* k in chars)
-		[temp replaceOccurrencesOfString:k withString:[chars objectForKey:k] options:NSLiteralSearch range:temp.range];
-	return [NSString stringWithString: temp];
 }
 
 -(NSString*)xmlEscapedString:(BOOL)unescape {
@@ -206,10 +167,6 @@ NSString* N2NonNullString(NSString* s) {
 
 -(NSString*)xmlEscapedString {
 	return [self xmlEscapedString:NO];
-}
-
--(NSString*)xmlUnescapedString {
-	return [self xmlEscapedString:YES];
 }
 
 -(NSString*)ASCIIString {

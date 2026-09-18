@@ -586,13 +586,17 @@
 	
 	// Add metadata for DICOM
     
-    // We want the original patient's name
-    if( [[NSFileManager defaultManager] fileExistsAtPath: image.completePath])
+    // We want the original patient's name. The file of the image referred to can be unreadable at this moment -
+    // being rewritten, for one - and the SR then took no patient and no series description, and was filed as a
+    // study of its own (#651): the study's own values are used instead.
+    BOOL namedFromFile = NO;
+    if( image.completePath && [[NSFileManager defaultManager] fileExistsAtPath: image.completePath])
     {
         DcmFileFormat fileformat;
         OFCondition status  = fileformat.loadFile( image.completePath.fileSystemRepresentation);
         if (status.good())
         {
+            namedFromFile = YES;
             NSArray *encodingArray = nil;
             const char *string = nil;
             if (fileformat.getDataset()->findAndGetString( DCM_SpecificCharacterSet, string, OFFalse).good() && string != NULL)
@@ -642,7 +646,7 @@
 //            }
         }
     }
-    else
+    if( namedFromFile == NO)
     {
         document->setSpecificCharacterSet( "ISO_IR 192"); // UTF-8
         
@@ -700,19 +704,26 @@
 			NSLog( @"********** no date for Report SR ?");
 	}
 	
-	// Image Reference
-	OFString refsopClassUID = OFString([[image valueForKeyPath:@"series.seriesSOPClassUID"] UTF8String]);
-	OFString refsopInstanceUID = OFString([[image valueForKey:@"sopInstanceUID"] UTF8String]);
-	
-	document->getTree().addContentItem(DSRTypes::RT_contains, DSRTypes::VT_Image, DSRTypes::AM_belowCurrent);
-	document->getTree().getCurrentContentItem().setConceptName(DSRCodedEntryValue("IHE.10", "99HUG", "Image Reference"));
-
-	HorosSRImageReference imageRef( refsopClassUID, refsopInstanceUID);
-	
-	// add frame reference
-	imageRef.getFrameList().putString([[[image valueForKey: @"frameID"] stringValue] UTF8String]);
-	document->getTree().getCurrentContentItem().setImageReference( imageRef);
-	document->getTree().goUp(); // go up to the root element
+	// Image Reference, when the image has both UIDs: an empty one made an invalid content item, and the SR could
+	// not be read back (#651).
+	NSString *referencedClass = [image valueForKeyPath:@"series.seriesSOPClassUID"];
+	NSString *referencedInstance = [image valueForKey:@"sopInstanceUID"];
+	if( referencedClass.length && referencedInstance.length)
+	{
+		OFString refsopClassUID = OFString([referencedClass UTF8String]);
+		OFString refsopInstanceUID = OFString([referencedInstance UTF8String]);
+		
+		document->getTree().addContentItem(DSRTypes::RT_contains, DSRTypes::VT_Image, DSRTypes::AM_belowCurrent);
+		document->getTree().getCurrentContentItem().setConceptName(DSRCodedEntryValue("IHE.10", "99HUG", "Image Reference"));
+		
+		HorosSRImageReference imageRef( refsopClassUID, refsopInstanceUID);
+		
+		// add frame reference
+		imageRef.getFrameList().putString([[[image valueForKey: @"frameID"] stringValue] UTF8String]);
+		document->getTree().getCurrentContentItem().setImageReference( imageRef);
+		document->getTree().goUp(); // go up to the root element
+	}
+	else NSLog( @"---- SR: no image of the study with both UIDs to refer to; written without an image reference");
 	
     BOOL written = NO;
 	OFCondition status = EC_Normal;

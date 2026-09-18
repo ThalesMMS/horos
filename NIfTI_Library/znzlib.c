@@ -16,12 +16,13 @@ are required:
    that specifies whether to use compression (1) or not (0)
  - use znz_isnull rather than any (pointer == NULL) comparisons in the code
    for znzfile types (normally done after a return from znzopen)
- 
+
 NB: seeks for writable files with compression are quite restricted
 
  */
 
 #include "znzlib.h"
+#include "znzlib_version.h"
 
 /*
 znzlib.c  (zipped or non-zipped library)
@@ -39,7 +40,7 @@ znzlib.c  (zipped or non-zipped library)
 */
 
 
-/* Note extra argument (use_compression) where 
+/* Note extra argument (use_compression) where
    use_compression==0 is no compression
    use_compression!=0 uses zlib (gzip) compression
 */
@@ -80,7 +81,7 @@ znzFile znzopen(const char *path, const char *mode, int use_compression)
   return file;
 }
 
-
+#ifdef COMPILE_NIFTIUNUSED_CODE
 znzFile znzdopen(int fd, const char *mode, int use_compression)
 {
   znzFile file;
@@ -106,6 +107,7 @@ znzFile znzdopen(int fd, const char *mode, int use_compression)
 #endif
   return file;
 }
+#endif
 
 
 int Xznzclose(znzFile * file)
@@ -116,7 +118,7 @@ int Xznzclose(znzFile * file)
     if ((*file)->zfptr!=NULL)  { retval = gzclose((*file)->zfptr); }
 #endif
     if ((*file)->nzfptr!=NULL) { retval = fclose((*file)->nzfptr); }
-                                                                                
+
     free(*file);
     *file = NULL;
   }
@@ -130,10 +132,10 @@ int Xznzclose(znzFile * file)
 
 size_t znzread(void* buf, size_t size, size_t nmemb, znzFile file)
 {
-//  size_t     remain = size*nmemb;
-//  char     * cbuf = (char *)buf;
-//  unsigned   n2read;
-//  int        nread;
+  size_t     remain = size*nmemb;
+  char     * cbuf = (char *)buf;
+  unsigned   n2read;
+  int        nread;
 
   if (file==NULL) { return 0; }
 #ifdef HAVE_ZLIB
@@ -141,7 +143,7 @@ size_t znzread(void* buf, size_t size, size_t nmemb, znzFile file)
     /* gzread/write take unsigned int length, so maybe read in int pieces
        (noted by M Hanke, example given by M Adler)   6 July 2010 [rickr] */
     while( remain > 0 ) {
-       n2read = (remain < ZNZ_MAX_BLOCK_SIZE) ? remain : ZNZ_MAX_BLOCK_SIZE;
+       n2read = (remain < ZNZ_MAX_BLOCK_SIZE) ? (unsigned)remain : ZNZ_MAX_BLOCK_SIZE;
        nread = gzread(file->zfptr, (void *)cbuf, n2read);
        if( nread < 0 ) return nread; /* returns -1 on error */
 
@@ -164,17 +166,17 @@ size_t znzread(void* buf, size_t size, size_t nmemb, znzFile file)
 
 size_t znzwrite(const void* buf, size_t size, size_t nmemb, znzFile file)
 {
-//  size_t     remain = size*nmemb;
-//  char     * cbuf = (char *)buf;
-//  unsigned   n2write;
-//  int        nwritten;
+  size_t     remain = size*nmemb;
+  const char * cbuf = (const char *)buf;
+  unsigned   n2write;
+  int        nwritten;
 
   if (file==NULL) { return 0; }
 #ifdef HAVE_ZLIB
   if (file->zfptr!=NULL) {
     while( remain > 0 ) {
-       n2write = (remain < ZNZ_MAX_BLOCK_SIZE) ? remain : ZNZ_MAX_BLOCK_SIZE;
-       nwritten = gzwrite(file->zfptr, (void *)cbuf, n2write);
+       n2write = (remain < ZNZ_MAX_BLOCK_SIZE) ? (unsigned)remain : ZNZ_MAX_BLOCK_SIZE;
+       nwritten = gzwrite(file->zfptr, (const void *)cbuf, n2write);
 
        /* gzread returns 0 on error, but in case that ever changes... */
        if( nwritten < 0 ) return nwritten;
@@ -196,11 +198,11 @@ size_t znzwrite(const void* buf, size_t size, size_t nmemb, znzFile file)
   return fwrite(buf,size,nmemb,file->nzfptr);
 }
 
-long znzseek(znzFile file, long offset, int whence)
+znz_off_t znzseek(znzFile file, znz_off_t offset, int whence)
 {
   if (file==NULL) { return 0; }
 #ifdef HAVE_ZLIB
-  if (file->zfptr!=NULL) return (long) gzseek(file->zfptr,offset,whence);
+  if (file->zfptr!=NULL) return (znz_off_t) gzseek(file->zfptr,offset,whence);
 #endif
   return fseek(file->nzfptr,offset,whence);
 }
@@ -221,11 +223,11 @@ int znzrewind(znzFile stream)
   return 0;
 }
 
-long znztell(znzFile file)
+znz_off_t znztell(znzFile file)
 {
   if (file==NULL) { return 0; }
 #ifdef HAVE_ZLIB
-  if (file->zfptr!=NULL) return (long) gztell(file->zfptr);
+  if (file->zfptr!=NULL) return (znz_off_t) gztell(file->zfptr);
 #endif
   return ftell(file->nzfptr);
 }
@@ -239,7 +241,7 @@ int znzputs(const char * str, znzFile file)
   return fputs(str,file->nzfptr);
 }
 
-
+#ifdef COMPILE_NIFTIUNUSED_CODE
 char * znzgets(char* str, int size, znzFile file)
 {
   if (file==NULL) { return NULL; }
@@ -293,7 +295,7 @@ int znzgetc(znzFile file)
 int znzprintf(znzFile stream, const char *format, ...)
 {
   int retval=0;
-//  char *tmpstr;
+  char *tmpstr;
   va_list va;
   if (stream==NULL) { return 0; }
   va_start(va, format);
@@ -309,7 +311,7 @@ int znzprintf(znzFile stream, const char *format, ...)
     vsprintf(tmpstr,format,va);
     retval=gzprintf(stream->zfptr,"%s",tmpstr);
     free(tmpstr);
-  } else 
+  } else
 #endif
   {
    retval=vfprintf(stream->nzfptr,format,va);
@@ -317,6 +319,6 @@ int znzprintf(znzFile stream, const char *format, ...)
   va_end(va);
   return retval;
 }
-
 #endif
 
+#endif

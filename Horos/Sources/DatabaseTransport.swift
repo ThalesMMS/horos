@@ -209,9 +209,11 @@ public final class SharedDatabaseCommand: NSObject {
     /// Mutations: album membership, key images and comments, incoming files.
     @objc public static let mutatingCommands: Set<String> = ["SETVA", "NEWMS", "DCMSE"]
 
-    /// The six-byte command at the head of a request, or nil.
+    /// The six-byte command at the head of a request, or nil. An authenticated request
+    /// is read past its envelope: a protected database's `DICOM` is still a read (#644).
     @objc(commandInRequest:)
-    public static func command(in request: Data) -> String? {
+    public static func command(in wrapped: Data) -> String? {
+        let request = SharedDatabaseAuthorization.requestInsideEnvelope(wrapped)
         guard request.count >= 6, request[request.startIndex + 5] == 0 else { return nil }
         let letters = request.prefix(5)
         guard letters.allSatisfy({ $0 >= 0x20 && $0 <= 0x7e }) else { return nil }

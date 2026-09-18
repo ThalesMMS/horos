@@ -49,7 +49,6 @@
 #import "NSFileManager+N2.h"
 #import "NSString+SymlinksAndAliases.h"
 #import "Horos-Swift.h"
-#import "NSMutableDictionary+N2.h"
 #import "PreferencesWindowController.h"
 #import "N2Debug.h"
 #import "url.h"
@@ -355,6 +354,10 @@ BOOL gPluginsAlertAlreadyDisplayed = NO;
         [PluginManager endProtectForCrash];
 	}
 	
+	// The app's own filters have no bundle to declare their items: without these, T2 Fit Map and
+	// ROI Enhancement were registered and unreachable from any menu (#653).
+	[HorosNativeFilterMenus addItemsForPlugins: plugins filtersMenu: filtersMenu roisMenu: roisMenu];
+	
 	if( [filtersMenu numberOfItems] < 1)
 	{
 		NSMenuItem *item = [[[NSMenuItem alloc] init] autorelease];
@@ -420,7 +423,10 @@ BOOL gPluginsAlertAlreadyDisplayed = NO;
         
         @try
         {
-            [pluginFilter setMenus];
+            // -setMenus is PluginFilter's; the app's own Swift filters (ROI Enhancement, T2 Fit Map)
+            // do not inherit it, and sending it raised and logged an exception at every launch (#650).
+            if ([pluginFilter respondsToSelector:@selector(setMenus)])
+                [pluginFilter setMenus];
         }
         @catch (NSException *e)
         {

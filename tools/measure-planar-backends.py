@@ -271,7 +271,7 @@ func makeFrame(width: Int, height: Int, colour: Bool, viewWidth: Double, viewHei
 
 
 sources = ['VolumeAllocation.swift', 'VolumeSession.swift', 'PlanarComparison.swift',
-           'PlanarMetalRenderer.swift', 'PlanarMetal4Renderer.swift']
+           'PlanarMetalRenderer.swift', 'PlanarMetal4Renderer.swift', 'MetalPerformanceTrace.swift']
 driver = DRIVER.replace('ITERATIONS', str(arguments.iterations)).replace('WARMUP', str(arguments.warmup))
 
 import contextlib, os

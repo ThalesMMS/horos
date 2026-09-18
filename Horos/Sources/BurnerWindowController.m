@@ -936,8 +936,6 @@
 		NSFileHandle *fromDu = nil;
 		NSData *duOutput = nil;
 		NSString *size = nil;
-		NSArray *stringComponents = nil;
-		char aBuffer[ 300];
 
 		args = [NSArray arrayWithObjects:@"-ks",path,nil];
 		fromPipe =[NSPipe pipe];
@@ -952,16 +950,14 @@
 		if( HorosRunTaskUntilExit( duTool, 300, &taskError) == NO)
 			NSLog( @"****** du failed for %@: %@", path, taskError.localizedDescription);
 		
-		duOutput = [[fromPipe fileHandleForReading] availableData];
-		[duOutput getBytes:aBuffer];
-		
-		size = [NSString stringWithUTF8String:aBuffer];
-		stringComponents = [size pathComponents];
-		
-		size = [stringComponents objectAtIndex:0];
-		size = [size substringToIndex:[size length]-1];
-		
-		return [NSNumber numberWithUnsignedLongLong:(unsigned long long)[size doubleValue]];
+		// du prints "<KiB>\t<path>\n". The output used to be copied, without its length, into an
+		// uninitialized 300-byte buffer and read back as a C string: the size came out as 0
+		// whenever the bytes after it were not a terminator, and a long path overran the buffer.
+		[fromDu closeFile];
+		duOutput = [[fromPipe fileHandleForReading] readDataToEndOfFile];
+		size = [[[NSString alloc] initWithData:duOutput encoding:NSUTF8StringEncoding] autorelease];
+
+		return [NSNumber numberWithUnsignedLongLong:(unsigned long long)MAX([size longLongValue], 0)];
 	}
 	else return [NSNumber numberWithUnsignedLongLong:(unsigned long long)0];
 }
@@ -1149,30 +1145,6 @@
                 }
             }
             
-            /*
-             
-            FAUZE - 24-Mar-2018 - Light viewer does not exist.
-             
-            if( [[NSUserDefaults standardUserDefaults] boolForKey: @"BurnOsirixApplication"] && cancelled == NO)
-            {
-                thread.name = NSLocalizedString( @"Burning...", nil);
-                thread.status = NSLocalizedString( @"Adding Horos Lite...", nil);
-                // unzip the file
-                NSTask *unzipTask = [[NSTask alloc] init];
-                [unzipTask setLaunchPath: @"/usr/bin/unzip"];
-                [unzipTask setCurrentDirectoryPath: burnFolder];
-                [unzipTask setArguments: [NSArray arrayWithObjects: @"-o", [[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent: @"Horos Launcher.zip"], nil]]; // -o to override existing report w/ same name
-                [unzipTask launch];
-                
-                while( [unzipTask isRunning])
-                    [NSThread sleepForTimeInterval: 0.1];
-                
-                //[unzipTask waitUntilExit];		// <- This is VERY DANGEROUS : the main runloop is continuing...
-                
-                [unzipTask release];
-            }
-            */
-            
             if(  [[NSUserDefaults standardUserDefaults] boolForKey: @"BurnHtml"] == YES && [[NSUserDefaults standardUserDefaults] boolForKey:@"anonymizedBeforeBurning"] == NO && cancelled == NO)
             {
                 thread.name = NSLocalizedString( @"Burning...", nil);
@@ -1235,9 +1207,16 @@
                     {
                         // Convert to PDF
                         
-                        NSString *pdfPath = [study saveReportAsPdfInTmp];
+                        // A report that cannot become a PDF goes on the medium as it is (#649).
+                        NSString *pdfPath = nil;
+                        @try {
+                            pdfPath = [study saveReportAsPdfInTmp];
+                        }
+                        @catch (NSException *e) {
+                            NSLog( @"****** report not converted to PDF for the medium, copied as it is: %@", e.reason ?: e.name);
+                        }
                         
-                        if( [manager fileExistsAtPath: pdfPath] == NO)
+                        if( pdfPath.length == 0 || [manager fileExistsAtPath: pdfPath] == NO)
                             [manager copyItemAtPath: [study valueForKey:@"reportURL"] toPath: [NSString stringWithFormat:@"%@/Report-%@ %@.%@", burnFolder, [self cleanStringForFile: [study valueForKey:@"modality"]], [self cleanStringForFile: [BrowserController DateTimeWithSecondsFormat: [study valueForKey:@"date"]]], [self cleanStringForFile: [[study valueForKey:@"reportURL"] pathExtension]]] error:NULL];
                         else
                             [manager copyItemAtPath: pdfPath toPath: [NSString stringWithFormat:@"%@/Report-%@ %@.pdf", burnFolder, [self cleanStringForFile: [study valueForKey:@"modality"]], [self cleanStringForFile: [BrowserController DateTimeWithSecondsFormat: [study valueForKey:@"date"]]]] error:NULL];
@@ -1296,11 +1275,6 @@
 	if( [[NSUserDefaults standardUserDefaults] boolForKey: @"BurnWeasis"])
 	{
 		size += 17 * 1024; // About 17MB
-	}
-	
-	if( [[NSUserDefaults standardUserDefaults] boolForKey: @"BurnOsirixApplication"])
-	{
-		size += 8 * 1024; // About 8MB
 	}
 	
     if( [[NSUserDefaults standardUserDefaults] stringForKey: @"SupplementaryBurnPath"].length <= 1)

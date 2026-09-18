@@ -117,6 +117,25 @@ typedef struct _xyzArray
 	short z;
 } xyzArray;
 
+// What a surface's geometry is built from (#616): resolution, iso value, decimation and smoothing.
+// A key holding NaN matches nothing, so the surface is rebuilt.
+static void SRGeometryKey( float key[ 6], float resolution, float isocontour, BOOL useDecimate, float decimateVal, BOOL useSmooth, long smoothVal)
+{
+	key[ 0] = resolution;
+	key[ 1] = isocontour;
+	key[ 2] = useDecimate ? 1 : 0;
+	key[ 3] = useDecimate ? decimateVal : 0;
+	key[ 4] = useSmooth ? 1 : 0;
+	key[ 5] = useSmooth ? smoothVal : 0;
+}
+
+static BOOL SRSameGeometry( const float a[ 6], const float b[ 6])
+{
+	for( int i = 0; i < 6; i++)
+		if( a[ i] != b[ i]) return NO;
+	return YES;
+}
+
 //static void startRendering(vtkObject*,unsigned long c, void* ptr, void*)
 //{
 //	SRView* mipv = (SRView*) ptr;
@@ -798,6 +817,22 @@ typedef struct _xyzArray
 	}
 }
 
+// A viewer changed the voxels (#616): the surfaces built from them are rebuilt at the next OK, as before.
+// The same notification invalidates the viewer's volume session (#603).
+- (void) volumeDataChanged: (NSNotification*) note
+{
+	if( ![NSThread isMainThread])
+	{
+		[self performSelectorOnMainThread: @selector(volumeDataChanged:) withObject: note waitUntilDone: NO];
+		return;
+	}
+	for( int i = 0; i < 2; i++)
+	{
+		if( pixList && [note object] == pixList) isoGeometry[ i][ 0] = NAN;
+		if( blendingPixList && [note object] == blendingPixList) BisoGeometry[ i][ 0] = NAN;
+	}
+}
+
 # pragma mark-
 
 - (ToolMode) getTool: (NSEvent*) event
@@ -866,6 +901,10 @@ typedef struct _xyzArray
 		[nc addObserver: self
 			   selector: @selector(CloseViewerNotification:)
 				   name: OsirixCloseViewerNotification
+				 object: nil];
+		[nc addObserver: self
+			   selector: @selector(volumeDataChanged:)
+				   name: OsirixUpdateVolumeDataNotification
 				 object: nil];
 			 
 		point3DActorArray = [[NSMutableArray alloc] initWithCapacity:0];
@@ -1941,6 +1980,18 @@ typedef struct _xyzArray
 	BisoExtractor[ actor] = nil;
 }
 
+- (BOOL) changeActorBuildsGeometry:(long) actor :(float) resolution :(float) isocontour :(BOOL) useDecimate :(float) decimateVal :(BOOL) useSmooth :(long) smoothVal
+{
+	float geometry[ 6];
+	SRGeometryKey( geometry, resolution, isocontour, useDecimate, decimateVal, useSmooth, smoothVal);
+	return !iso[ actor] || !SRSameGeometry( geometry, isoGeometry[ actor]);
+}
+
+- (NSTimeInterval) surfaceBuildSeconds:(long) actor
+{
+	return iso[ actor] ? isoBuildSeconds[ actor] : -1;
+}
+
 - (void) changeActor:(long) actor :(float) resolution :(float) transparency :(float) r :(float) g :(float) b :(float) isocontour :(BOOL) useDecimate :(float) decimateVal :(BOOL) useSmooth :(long) smoothVal
 {
 //	[splash setCancel:YES];
@@ -1949,6 +2000,18 @@ typedef struct _xyzArray
 	{
 	
 	NSLog(@"ChangeActor IN");
+	
+	// Only colour or transparency changed (#616): keep the surface's geometry instead of running the
+	// filters again. A change to the voxels clears the key (-volumeDataChanged:).
+	if( ![self changeActorBuildsGeometry: actor :resolution :isocontour :useDecimate :decimateVal :useSmooth :smoothVal])
+	{
+		iso[ actor]->GetProperty()->SetDiffuseColor( r, g, b);
+		iso[ actor]->GetProperty()->SetOpacity( transparency);
+		[self setNeedsDisplay:YES];
+		NSLog(@"ChangeActor OUT (geometry kept)");
+		return;
+	}
+	NSTimeInterval buildStarted = [NSDate timeIntervalSinceReferenceDate];
 		
 	// RESAMPLE IMAGE ?
 	
@@ -2067,6 +2130,8 @@ typedef struct _xyzArray
 	iso[ actor]->PickableOff();
 
     aRenderer->AddActor( iso[ actor]);
+	SRGeometryKey( isoGeometry[ actor], resolution, isocontour, useDecimate, decimateVal, useSmooth, smoothVal);
+	isoBuildSeconds[ actor] = [NSDate timeIntervalSinceReferenceDate] - buildStarted;
 	
 	 [self setNeedsDisplay:YES];
 	
@@ -2083,6 +2148,18 @@ typedef struct _xyzArray
 {
 	NSLog(@"BLENDING ChangeActor IN");
 //	[splash setCancel:YES];
+	
+	// As in -changeActor: (#616).
+	float geometry[ 6];
+	SRGeometryKey( geometry, resolution, isocontour, useDecimate, decimateVal, useSmooth, smoothVal);
+	if( Biso[ actor] && SRSameGeometry( geometry, BisoGeometry[ actor]))
+	{
+		Biso[ actor]->GetProperty()->SetDiffuseColor( r, g, b);
+		Biso[ actor]->GetProperty()->SetOpacity( transparency);
+		[self setNeedsDisplay:YES];
+		NSLog(@"BLENDING ChangeActor OUT (geometry kept)");
+		return;
+	}
 	
 	// RESAMPLE IMAGE ?
 	
@@ -2155,7 +2232,10 @@ typedef struct _xyzArray
 	if( useSmooth)
 	{
 		BisoSmoother[ actor] = vtkSmoothPolyDataFilter::New();
-		BisoSmoother[ actor]->SetInputConnection( BisoDeci[ actor]->GetOutputPort());
+		// What the steps above produced, as -changeActor does. With decimation off
+		// BisoDeci[ actor] is nil here (-BdeleteActor: cleared it) and reading its
+		// output crashed (#636).
+		BisoSmoother[ actor]->SetInputData( previousOutput);
 		BisoSmoother[ actor]->SetNumberOfIterations( smoothVal);
 		
 		BisoSmoother[ actor]->Update();
@@ -2190,6 +2270,7 @@ typedef struct _xyzArray
 	Biso[ actor]->SetUserMatrix( matriceBlending);
 	
     aRenderer->AddActor( Biso[ actor]);
+	memcpy( BisoGeometry[ actor], geometry, sizeof( geometry));
 	
 	 [self setNeedsDisplay:YES];
 	

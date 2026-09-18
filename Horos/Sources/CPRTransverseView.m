@@ -136,22 +136,34 @@ extern int splitPosition[ 3];
 - (void)drawRect:(NSRect)r
 {
 	NSString *name = [NSString stringWithFormat:@"transverse-%ld", (long)self.sectionType];
-	HorosCPRRenderDecision *decision = [HorosCPRRenderLifecycle beginDrawNamed:name];
-	if( decision.accepted == NO)
+	HorosCPRRenderLifecycle *lifecycle = [[self windowController] renderLifecycle];
+	HorosCPRRenderDecision *decision = [lifecycle beginDrawNamed:name];
+	if( lifecycle && decision.accepted == NO)
 	{
 		NSLog(@"CPR draw skipped: %@", decision.diagnosis);
+
+		// Returning paints nothing, and nothing marks this view again: the
+		// panel would stay blank. Only the nested pass is unwanted, so ask
+		// for another one once the stack has unwound.
+		if( [decision.phase isEqualToString: @"reentrant"])
+			dispatch_async( dispatch_get_main_queue(), ^{ [self setNeedsDisplay: YES];});
 		return;
 	}
 	_processingRequest = YES;
 	@try
 	{
 		[self _sendNewRequestIfNeeded];
+
+		// The flag suppresses setNeedsDisplay: while the request is built.
+		// Clear it before super draws, or a repaint asked for during the draw
+		// is dropped for good - nothing marks the view a second time.
+		_processingRequest = NO;
 		[super drawRect:r];
 	}
 	@finally
 	{
 		_processingRequest = NO;
-		[HorosCPRRenderLifecycle endDrawNamed:name];
+		[lifecycle endDrawNamed:name];
 	}
 }
 

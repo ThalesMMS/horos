@@ -39,42 +39,15 @@ Program:   OsiriX
 
 ============================================================================
 
-This version of Horos is linked against the Grok JPEG 2000 library, for fast
-viewing of JPEG 2000 images.
+Selected work in this workbench has been adapted from ystarrev/horos
+(https://github.com/ystarrev/horos), authored by Yves Starreveld. Reused
+excerpts keep their original headers. Local modifications in this workbench
+remain attributed to this repository's contributors. This notice does not
+assign exclusive authorship of Horos to this workbench. NOTICE records which
+components were adapted and from which revisions.
 
-https://github.com/GrokImageCompression/grok
-
-The Grok JPEG 2000 library is licensed under the terms of the
-GNU Affero General Public License as follows
-
-*    Copyright (C) 2016 Grok Image Compression Inc.
-
-*    This program is free software: you can redistribute it and/or  modify
-*    it under the terms of the GNU Affero General Public License, version 3,
-*    as published by the Free Software Foundation.
-
-*    This program is distributed in the hope that it will be useful,
-*    but WITHOUT ANY WARRANTY; without even the implied warranty of
-*    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-*    GNU Affero General Public License for more details.
-*
-*    You should have received a copy of the GNU Affero General Public License
-*    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
-============================================================================
-
-Selected work may later be adapted from ystarrev/horos
-(https://github.com/ystarrev/horos), authored by Yves Starreveld.
-The LICENSE and COPYING.LESSER of revision
-23722fb552d96fa2d60c7f58a6d4ac2c27950f86 are stored under
-docs/third-party/ystarrev-horos-23722fb552d96fa2d60c7f58a6d4ac2c27950f86/.
-Reused excerpts keep their original headers. Local modifications in this
-workbench remain attributed to this repository's contributors. This notice does
-not assign exclusive authorship of Horos to this workbench.
-
-The origin LICENSE at that revision does not include the Purview/HorosCloud
-notice below. That local notice is kept. The corresponding removal is not
-imported.
+The origin LICENSE does not include the Purview/HorosCloud notice below. That
+local notice is kept. The corresponding removal is not imported.
 
 ============================================================================
 

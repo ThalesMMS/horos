@@ -60,8 +60,8 @@ if 'NSWindowCollectionBehaviorFullScreen' in viewer:
 
 # The viewer's accessory panels are part of the same family: they follow the
 # viewer's window and have no Space of their own.
-for name, marker in (('LoupeController.m', 'initWithWindowNibName:@"Loupe"'),
-                     ('ThickSlabController.mm', 'initWithWindowNibName:@"ThickSlab"')):
+# LoupeController.m was checked here as well, and was compiled by nothing (#652).
+for name, marker in ((('ThickSlabController.mm', 'initWithWindowNibName:@"ThickSlab"')),):
     text = read(name)
     if marker not in text:
         failures.append('%s no longer loads its nib where the declaration was made' % name)

@@ -103,8 +103,8 @@ import Foundation
         precondition(HorosDIMSEPolicy.cGetFinalStatus(completed: 2, failed: 0, warnings: 0, cancelled: true) == .cancel)
         precondition(HorosDIMSEPolicy.cGetFinalStatus(completed: 0, failed: 0, warnings: 0, cancelled: false) == .success)
 
-        precondition(HorosDIMSEPolicy.ystarrevDCMTKVersion == "3.7.0")
-        precondition(!HorosDIMSEPolicy.ystarrevPinIsAdopted)
+        precondition(HorosDIMSEPolicy.donorDCMTKVersion == "3.7.0")
+        precondition(!HorosDIMSEPolicy.donorPinIsAdopted)
         precondition(HorosDIMSEPolicy.compiledTreeIsUpstreamPin)
         precondition(!HorosDIMSEPolicy.mayPatchTrackedUpstreamTree)
         precondition(HorosDIMSEPolicy.licenseIdentifier == "dcmtk")

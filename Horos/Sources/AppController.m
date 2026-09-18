@@ -149,7 +149,7 @@ BOOL					USETOOLBARPANEL = NO;
 short                   Use_kdu_IfAvailable = 0;
 AppController			*appController = nil;
 DCMTKQueryRetrieveSCP   *dcmtkQRSCP = nil, *dcmtkQRSCPTLS = nil;
-NSRecursiveLock			*PapyrusLock = nil, *STORESCP = nil, *STORESCPTLS = nil;			// Papyrus is NOT thread-safe
+NSRecursiveLock			*PapyrusLock = nil, *STORESCP = nil, *STORESCPTLS = nil;			// PapyrusLock: DCMPix parsed-file cache, annotations and DicomFile DCMTK reads (the name is kept: exported symbol)
 NSMutableArray			*accumulateAnimationsArray = nil, *recentStudies = nil;
 NSMutableDictionary     *recentStudiesAlbums = nil;
 BOOL					accumulateAnimations = NO;
@@ -2687,21 +2687,14 @@ static BOOL firstCall = YES;
     if ([[NSFileManager defaultManager] fileExistsAtPath: tmpDirPath])
         NSLog( @"******** FAILED to clean the tmpDirPath directory: %@", tmpDirPath);
     
-    // EMPTY THE INCOMING.noindex DIRECTORY...
+    // EMPTY THE INCOMING.noindex DIRECTORY... into the Trash: what is still there
+    // was received and never imported, so it stays recoverable (#629).
     NSString* incomingDirectoryPath = [[DicomDatabase activeLocalDatabase] incomingDirPath];
     if ([[NSFileManager defaultManager] fileExistsAtPath: incomingDirectoryPath] && ![NSUserDefaults.standardUserDefaults boolForKey:@"DoNotEmptyIncomingDir"])
     {
-		for (NSString* file in [[NSFileManager defaultManager] contentsOfDirectoryAtPath: incomingDirectoryPath error: nil])
-			[[NSFileManager defaultManager] removeItemAtPath: [tempDirectory stringByAppendingPathComponent:file] error: nil];
-        
-        for (NSString* file in [[NSFileManager defaultManager] contentsOfDirectoryAtPath: incomingDirectoryPath error: nil])
-			[[NSFileManager defaultManager] moveItemAtPathToTrash: [tempDirectory stringByAppendingPathComponent:file]];
-        
-        if( [[[NSFileManager defaultManager] contentsOfDirectoryAtPath: incomingDirectoryPath error: nil] count])
-            [[NSFileManager defaultManager] moveItemAtPathToTrash: incomingDirectoryPath];
-        
-        if ([[[NSFileManager defaultManager] contentsOfDirectoryAtPath: incomingDirectoryPath error: nil] count])
-            NSLog( @"******** FAILED to clean the INCOMING.noindex directory: %@", incomingDirectoryPath);
+        NSError *incomingError = nil;
+        if (![HorosIncomingFolderOnQuit sendToTrashIfPending: incomingDirectoryPath resultingPath: NULL error: &incomingError])
+            NSLog( @"******** FAILED to clean the INCOMING.noindex directory: %@ (%@)", incomingDirectoryPath, incomingError.localizedDescription);
     }
 
     [[NSFileManager defaultManager] confirmDirectoryAtPath: incomingDirectoryPath];
@@ -3433,19 +3426,6 @@ static BOOL initialized = NO;
 //	[AppController displayImportantNotice: self];
 //#endif
     
-//	if( [[NSUserDefaults standardUserDefaults] integerForKey: @"TOOLKITPARSER4"] == 0 || [[NSUserDefaults standardUserDefaults] boolForKey:@"USEPAPYRUSDCMPIX4"] == NO)
-//	{
-//		[self notificationTitle: NSLocalizedString( @"Warning!", nil) description: NSLocalizedString( @"DCM Framework is selected as the DICOM reader/parser. The performances of this toolkit are slower.", nil)  name:@"result"];
-//        
-//        NSLog( @"********");
-//        NSLog( @"********");
-//        NSLog( @"********");
-//		NSLog( @"******** %@", NSLocalizedString( @"DCM Framework is selected as the DICOM reader/parser. The performances of this toolkit are slower.", nil));
-//        NSLog( @"********");
-//        NSLog( @"********");
-//        NSLog( @"********");
-//	}
-	
 	if( [[NSUserDefaults standardUserDefaults] boolForKey: @"SingleProcessMultiThreadedListener"] == NO)
 		NSLog( @"----- %@", NSLocalizedString( @"DICOM Listener is multi-processes mode.", nil));
 	

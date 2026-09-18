@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Exercise production Swift downloads against stalled, slow and failed HTTP peers."""
 from pathlib import Path
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 import subprocess
 import tempfile
 import threading
 import time
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
+from local_http import ThreadingLocalHTTPServer  # a fixture binds without the DNS (#647)
 root = Path(__file__).resolve().parents[1]
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_): pass
@@ -30,7 +33,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         try: self.wfile.write(self.path.encode())
         except BrokenPipeError: pass
-server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+server = ThreadingLocalHTTPServer(('127.0.0.1', 0), Handler)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 driver = r'''
 import Foundation

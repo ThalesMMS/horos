@@ -49,11 +49,17 @@ parser.add_argument('--first-size', type=int, default=32)
 parser.add_argument('--instance-delay', type=float, default=0)
 parser.add_argument('--stall-after', type=int, default=-1, help='ignore cancellation and pause 30s after this many objects')
 parser.add_argument('--fail-image-query', action='store_true', help='refuse IMAGE inventory queries while allowing retrieval')
+parser.add_argument('--fail-image-retrieve', action='store_true',
+                    help='fail every sub-operation of an IMAGE-level C-GET (0xC000) while serving STUDY and SERIES '
+                         'level ones (#634)')
 parser.add_argument('--instances', type=int, default=6, help='6..50 synthetic instances; extra instances are CT')
 parser.add_argument('--omit-instance', type=int, help='leave one advertised instance unsent')
 parser.add_argument('--duplicate-instance', type=int, help='send this instance twice')
 parser.add_argument('--mismatch-instance', type=int, help='send a dataset UID different from its C-STORE request UID')
 parser.add_argument('--repair-flag', type=Path, help='when this file exists, disable omit/duplicate/mismatch faults')
+parser.add_argument('--export', type=Path,
+                    help='also write every instance served, as a DICOM file, into this empty folder (to make part of '
+                         'the study local before a retrieve, #634)')
 arguments = parser.parse_args()
 if not 6 <= arguments.instances <= 50: parser.error('instances must be between 6 and 50')
 for number in (arguments.omit_instance, arguments.duplicate_instance, arguments.mismatch_instance):
@@ -113,6 +119,10 @@ def instance(number, modality, sop_class, series_number, frames):
 
 INSTANCES = [instance(n + 1, *plan) for n, plan in enumerate(PLAN)]
 FAILING = {int(value) for value in arguments.fail_instance}
+if arguments.export:
+    arguments.export.mkdir(parents=True, exist_ok=True)
+    for dataset in INSTANCES:
+        dataset.save_as(arguments.export / ('instance-%02d.dcm' % dataset.InstanceNumber), enforce_file_format=True)
 
 record = {
     'study': STUDY,
@@ -230,10 +240,16 @@ def on_get(event):
     if faulty:
         matching = [d for d in matching if d.InstanceNumber != arguments.omit_instance]
         matching = [item for d in matching for item in ([d, d] if d.InstanceNumber == arguments.duplicate_instance else [d])]
+    refused = arguments.fail_image_retrieve and str(query.QueryRetrieveLevel) == 'IMAGE'
     with lock:
         record.setdefault('retrievals', []).append({'level': str(query.QueryRetrieveLevel), 'study': wanted_study,
             'series': wanted_series, 'requestedUIDs': sorted(wanted_uids), 'faulty': faulty,
-            'sentPlan': [str(d.SOPInstanceUID) for d in matching]})
+            'refused': refused, 'sentPlan': [] if refused else [str(d.SOPInstanceUID) for d in matching]})
+    if refused:
+        # The instances asked for are announced and none is sent: every sub-operation fails.
+        yield len(matching)
+        yield 0xC000, None
+        return
     original_send = event.assoc.dimse.send_msg
     def send_with_fault(primitive, context_id):
         if faulty and isinstance(primitive, C_STORE) and primitive.DataSet is not None:

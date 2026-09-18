@@ -17,6 +17,15 @@ tilt) affine, refusal of gaps and in-plane displacement, refusal of a texture
 the GPU cannot hold with the dimensions named, cancellation of an upload
 before delivery, and the A225 ramp resliced repeatedly through alternating
 orientations without a single differing float.
+
+The output plane is reused (#620): repeated planes make one buffer; a larger
+plane grows it once and a smaller one after it reuses it; a plane a caller
+still holds never changes; the pixels a larger plane shares with a smaller one
+at the same positions are equal to the bit; a plane written into the caller's
+memory equals the one returned as Data and a destination too small is refused;
+two engines alternating on two volumes never see each other's pixels; release
+drops the buffer and a new upload makes one again; and reconstructions running
+at once on one engine each get their own buffer and the right pixels.
 """
 import json
 import math
@@ -134,7 +143,9 @@ func vec(_ v: SIMD3<Float>) -> [Double] { [Double(v.x), Double(v.y), Double(v.z)
 @main struct Check {
     static func main() throws {
         guard let device = MTLCreateSystemDefaultDevice() else { exit(2) }
-        let engine = try MPRMetalReslicer(device: device)
+        let backend: MetalComputeBackend = CommandLine.arguments.contains("metal4") ? .metal4 : .metal3
+        if backend == .metal4 && !Metal4ComputeSubmitter.isSupported(device) { exit(3) }
+        let engine = try MPRMetalReslicer(device: device, backend: backend)
         let W = 16, H = 12, D = 10
         var cases = [Case]()
         var messages = [String: String]()
@@ -285,6 +296,98 @@ func vec(_ v: SIMD3<Float>) -> [Double] { [Double(v.x), Double(v.y), Double(v.z)
         bridge.releaseVolume()
         messages["hostReleased"] = !bridge.isReady && bridge.volumeBytes == 0 ? "yes" : "no"
 
+        // 8. #620: the output plane is reused without any frame seeing another's pixels.
+        let reuse = try MPRMetalReslicer(device: device, backend: backend)
+        try reuse.upload(rampVolume)
+        let small = try ReslicePlane(origin: SIMD3(0.25, 0.5, 4.5), rowStep: SIMD3(1, 0, 0), columnStep: SIMD3(0, 1, 0),
+                                     width: W, height: H, thickness: 0, sampleStep: 1, projection: .maximum, background: -1)
+        // 1024 × 512 floats need 2 MiB: more than the first buffer's whole MiB.
+        let large = try ReslicePlane(origin: SIMD3(0.25, 0.5, 4.5), rowStep: SIMD3(1, 0, 0), columnStep: SIMD3(0, 1, 0),
+                                     width: 1024, height: 512, thickness: 0, sampleStep: 1, projection: .maximum, background: -1)
+        let firstSmall = try reuse.reslice(small)
+        let heldCopy = Data(firstSmall)
+        var smallSame = true
+        for _ in 0..<20 where try reuse.reslice(small) != firstSmall { smallSame = false }
+        messages["reuseRepeatedAllocations"] = "\(reuse.outputAllocations)"
+        messages["reuseRepeatedCapacity"] = "\(reuse.outputCapacity)"
+        let largeData = try reuse.reslice(large)
+        messages["reuseGrownAllocations"] = "\(reuse.outputAllocations)"
+        messages["reuseGrownCapacity"] = "\(reuse.outputCapacity)"
+        for _ in 0..<10 {
+            if try reuse.reslice(small) != firstSmall { smallSame = false }
+            if try reuse.reslice(large) != largeData { smallSame = false }
+        }
+        messages["reuseAlternatingAllocations"] = "\(reuse.outputAllocations)"
+        messages["reuseSame"] = smallSame ? "yes" : "no"
+        messages["reuseHeldUnchanged"] = firstSmall == heldCopy ? "yes" : "no"
+        let smallValues = firstSmall.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
+        let largeValues = largeData.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
+        messages["reuseSharedPixels"] = (0..<H).allSatisfy { y in (0..<W).allSatisfy { x in
+            largeValues[y * 1024 + x] == smallValues[y * W + x] } } ? "yes" : "no"
+        messages["reuseLargeBackground"] = largeValues[511 * 1024 + 1023] == -1 ? "yes" : "no"
+        var into = [Float](repeating: .nan, count: W * H)
+        try into.withUnsafeMutableBytes { try reuse.reslice(small, into: $0) }
+        messages["reuseInto"] = into == smallValues ? "yes" : "no"
+        var short = [Float](repeating: 0, count: W * H - 1)
+        messages["reuseShortDestination"] = refusal { try short.withUnsafeMutableBytes { try reuse.reslice(small, into: $0) } }
+
+        // Two viewers: two engines, two volumes, planes interleaved.
+        let other = try MPRMetalReslicer(device: device, backend: backend)
+        try other.upload(iso)
+        let otherFirst = try other.reslice(small)
+        var separate = otherFirst != firstSmall
+        for _ in 0..<10 {
+            if try reuse.reslice(small) != firstSmall || other.reslice(small) != otherFirst { separate = false }
+        }
+        messages["reuseTwoEngines"] = separate ? "yes" : "no"
+
+        // Release and upload again, five times.
+        var cycles = true
+        let beforeCycles = reuse.outputAllocations
+        for _ in 0..<5 {
+            reuse.release()
+            if reuse.outputCapacity != 0 || reuse.isReady { cycles = false }
+            if refusal({ _ = try reuse.reslice(small) }) == "accepted" { cycles = false }
+            try reuse.upload(rampVolume)
+            if try reuse.reslice(small) != firstSmall { cycles = false }
+        }
+        messages["reuseCycles"] = cycles ? "yes" : "no"
+        messages["reuseCycleAllocations"] = "\(reuse.outputAllocations - beforeCycles)"
+
+        // Reconstructions at once on one engine.
+        let concurrent = try MPRMetalReslicer(device: device, backend: backend)
+        try concurrent.upload(rampVolume)
+        let references = [try concurrent.reslice(small), try concurrent.reslice(large)]
+        let lock = NSLock()
+        var concurrentSame = true
+        DispatchQueue.concurrentPerform(iterations: 64) { index in
+            let data = try? concurrent.reslice(index % 2 == 0 ? small : large)
+            lock.withLock { if data != references[index % 2] { concurrentSame = false } }
+        }
+        messages["reuseConcurrent"] = concurrentSame ? "yes" : "no"
+        messages["reuseConcurrentAllocations"] = "\(concurrent.outputAllocations)"
+        // #623: the host's backend: HorosMetal4Compute when set, else the standard one; Metal 4 only where supported.
+        if let defaults = UserDefaults(suiteName: "org.horosproject.test-mpr-metal-backend-\(ProcessInfo.processInfo.processIdentifier)") {
+            let supported = Metal4ComputeSubmitter.isSupported(device)
+            let unset = MetalComputeBackend.host(device: device, defaults: defaults).backend
+            defaults.set(true, forKey: "HorosMetal4Compute")
+            let yes = MetalComputeBackend.host(device: device, defaults: defaults).backend
+            defaults.set(false, forKey: "HorosMetal4Compute")
+            let no = MetalComputeBackend.host(device: device, defaults: defaults).backend
+            defaults.removePersistentDomain(forName: "org.horosproject.test-mpr-metal-backend-\(ProcessInfo.processInfo.processIdentifier)")
+            messages["hostBackend"] = unset == MetalComputeBackend.standard && yes == (supported ? .metal4 : .metal3) && no == .metal3 ? "yes" : "no"
+        }
+        // #623: engines on one device share one Metal 4 submitter, its queue and its slots.
+        if backend == .metal4 {
+            messages["metal4Shared"] = reuse.submitterIdentity != nil && reuse.submitterIdentity == other.submitterIdentity
+                && other.submitterIdentity == concurrent.submitterIdentity ? "yes" : "no"
+        }
+        // #623: every Metal 4 slot comes back, and no more are kept than the submitter keeps.
+        if let slots = concurrent.submissionSlots {
+            messages["metal4Slots"] = slots.inFlight == 0 && slots.idle <= Metal4ComputeSubmitter.keptSlots && slots.made == slots.idle
+                ? "idle" : "made \(slots.made), in flight \(slots.inFlight), idle \(slots.idle)"
+        }
+
         let encoder = JSONEncoder()
         let object: [String: Any] = ["cases": try JSONSerialization.jsonObject(with: encoder.encode(cases)), "messages": messages]
         FileHandle.standardOutput.write(try JSONSerialization.data(withJSONObject: object))
@@ -293,23 +396,8 @@ func vec(_ v: SIMD3<Float>) -> [Double] { [Double(v.x), Double(v.y), Double(v.z)
 '''
 
 
-def main():
-    with tempfile.TemporaryDirectory() as directory:
-        work = Path(directory)
-        (work / 'Check.swift').write_text(driver)
-        sources = ['VolumeAllocation.swift', 'VolumeSession.swift', 'MPRMetalReslicer.swift']
-        command = ['xcrun', 'swiftc', '-O', '-parse-as-library', '-suppress-warnings',
-                   *[str(root / 'Horos/Sources' / name) for name in sources], str(work / 'Check.swift'), '-o', str(work / 'check')]
-        subprocess.run(command, check=True)
-        result = subprocess.run([str(work / 'check')], capture_output=True, timeout=180)
-        if result.returncode == 2:
-            print('skipped: no Metal device', file=sys.stderr)
-            return 2
-        if result.returncode:
-            sys.stderr.write(result.stderr.decode(errors='replace'))
-            raise SystemExit('driver failed with %d' % result.returncode)
-        payload = json.loads(result.stdout)
-
+def verify(payload):
+    """The oracle comparisons and the messages of one backend's run: (failures, pixels checked)."""
     volumes = {
         'phantom': phantom,
         'ramp': ramp,
@@ -375,10 +463,81 @@ def main():
     if m['cancelledDelivered'] != 'no':
         failures.append('a cancelled token reported delivery')
 
+    # #620: the kept output plane.
+    if m['reuseRepeatedAllocations'] != '1' or m['reuseRepeatedCapacity'] != str(1 << 20):
+        failures.append('21 planes of one size made %s output buffers, keeping %s bytes'
+                        % (m['reuseRepeatedAllocations'], m['reuseRepeatedCapacity']))
+    if m['reuseGrownAllocations'] != '2' or m['reuseGrownCapacity'] != str(2 << 20):
+        failures.append('a larger plane made %s buffers in all, keeping %s bytes'
+                        % (m['reuseGrownAllocations'], m['reuseGrownCapacity']))
+    if m['reuseAlternatingAllocations'] != '2':
+        failures.append('alternating sizes made more buffers: %s' % m['reuseAlternatingAllocations'])
+    for key, message in (('reuseSame', 'a reused buffer changed the pixels of a repeated plane'),
+                         ('reuseHeldUnchanged', 'a plane the caller held changed when the buffer was reused'),
+                         ('reuseSharedPixels', 'a larger plane does not repeat the smaller plane at the same positions'),
+                         ('reuseLargeBackground', 'the larger plane lost its background outside the volume'),
+                         ('reuseInto', "a plane written into the caller's memory differs from the one returned as Data"),
+                         ('reuseTwoEngines', 'two engines saw each other\'s pixels'),
+                         ('reuseCycles', 'release kept the output buffer or a new upload gave other pixels'),
+                         ('reuseConcurrent', 'reconstructions at once on one engine got the wrong pixels')):
+        if m[key] != 'yes':
+            failures.append(message)
+    if 'destination holds' not in m['reuseShortDestination']:
+        failures.append('a destination too small was not refused: %r' % m['reuseShortDestination'][:120])
+    if m['reuseCycleAllocations'] != '5':
+        failures.append('five release and upload cycles made %s output buffers, not one each' % m['reuseCycleAllocations'])
+    if not 2 <= int(m['reuseConcurrentAllocations']) <= 64:
+        failures.append('reconstructions at once made %s buffers' % m['reuseConcurrentAllocations'])
+
+    return failures, checked
+
+
+def main():
+    with tempfile.TemporaryDirectory() as directory:
+        work = Path(directory)
+        (work / 'Check.swift').write_text(driver)
+        sources = ['VolumeAllocation.swift', 'VolumeSession.swift', 'MPRMetalReslicer.swift', 'MetalPerformanceTrace.swift',
+                   'MetalComputePipelineCache.swift', 'Metal4ComputeSubmitter.swift']
+        command = ['xcrun', 'swiftc', '-O', '-parse-as-library', '-suppress-warnings',
+                   *[str(root / 'Horos/Sources' / name) for name in sources], str(work / 'Check.swift'), '-o', str(work / 'check')]
+        subprocess.run(command, check=True)
+        payloads = {}
+        for backend in ('metal3', 'metal4'):
+            result = subprocess.run([str(work / 'check'), backend], capture_output=True, timeout=180)
+            if result.returncode == 2:
+                print('skipped: no Metal device', file=sys.stderr)
+                return 2
+            if result.returncode == 3 and backend == 'metal4':
+                print('note: this device has no Metal 4 submission; only Metal 3 was checked', file=sys.stderr)
+                continue
+            if result.returncode:
+                sys.stderr.write(result.stderr.decode(errors='replace'))
+                raise SystemExit('%s driver failed with %d' % (backend, result.returncode))
+            payloads[backend] = json.loads(result.stdout)
+
+    failures = []
+    checked = 0
+    for backend, payload in payloads.items():
+        found, pixels = verify(payload)
+        failures += ['%s: %s' % (backend, failure) for failure in found]
+        checked += pixels
+    # #623: the same kernel on either submission gives the same floats.
+    if payloads['metal3']['messages'].get('hostBackend') != 'yes':
+        failures.append('the host backend does not follow HorosMetal4Compute, or the standard backend when it is unset')
+    if 'metal4' in payloads:
+        m4 = payloads['metal4']['messages']
+        if m4.get('metal4Shared') != 'yes':
+            failures.append('metal4: engines on one device do not share one submitter')
+        if m4['metal4Slots'] != 'idle':
+            failures.append('metal4: submission slots were not all given back: %s' % m4['metal4Slots'])
+        for three, four in zip(payloads['metal3']['cases'], payloads['metal4']['cases']):
+            if three['name'] != four['name'] or three['values'] != four['values']:
+                failures.append('%s: Metal 4 resliced other floats than Metal 3' % three['name'])
     if failures:
         raise SystemExit('\n'.join(failures))
-    print('mpr metal reslice: %d cases, %d pixels within tolerance; refusals, cancellation and A225 ramp identical'
-          % (len(payload['cases']), checked))
+    print('mpr metal reslice (%s): %d cases each, %d pixels within tolerance; refusals, cancellation and A225 ramp identical; '
+          'output plane reused%s' % (' and '.join(payloads), len(payloads['metal3']['cases']), checked,
+                                     '; Metal 4 floats equal to Metal 3' if 'metal4' in payloads else ''))
     return 0
 
 

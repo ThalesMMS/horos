@@ -48,8 +48,6 @@
 #import "DicomDatabase.h"
 #import "DicomImage.h"
 #import "AppController.h"
-#import "N2ConnectionListener.h"
-#import "N2Connection.h"
 #import "NSFileManager+N2.h"
 #import "N2Locker.h"
 
@@ -68,12 +66,28 @@
 extern const char *GetPrivateIP(void);
 
 
-@interface O2DatabaseConnection : N2Connection {
+// One request of one client (#615). It used to be an N2Connection, whose run loop called
+// -handleData: as bytes arrived and sent what was written in the background. It now runs
+// synchronously on a worker of HorosDatabaseServer: it reads from its HorosDatabasePeer
+// until the request is complete, answers, and ends the stream. The request handlers below
+// are unchanged; the methods they called on N2Connection are provided here over the peer.
+@interface O2DatabaseConnection : NSObject {
     int _mode, _hdi;
     BOOL _authorized;
+    BOOL _closed; // the request was refused or broke the protocol: nothing more is read or sent
     NSMutableArray* _stack;
+    NSMutableData* _readBuffer;
+    NSUInteger _readOffset; // bytes of _readBuffer the handlers consumed, removed once per pass
+    HorosDatabasePeer* _peer;
+    HorosSharedDatabaseRequestPaths *_requestPaths; // the folders this request's paths resolve against (#637)
+    NSMutableSet *_linkedPaths; // its absolute paths outside them
 }
 
++ (void)servePeer:(HorosDatabasePeer*)peer;
+
+@end
+
+@interface BonjourPublisher () <HorosDatabaseServerDelegate>
 @end
 
 
@@ -106,6 +120,9 @@ extern const char *GetPrivateIP(void);
     [dicomSendLock release];
     //	self.serviceName = NULL;
     
+    _listener.delegate = nil;
+    [_listener stop];
+    [_listener release]; _listener = nil;
     [_advertisement stop];
     [_advertisement release]; _advertisement = nil;
     [_bonjour release];
@@ -121,7 +138,8 @@ extern const char *GetPrivateIP(void);
             return;
         } else
             if ([keyPath isEqualToString:OsirixBonjourSharingNameDefaultsKey]) {
-                //	[self ];
+                // The advertisement carries the name: a new one replaces it (-updateBonjour).
+                [self updateBonjour];
                 return;
             } else
                 if ([keyPath isEqualToString:OsirixBonjourSharingIsPasswordProtectedDefaultsKey]) {
@@ -137,25 +155,25 @@ extern const char *GetPrivateIP(void);
 
 - (int) OsiriXDBCurrentPort // __deprecated
 {
-    return [_listener port];
+    return (int)[_listener port];
 }
 
 - (void)toggleSharing:(BOOL)activate
 {
     @try {
         if (activate && !_listener) {
-            _listener = [[N2ConnectionListener alloc] initWithPort:8780 connectionClass:[O2DatabaseConnection class]];
-            //            [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(connectionOpened:) name:N2ConnectionListenerOpenedConnectionNotification object:_listener];
-            [_listener setThreadPerConnection:YES];
-            if (_listener)
-                NSLog(@"Horos database shared on port %d", [_listener port]);
-            else
-                [[AppController sharedAppController] reportListenBindFailureForService:HorosListenBindFailure.databaseSharingService
-                                                                                  port:8780
-                                                                             errnoCode:[N2ConnectionListener lastBindErrno]];
+            // The listener reports ready or failed on the main queue; the advertisement is published
+            // only once it is ready (-databaseServerDidStart:), never for a port nothing listens on.
+            _listener = [[HorosDatabaseServer alloc] initWithPort:8780 handler:^(HorosDatabasePeer *peer) {
+                [O2DatabaseConnection servePeer:peer];
+            }];
+            _listener.delegate = self;
+            [_listener start];
         }
         
         if (!activate && _listener) {
+            _listener.delegate = nil;
+            [_listener stop];
             [_listener release];
             _listener = nil;
         }
@@ -166,10 +184,37 @@ extern const char *GetPrivateIP(void);
     }
 }
 
+- (void)databaseServerDidStart:(HorosDatabaseServer*)server {
+    if (server != _listener) return; // a stopped server's late callback
+    NSLog(@"Horos database shared on port %ld", (long)server.port);
+    [self updateBonjour];
+}
+
+- (void)databaseServer:(HorosDatabaseServer*)server didFailWithPOSIXError:(int)posixError description:(NSString*)description {
+    if (server != _listener) return;
+    NSLog(@"Warning: unable to share the Horos database on port 8780: %@", description);
+    // The server stopped itself. Without a listener the advertisement goes (#389, #392): the
+    // user is told why, and turning sharing off and on again tries the port once more.
+    [[AppController sharedAppController] reportListenBindFailureForService:HorosListenBindFailure.databaseSharingService
+                                                                      port:8780
+                                                                 errnoCode:posixError];
+    _listener.delegate = nil;
+    [_listener release];
+    _listener = nil;
+    [self updateBonjour];
+}
+
+- (void)databaseServer:(HorosDatabaseServer*)server isWaitingWithPOSIXError:(int)posixError description:(NSString*)description {
+    if (server != _listener) return;
+    NSLog(@"Horos database sharing is waiting for the network: %@", description);
+    [self updateBonjour]; // port 0: the advertisement is withdrawn until the listener is ready again
+}
+
 - (void)updateBonjour {
     // A service created while sharing is disabled retains port zero forever.
-    // Drop inactive/stale advertisements and create one only for a live listener.
-    if (!_listener || (_bonjour && _bonjour.port != _listener.port)) {
+    // Drop inactive/stale advertisements and create one only for a listener that is ready,
+    // under the name the preferences hold now.
+    if (!_listener.port || (_bonjour && (_bonjour.port != _listener.port || ![_bonjour.name isEqualToString:[NSUserDefaults bonjourSharingName]]))) {
         _bonjour.delegate = nil;
         [_bonjour stop];
         [_bonjour release];
@@ -178,7 +223,7 @@ extern const char *GetPrivateIP(void);
         [_advertisement release];
         _advertisement = nil;
     }
-    if (!_listener) {
+    if (!_listener.port) {
         Class directService = NSClassFromString(@"HorosDirectTransferService");
         if ([directService respondsToSelector:@selector(sharedService)])
             [[directService sharedService] stop];
@@ -222,7 +267,7 @@ extern const char *GetPrivateIP(void);
     if( [_bonjour setTXTRecordData:[NSNetService dataFromTXTRecordDictionary:txtrec]] == NO)
         NSLog(@"Warning: Horos Bonjour net service setTXTRecordData FAILED");
     
-    if (_listener)
+    if (_listener.port)
         [_advertisement publishWithTXTRecord: txtrec];
     else
         [_advertisement stop];
@@ -319,17 +364,31 @@ extern const char *GetPrivateIP(void);
 
 @implementation O2DatabaseConnection
 
-- (id)initWithAddress:(NSString*)address port:(NSInteger)port tls:(BOOL)tlsFlag is:(NSInputStream*)is os:(NSOutputStream*)os {
-    if ((self = [super initWithAddress:address port:port tls:tlsFlag is:is os:os])) {
-        //		[self setCloseOnRemoteClose:YES];
++ (void)servePeer:(HorosDatabasePeer*)peer {
+    O2DatabaseConnection *connection = [[O2DatabaseConnection alloc] initWithPeer:peer];
+    @try {
+        [connection run];
+    } @finally {
+        [connection release];
+    }
+}
+
+- (instancetype)initWithPeer:(HorosDatabasePeer*)peer {
+    if ((self = [super init])) {
+        _peer = [peer retain];
         _stack = [[NSMutableArray alloc] init];
+        _readBuffer = [[NSMutableData alloc] init];
     }
     
     return self;
 }
 
 - (void)dealloc {
+    [_peer release];
+    [_readBuffer release];
     [_stack release];
+    [_requestPaths release];
+    [_linkedPaths release];
     [super dealloc];
 }
 
@@ -354,11 +413,144 @@ enum Modes {
 };
 
 static NSString* const O2NotEnoughData = @"O2NotEnoughData";
+// A request that breaks the protocol (#614): the connection is closed, nothing
+// further of it is read or executed.
+static NSString* const O2InvalidRequest = @"O2InvalidRequest";
+
+- (void)_rejectRequest:(NSString*)reason {
+    [NSException raise:O2InvalidRequest format:@"%@", reason];
+}
+
+// Everything still unconsumed in the receive buffer for the current request.
+// Reads arrive in blocks, and a block bounds nothing about the request. This is
+// asked for every block of an upload, so the limits are read once.
+static NSInteger O2BufferLimitAwaitingCommand, O2BufferLimitUpload, O2BufferLimitOther, O2MaximumFileLength;
+
++ (void)initialize {
+    if (self != [O2DatabaseConnection class])
+        return;
+    O2MaximumFileLength = HorosSharedDatabaseWire.maximumFileLength;
+    O2BufferLimitAwaitingCommand = HorosSharedDatabaseWire.maximumBufferedBytesAwaitingCommand;
+    O2BufferLimitUpload = HorosSharedDatabaseWire.maximumBufferedBytesForUpload;
+    O2BufferLimitOther = HorosSharedDatabaseWire.maximumBufferedBytesForOtherRequests;
+}
+
+- (NSInteger)_maximumBufferedBytes {
+    switch (_mode) {
+        case NONE: return O2BufferLimitAwaitingCommand;
+        case SENDD: case SENDG: return O2BufferLimitUpload;
+        default: return O2BufferLimitOther;
+    }
+}
+
+- (void)_closeIfBufferExceedsLimit {
+    if (self.availableSize > [self _maximumBufferedBytes]) {
+        NSLog(@"Shared database: request from %@ closed: more than %ld bytes buffered", self.address, (long)[self _maximumBufferedBytes]);
+        [self close];
+    }
+}
+
+// The request, on this worker, from its first byte to the end of its answer. Every wait for the
+// network ends: the peer times out after its idle limit of monotonic time, fails with the
+// connection, or is cancelled when sharing stops. Nothing thrown here reaches the Swift worker.
+- (void)run {
+    @try {
+        while (_mode != DONE && !_closed) {
+            @autoreleasepool {
+                NSError *error = nil;
+                NSUInteger before = _readBuffer.length;
+                if (![_peer appendReceivedDataTo:_readBuffer error:&error]) {
+                    NSLog(@"Shared database: request from %@ ended: %@", self.address, error.localizedDescription);
+                    return;
+                }
+                if (_readBuffer.length == before) {
+                    // A client that goes away in the middle of a request never completes it.
+                    if (_mode != NONE || self.availableSize)
+                        NSLog(@"Shared database: %@ disconnected before completing its request", self.address);
+                    return;
+                }
+                [self handleData:_readBuffer];
+                // Consumed bytes go once per pass: removing them read by read moved the
+                // rest of the request every time, which for 2000 paths cost more than
+                // parsing them.
+                if (_readOffset) {
+                    [_readBuffer replaceBytesInRange:NSMakeRange(0, _readOffset) withBytes:NULL length:0];
+                    _readOffset = 0;
+                }
+            }
+        }
+        if (_closed)
+            return;
+        NSError *error = nil;
+        if (![_peer finishWithError:&error])
+            NSLog(@"Shared database: answer to %@ not completed: %@", self.address, error.localizedDescription);
+    } @catch (NSException *exception) {
+        N2LogExceptionWithStackTrace(exception);
+    } @finally {
+        [_peer cancel];
+    }
+}
+
+// What the handlers used of N2Connection, over the peer.
+- (NSString*)address { return _peer.address; }
+- (NSInteger)availableSize { return (NSInteger)(_readBuffer.length - _readOffset); }
+
+// The unread part of the request, as a view valid until the buffer changes.
+- (NSData*)readBuffer {
+    return [NSData dataWithBytesNoCopy:(char*)_readBuffer.mutableBytes + _readOffset length:_readBuffer.length - _readOffset freeWhenDone:NO];
+}
+
+- (NSData*)readData:(NSInteger)size {
+    NSData *data = [_readBuffer subdataWithRange:NSMakeRange(_readOffset, (NSUInteger)size)];
+    _readOffset += (NSUInteger)size;
+    return data;
+}
+
+- (NSInteger)readData:(NSInteger)size toBuffer:(void*)buffer {
+    [_readBuffer getBytes:buffer range:NSMakeRange(_readOffset, (NSUInteger)size)];
+    _readOffset += (NSUInteger)size;
+    return size;
+}
+
+// The unread bytes and a step past them, for the length and string readers: a view object
+// or a copy per string cost more than parsing it.
+- (const uint8_t*)_unreadBytes { return (const uint8_t*)_readBuffer.bytes + _readOffset; }
+- (void)_skipBytes:(NSUInteger)size { _readOffset += size; }
+
+// Sends before returning, in blocks the peer waits for: a slow reader holds the request back
+// instead of an ever larger buffer. A failed send ends the request.
+- (void)writeData:(NSData*)data {
+    if (_closed || !data.length)
+        return;
+    NSError *error = nil;
+    if (![_peer writeData:data error:&error]) {
+        NSLog(@"Shared database: sending to %@ failed: %@", self.address, error.localizedDescription);
+        [self close];
+    }
+}
+
+- (NSInteger)writeBufferSize { return 0; } // written synchronously: nothing is ever left queued
+
+// Refuses the request: nothing more of it is read or answered, and the stream is not ended
+// cleanly, so the client sees the connection close without a response.
+- (void)close {
+    _closed = YES;
+    [_peer cancel];
+}
 
 - (void)handleData:(NSMutableData*)data {
     _hdi = 0;
-    
+
     @try {
+        // The request is complete and its answer may still be on its way out:
+        // anything more the client sends is not part of it, and kept it would
+        // grow the buffer for as long as the answer takes.
+        if (_mode == DONE) {
+            if (self.availableSize)
+                [self readData:self.availableSize];
+            return;
+        }
+
         if (_mode == NONE) {
             if (self.availableSize < 6)
                 return;
@@ -458,22 +650,18 @@ static NSString* const O2NotEnoughData = @"O2NotEnoughData";
                 return [self DICOM];
         }
     } @catch (NSException* e) {
-        if ([e.name isEqualToString:O2NotEnoughData])
+        if ([e.name isEqualToString:O2NotEnoughData]) {
+            [self _closeIfBufferExceedsLimit];
             return;
-        @throw e;
-    } @finally {
-        if (_mode == DONE)
-        {
-            if (self.writeBufferSize)
-                self.closeWhenDoneSending = YES;
-            else [self close];
         }
+        if ([e.name isEqualToString:O2InvalidRequest]) {
+            NSLog(@"Shared database: request from %@ closed: %@", self.address, e.reason);
+            [self close];
+            return;
+        }
+        @throw e;
     }
-}
-
-- (void)connectionFinishedSendingData {
-    [[self class] cancelPreviousPerformRequestsWithTarget:self selector:@selector(handleData:) object:nil];
-    [self performSelector:@selector(handleData:) withObject:nil afterDelay:0]; // fill send buffer, maybe...
+    // A complete request (DONE) is answered by now: -run ends the stream.
 }
 
 - (void)_stackObject:(id)o {
@@ -491,60 +679,91 @@ static NSString* const O2NotEnoughData = @"O2NotEnoughData";
     [_stack removeObjectAtIndex:--_hdi];
 }
 
-- (void)_requireDataSize:(int)size {
+- (void)_requireDataSize:(NSInteger)size {
+    if (size < 0)
+        [self _rejectRequest:@"negative data size"];
     if (self.availableSize < size)
         [NSException raise:O2NotEnoughData format:@""];
 }
 
-- (int)_readInt {
+// A 32-bit length or count, validated before anything is consumed: a negative
+// value, or one above what the command can really carry, rejects the request.
+- (NSInteger)_readLengthUpTo:(NSInteger)maximum what:(NSString*)what {
     [self _requireDataSize:4];
-    
-    int value;
-    [self readData:4 toBuffer:&value];
-    value = NSSwapBigIntToHost(value);
-    
+
+    uint32_t raw;
+    memcpy(&raw, [self _unreadBytes], 4);
+    NSInteger value = [HorosSharedDatabaseWire validatedValue:raw maximum:maximum];
+    if (value < 0)
+        [self _rejectRequest:[NSString stringWithFormat:@"invalid %@ (%d)", what, (int)NSSwapBigIntToHost(raw)]];
+    [self _skipBytes:4];
+
     return value;
 }
 
-- (int)_stackReadInt {
+- (NSInteger)_stackReadLengthUpTo:(NSInteger)maximum what:(NSString*)what {
     if (_stack.count > _hdi)
-    {
-        //        N2LogStackTrace( @"_stack.count > _hdi");
-        return [[self _stackedObject] intValue];
-    }
-    int value = [self _readInt];
-    
-    [self _stackObject:[NSNumber numberWithInt:value]];
-    
+        return [[self _stackedObject] integerValue];
+
+    NSInteger value = [self _readLengthUpTo:maximum what:what];
+
+    [self _stackObject:[NSNumber numberWithInteger:value]];
+
     return value;
 }
 
+- (NSInteger)_stackReadCount {
+    return [self _stackReadLengthUpTo:HorosSharedDatabaseWire.maximumCount what:@"count"];
+}
+
+// Zero length is how the client sends nil, so nil and @"" stay distinct. The
+// length prefix is left in the buffer until the whole string has arrived: a
+// fragment boundary anywhere inside it resumes from the same place.
 - (NSString*)_readString {
     [self _requireDataSize:4];
-    
-    int length;
-    [self.readBuffer getBytes:&length length:4];
-    length = NSSwapBigIntToHost(length);
-    
-    [self _requireDataSize:length+4];
-    
-    [self readData:4];
-    
-    NSData* data = [self readData:length];
-    
-    return [NSString stringWithUTF8String:data.bytes];
+
+    uint32_t raw;
+    memcpy(&raw, [self _unreadBytes], 4);
+    NSInteger length = [HorosSharedDatabaseWire validatedValue:raw maximum:HorosSharedDatabaseWire.maximumStringLength];
+    if (length < 0)
+        [self _rejectRequest:[NSString stringWithFormat:@"invalid string length (%d)", (int)NSSwapBigIntToHost(raw)]];
+
+    [self _requireDataSize:length + 4];
+
+    HorosSharedDatabaseStringStatus status = HorosSharedDatabaseStringStatusValue;
+    NSString *value = [HorosSharedDatabaseWire decodeBytes:[self _unreadBytes] + 4 length:length status:&status];
+    if (status == HorosSharedDatabaseStringStatusUnterminated)
+        [self _rejectRequest:@"string without its terminator"];
+    if (status == HorosSharedDatabaseStringStatusEmbeddedNull)
+        [self _rejectRequest:@"string with an embedded terminator"];
+    if (status == HorosSharedDatabaseStringStatusInvalidUTF8)
+        [self _rejectRequest:@"string that is not UTF-8"];
+
+    [self _skipBytes:length + 4];
+
+    return value;
 }
 
+// The resume stack cannot hold nil: a null string is stacked as NSNull and
+// handed back as nil.
 - (NSString*)_stackReadString {
     if (_stack.count > _hdi)
     {
-        //        N2LogStackTrace( @"_stack.count > _hdi");
-        return [self _stackedObject];
+        id value = [self _stackedObject];
+        return value == [NSNull null] ? nil : value;
     }
     NSString* value = [self _readString];
-    
-    [self _stackObject:value];
-    
+
+    [self _stackObject:value ?: [NSNull null]];
+
+    return value;
+}
+
+// For parameters a command cannot do without.
+- (NSString*)_stackReadRequiredString:(NSString*)what {
+    NSString* value = [self _stackReadString];
+    if (!value)
+        [self _rejectRequest:[NSString stringWithFormat:@"missing %@", what]];
     return value;
 }
 
@@ -559,6 +778,52 @@ static NSString* const O2NotEnoughData = @"O2NotEnoughData";
     [self _stackObject:database];
     
     return database;
+}
+
+// The file a request names (#637). A relative path is an image of
+// DATABASE.noindex by its name, or an older client's ROI; an absolute path is
+// used as it is. A path of another shape, or with a `.` or `..` component, closes
+// the request. An absolute path outside the database's folders is kept for
+// -_requireLinkedPaths, which decides once every path of the request is known.
+- (NSString*)_servedPathForRequestedPath:(NSString*)requested {
+    if (!_requestPaths) {
+        // Once per request: a DCMSE names a path per image.
+        DicomDatabase *database = [DicomDatabase defaultDatabase];
+        _requestPaths = [[HorosSharedDatabaseRequestPaths alloc] initWithDatabaseDirectory:[[database sqlFilePath] stringByDeletingLastPathComponent]
+                                                                             dataDirectory:[database dataDirPath]
+                                                                                folderSize:[BrowserController DefaultFolderSizeForDB]];
+    }
+    NSString *resolved = nil;
+    HorosSharedDatabasePathKind kind = [_requestPaths kindOfRequestedPath:requested resolvedPath:&resolved];
+    if (kind == HorosSharedDatabasePathKindRefused || !resolved)
+        [self _rejectRequest:[NSString stringWithFormat:@"path %@ does not name a file of the database", requested]];
+    if (kind == HorosSharedDatabasePathKindLinked) {
+        if (!_linkedPaths)
+            _linkedPaths = [[NSMutableSet alloc] init];
+        [_linkedPaths addObject:resolved];
+    }
+    return resolved;
+}
+
+// Absolute paths outside the database's folders are read only for the images
+// the index links in place, by exactly that path (HorosSharedDatabaseLinkedPaths
+// keeps the ones it has confirmed); one unknown path closes the whole request,
+// before any of it is answered.
+- (void)_requireLinkedPaths {
+    if (!_linkedPaths.count)
+        return;
+    DicomDatabase *database = [DicomDatabase defaultDatabase];
+    BOOL known = [HorosSharedDatabaseLinkedPaths.sharedPaths containsAllPaths:_linkedPaths indexFile:[database sqlFilePath] lookup:^NSArray*(NSSet *paths) {
+        // Only the paths, as dictionaries: no image is materialized.
+        DicomDatabase *index = [database independentDatabase];
+        NSFetchRequest *request = [NSFetchRequest fetchRequestWithEntityName:@"Image"];
+        request.predicate = [NSPredicate predicateWithFormat:@"pathString IN %@", paths];
+        request.resultType = NSDictionaryResultType;
+        request.propertiesToFetch = @[@"pathString"];
+        return [[[index managedObjectContext] executeFetchRequest:request error:NULL] valueForKey:@"pathString"] ?: @[];
+    }];
+    if (!known)
+        [self _rejectRequest:[NSString stringWithFormat:@"a path outside the database that no image links to, among %@", _linkedPaths]];
 }
 
 - (void)DATAB {
@@ -634,7 +899,7 @@ static NSString* const O2NotEnoughData = @"O2NotEnoughData";
     if (representationToSend)
         [self writeData:representationToSend];
     
-    NSLog(@"Bonjour connection received from %@", _address);
+    NSLog(@"Bonjour connection received from %@", self.address);
     
     _mode = DONE;
 }
@@ -642,7 +907,7 @@ static NSString* const O2NotEnoughData = @"O2NotEnoughData";
 - (void)DBSIZ {
     DicomDatabase* idatabase = [self _stackIndependentDatabase];
     
-    int fileSize;
+    unsigned long long fileSize = 0;
     
     [[[idatabase managedObjectContext] persistentStoreCoordinator] lock];
     @try
@@ -653,7 +918,7 @@ static NSString* const O2NotEnoughData = @"O2NotEnoughData";
         
         NSDictionary *fattrs = [[NSFileManager defaultManager] attributesOfItemAtPath:databasePath error:NULL];
         
-        fileSize = [[fattrs objectForKey:NSFileSize] longLongValue];
+        fileSize = [[fattrs objectForKey:NSFileSize] unsignedLongLongValue];
     }
     @catch (NSException* e) {
         N2LogExceptionWithStackTrace(e);
@@ -662,8 +927,13 @@ static NSString* const O2NotEnoughData = @"O2NotEnoughData";
         [[[idatabase managedObjectContext] persistentStoreCoordinator] unlock];
     }
     
-    int size = NSSwapHostIntToBig(fileSize);
-    [self writeData:[NSData dataWithBytes:&size length:sizeof(int)]];
+    // Four bytes, read unsigned by the client: an index of 4 GiB or more is
+    // answered with the value that says so, never with its size wrapped (#637).
+    uint32_t size = [HorosSharedDatabaseRequests replyForIndexSize:fileSize];
+    if (size == HorosSharedDatabaseRequests.indexTooLargeForReply)
+        NSLog(@"Shared database: the index (%llu bytes) is too large to be shared with %@", fileSize, self.address);
+    size = NSSwapHostIntToBig(size);
+    [self writeData:[NSData dataWithBytes:&size length:sizeof(size)]];
     
     _mode = DONE;
 }
@@ -736,15 +1006,22 @@ static NSString* const O2NotEnoughData = @"O2NotEnoughData";
 }
 
 - (void)SEND {
-    int fileNo = [self _stackReadInt];
+    NSInteger fileNo = [self _stackReadCount];
     
     NSMutableArray* savedFiles = [self _stackedObject];
     if (!savedFiles) [self _stackObject:(savedFiles = [NSMutableArray array])];
     
     while (savedFiles.count < fileNo)
     {
-        int fileSize = [self _stackReadInt];
-        [self _requireDataSize:fileSize];
+        NSInteger fileSize = [self _stackReadLengthUpTo:O2MaximumFileLength what:@"file length"];
+        // A file arrives in thousands of blocks, and waiting for the rest is the
+        // usual state here: raising O2NotEnoughData for every block cost more
+        // than receiving the upload. The resume stack is left exactly as the
+        // exception would leave it.
+        if (self.availableSize < fileSize) {
+            [self _closeIfBufferExceedsLimit];
+            return;
+        }
         
         NSString* dstPath = [[[BrowserController currentBrowser] database] uniquePathForNewDataFileWithExtension:@"dcm"];
         
@@ -775,9 +1052,10 @@ static NSString* const O2NotEnoughData = @"O2NotEnoughData";
 }
 
 - (void)NEWMS { // is this used ? nah
-    int size = [self _stackReadInt];
+    NSInteger size = [self _stackReadLengthUpTo:HorosSharedDatabaseWire.maximumStringLength what:@"message length"];
     
     [self _requireDataSize:size];
+    if (size) [self readData:size]; // readData:0 would take the whole buffer
     //    NSData* da = [self readData:size];
     
     //    NSDictionary* d = [NSPropertyListSerialization propertyListFromData:da mutabilityOption: NSPropertyListImmutable format: nil errorDescription: nil];
@@ -791,7 +1069,7 @@ static NSString* const O2NotEnoughData = @"O2NotEnoughData";
 }
 
 - (void)ADDAL {
-    NSString* object = [self _stackReadString];
+    NSString* object = [self _stackReadRequiredString:@"album parameters"];
     
     NSDictionary* d = (NSDictionary*)[NSPropertyListSerialization
                                       propertyListFromData:[NSData dataWithBytesNoCopy:(void*)object.UTF8String length:strlen(object.UTF8String) freeWhenDone:NO]
@@ -832,7 +1110,7 @@ static NSString* const O2NotEnoughData = @"O2NotEnoughData";
 }
 
 - (void)REMAL {
-    NSString* object = [self _stackReadString];
+    NSString* object = [self _stackReadRequiredString:@"album parameters"];
     
     NSDictionary* d = (NSDictionary*)[NSPropertyListSerialization
                                       propertyListFromData:[NSData dataWithBytesNoCopy:(void*)object.UTF8String length:strlen(object.UTF8String) freeWhenDone:NO]
@@ -876,9 +1154,15 @@ static NSString* const O2NotEnoughData = @"O2NotEnoughData";
 }
 
 - (void)SETVA {
-    NSString* objectId = [self _stackReadString];
-    NSString* value = [self _stackReadString];
-    NSString* key = [self _stackReadString];
+    NSString* objectId = [self _stackReadRequiredString:@"object identifier"];
+    NSString* value = [self _stackReadString]; // nil is a value here: it clears reportURL
+    NSString* key = [self _stackReadRequiredString:@"key"];
+    
+    // Only the keys the client sets, each with its type (#637): any other key
+    // path closes the request before the database is touched.
+    HorosSharedDatabaseSettableKey kind = [HorosSharedDatabaseRequests settableKindForKey:key];
+    if (kind == HorosSharedDatabaseSettableKeyRefused)
+        [self _rejectRequest:[NSString stringWithFormat:@"key %@ cannot be set remotely", key]];
     
     DicomDatabase* idatabase = [self _stackIndependentDatabase];
     
@@ -886,25 +1170,32 @@ static NSString* const O2NotEnoughData = @"O2NotEnoughData";
     {
         NSManagedObject* item = [idatabase objectWithID:objectId]; // [context objectWithID: [[context persistentStoreCoordinator] managedObjectIDForURIRepresentation: [NSURL URLWithString: object]]];
         
-        //NSLog(@"URL:%@", object);
         if( item)
         {
-            if( [[item valueForKeyPath: key] isKindOfClass: [NSNumber class]]) [item setValue: [NSNumber numberWithInt: [value intValue]] forKeyPath: key];
-            else
+            if (kind == HorosSharedDatabaseSettableKeyNumber)
+                [item setValue:[NSNumber numberWithInt:[value intValue]] forKeyPath:key];
+            else if (kind == HorosSharedDatabaseSettableKeyText)
+                [item setValue:value forKeyPath:key];
+            else // reportURL
             {
-                if( [key isEqualToString: @"reportURL"])
+                NSString *reports = [idatabase reportsDirPath];
+                if (value == nil)
                 {
-                    if( value == nil)
-                    {
-                        [[NSFileManager defaultManager] removeItemAtPath:[item valueForKeyPath: key] error:NULL];
-                    }
-                    else if( [[key pathComponents] count] == 1)
-                    {
-                        value = [[idatabase reportsDirPath] stringByAppendingPathComponent: [value lastPathComponent]];
-                    }
+                    // The report file goes only if it is one of the database's reports.
+                    NSString *current = [item valueForKey:@"reportURL"];
+                    if ([HorosSharedDatabaseRequests isPath:current insideReportsDirectory:reports])
+                        [[NSFileManager defaultManager] removeItemAtPath:current error:NULL];
+                    else if (current)
+                        NSLog(@"Shared database: %@ cleared a report outside the reports folder; the file is kept", self.address);
+                }
+                else
+                {
+                    value = [HorosSharedDatabaseRequests reportPathForName:value reportsDirectory:reports];
+                    if (!value)
+                        [self _rejectRequest:@"report name that does not stay in the reports folder"];
                 }
                 
-                [item setValue: value forKeyPath: key];
+                [item setValue:value forKey:@"reportURL"];
             }
         }
         
@@ -913,6 +1204,8 @@ static NSString* const O2NotEnoughData = @"O2NotEnoughData";
     
     @catch (NSException *e)
     {
+        if ([e.name isEqualToString:O2InvalidRequest])
+            @throw;
         N2LogExceptionWithStackTrace(e);
     }
     @finally {
@@ -924,13 +1217,15 @@ static NSString* const O2NotEnoughData = @"O2NotEnoughData";
 }
 
 - (void)MFILE {
-    NSString* path = [self _stackReadString];
+    NSString* path = [self _stackReadRequiredString:@"path"];
     
     if( [path length])
     {
         if( [path characterAtIndex: 0] != '/')
             path = [[[DicomDatabase defaultDatabase] baseDirPath] stringByAppendingPathComponent: path];
     }
+    path = [self _servedPathForRequestedPath:path];
+    [self _requireLinkedPaths];
     
     NSDictionary *fattrs = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:NULL];
     
@@ -942,41 +1237,29 @@ static NSString* const O2NotEnoughData = @"O2NotEnoughData";
 }
 
 - (void)DCMSE {
-    NSString* AETitle = [self _stackReadString];
-    NSString* Address = [self _stackReadString];
-    NSString* Port = [self _stackReadString];
-    NSString* TransferSyntax = [self _stackReadString];
+    NSString* AETitle = [self _stackReadRequiredString:@"AE title"];
+    NSString* Address = [self _stackReadRequiredString:@"address"];
+    NSString* Port = [self _stackReadRequiredString:@"port"];
+    NSString* TransferSyntax = [self _stackReadRequiredString:@"transfer syntax"];
     
-    int noOfFiles = [self _stackReadInt];
+    NSInteger noOfFiles = [self _stackReadCount];
     
     NSMutableArray* localPaths = [self _stackedObject];
     if (!localPaths) [self _stackObject:(localPaths = [NSMutableArray array])];
     
     while (localPaths.count < noOfFiles)
     {
-        NSString* path = [self _stackReadString];
-        
-        if( [path UTF8String] [0] != '/')
-        {
-            int val = [[path stringByDeletingPathExtension] intValue];
-            
-            NSString *dbLocation = [[DicomDatabase defaultDatabase] sqlFilePath];
-            
-            val /= [BrowserController DefaultFolderSizeForDB];
-            val++;
-            val *= [BrowserController DefaultFolderSizeForDB];
-            
-            path = [[dbLocation stringByDeletingLastPathComponent] stringByAppendingFormat:@"/DATABASE.noindex/%d/%@", val, path];
-        }
+        NSString* path = [self _servedPathForRequestedPath:[self _stackReadRequiredString:@"path"]];
         
         [localPaths addObject: path];
         
         [self _unstack]; // the string
     }
+    [self _requireLinkedPaths];
     
     if( [Address isEqualToString: @"127.0.0.1"])
     {
-        Address = _address;
+        Address = self.address;
     }
     
     NSDictionary *todo = [NSDictionary dictionaryWithObjectsAndKeys: Address, @"Address", TransferSyntax, @"TransferSyntax", Port, @"Port", AETitle, @"AETitle", localPaths, @"Files", nil];
@@ -990,7 +1273,7 @@ static NSString* const O2NotEnoughData = @"O2NotEnoughData";
 {
     @synchronized( self)
     {
-        int noOfFiles = [self _stackReadInt];
+        NSInteger noOfFiles = [self _stackReadCount];
         
         NSMutableArray* localPaths = [self _stackedObject];
         if (!localPaths) [self _stackObject:(localPaths = [NSMutableArray array])];
@@ -999,31 +1282,7 @@ static NSString* const O2NotEnoughData = @"O2NotEnoughData";
         
         while (localPaths.count < noOfFiles)
         {
-            NSString* path = [self _stackReadString];
-            
-            if( [path UTF8String] [ 0] != '/')
-            {
-                if( [[[path pathComponents] objectAtIndex: 0] isEqualToString:@"ROIs"])
-                {
-                    //It's a ROI !
-                    NSString	*local = [[[DicomDatabase defaultDatabase] sqlFilePath] stringByDeletingLastPathComponent];
-                    
-                    path = [[local stringByAppendingPathComponent:@"/ROIs/"] stringByAppendingPathComponent: [path lastPathComponent]];
-                }
-                else
-                {
-                    
-                    int val = [[path stringByDeletingPathExtension] intValue];
-                    
-                    val /= [BrowserController DefaultFolderSizeForDB];
-                    val++;
-                    val *= [BrowserController DefaultFolderSizeForDB];
-                    
-                    NSString	*local = [[[DicomDatabase defaultDatabase] sqlFilePath] stringByDeletingLastPathComponent];
-                    
-                    path = [[[local stringByAppendingPathComponent:@"/DATABASE.noindex/"] stringByAppendingPathComponent: [NSString stringWithFormat:@"%d", val]] stringByAppendingPathComponent: path];
-                }
-            }
+            NSString* path = [self _servedPathForRequestedPath:[self _stackReadRequiredString:@"path"]];
             
             [localPaths addObject: path];
             
@@ -1046,7 +1305,7 @@ static NSString* const O2NotEnoughData = @"O2NotEnoughData";
         
         while (dstPaths.count < noOfFiles)
         {
-            NSString* path = [self _stackReadString];
+            NSString* path = [self _stackReadRequiredString:@"destination path"];
             
             [dstPaths addObject: path];
             
@@ -1067,9 +1326,12 @@ static NSString* const O2NotEnoughData = @"O2NotEnoughData";
             [self _unstack]; // the string
         }
         
+        // Nothing is written before every path is known to be served.
+        [self _requireLinkedPaths];
+        
         int temp = NSSwapHostIntToBig(noOfFiles);
         [self writeData:[NSData dataWithBytesNoCopy:&temp length:4 freeWhenDone:NO]];
-        for (int i = 0; i < noOfFiles; i++)
+        for (NSInteger i = 0; i < noOfFiles; i++)
         {
             NSString* path = [localPaths objectAtIndex: i];
             

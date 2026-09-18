@@ -181,7 +181,8 @@ report('git' not in instructions, 'the helper still consults git')
 call = re.compile(r'^\. "\$\(dirname "\$path"\)/\.\./dependency-hash\.sh"\n'
                   r'dependency_hash (.*)$', re.M)
 recipes = sorted(list(scripts.glob('*/CMake.sh')) + list(scripts.glob('*/Config.sh')))
-report(len(recipes) == 8, 'expected eight dependency scripts, found %d' % len(recipes))
+# Seven since #617 removed Grok's.
+report(len(recipes) == 7, 'expected seven dependency scripts, found %d' % len(recipes))
 for recipe in recipes:
     name = recipe.parent.name
     body = recipe.read_bytes().decode('latin1')

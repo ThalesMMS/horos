@@ -48,6 +48,7 @@
 #import "N2Debug.h"
 #import "N2Stuff.h"
 #import "stringAdditions.h"
+#import "Horos-Swift.h"
 
 #ifdef OSIRIX_VIEWER
 #import "DCMView.h"
@@ -67,6 +68,7 @@
 #import "WebPortal.h"
 #import "WebPortalDatabase.h"
 #import "DICOMExport.h"
+#import "AppController.h"
 #endif
 
 #define WBUFSIZE 512
@@ -623,6 +625,14 @@ static NSRecursiveLock *dbModifyLock = nil;
     return rootDict;
 }
 
+// The image an archived SR refers to and takes its patient data from: an image of an image series, not one of
+// the app's own SRs, which made the SR unreadable or left it without a patient (#651). Any image when the study
+// holds nothing else.
+- (DicomImage*) archivedSRReferenceImage
+{
+    return [HorosArchivedSRReference imageInSeries: [self.series allObjects]] ?: [[[self.series anyObject] valueForKey:@"images"] anyObject];
+}
+
 - (void) archiveAnnotationsAsDICOMSR
 {
     static int avoidReentry2 = 0;
@@ -656,7 +666,7 @@ static NSRecursiveLock *dbModifyLock = nil;
                     dstPath = isMainDB? [[DicomDatabase databaseForContext:self.managedObjectContext] uniquePathForNewDataFileWithExtension:@"dcm"] : [[NSFileManager defaultManager] tmpFilePathInTmp];
                 
                 // Save or Re-Save it as DICOM SR
-                SRAnnotation *r = [[[SRAnnotation alloc] initWithDictionary: annotationsDict path: dstPath forImage: [[[self.series anyObject] valueForKey:@"images"] anyObject]] autorelease];
+                SRAnnotation *r = [[[SRAnnotation alloc] initWithDictionary: annotationsDict path: dstPath forImage: [self archivedSRReferenceImage]] autorelease];
                 [r writeToFileAtPath: dstPath];
                 
                 DicomDatabase *idb = nil;
@@ -698,7 +708,7 @@ static NSRecursiveLock *dbModifyLock = nil;
     
     NSString *dstPath = [BrowserController.currentBrowser.database uniquePathForNewDataFileWithExtension: @"dcm"];
     
-    SRAnnotation *r = [[[SRAnnotation alloc] initWithWindowsState: windowsState path:dstPath forImage: [[[self.series anyObject] valueForKey:@"images"] anyObject]] autorelease];
+    SRAnnotation *r = [[[SRAnnotation alloc] initWithWindowsState: windowsState path:dstPath forImage: [self archivedSRReferenceImage]] autorelease];
     
     [r writeToFileAtPath: dstPath];
     
@@ -798,11 +808,11 @@ static NSRecursiveLock *dbModifyLock = nil;
                 NSLog( @"--- Report -> DICOM SR : %@", self.name);
                 
                 if( [self.reportURL hasPrefix: @"http://"] || [self.reportURL hasPrefix: @"https://"])
-                    r = [[[SRAnnotation alloc] initWithURLReport: self.reportURL path: dstPath forImage: [[[self.series anyObject] valueForKey:@"images"] anyObject]] autorelease];
+                    r = [[[SRAnnotation alloc] initWithURLReport: self.reportURL path: dstPath forImage: [self archivedSRReferenceImage]] autorelease];
                 else
                 {
                     NSDate *modifDate = [[[NSFileManager defaultManager] attributesOfItemAtPath: self.reportURL error: nil] valueForKey: NSFileModificationDate];
-                    r = [[[SRAnnotation alloc] initWithFileReport: zippedFile path: dstPath forImage: [[[self.series anyObject] valueForKey:@"images"] anyObject] contentDate: modifDate] autorelease];
+                    r = [[[SRAnnotation alloc] initWithFileReport: zippedFile path: dstPath forImage: [self archivedSRReferenceImage] contentDate: modifDate] autorelease];
                 }
                 
                 if (![r writeToFileAtPath:dstPath])
@@ -1203,6 +1213,11 @@ static NSRecursiveLock *dbModifyLock = nil;
                 }
                 @catch (NSException *e) {
                     N2LogExceptionWithStackTrace(e);
+                    // Validation goes on; the missing DICOM PDF is said, not only logged (#649).
+                    NSString *reason = [NSString stringWithFormat: @"%@: %@", self.name ?: @"", e.reason ?: e.name];
+                    dispatch_async( dispatch_get_main_queue(), ^{
+                        [[AppController sharedAppController] notificationTitle: NSLocalizedString(@"Report Error", nil) description: reason name: @"reportConversion"];
+                    });
                 }
             }
         }
@@ -1876,8 +1891,8 @@ static NSRecursiveLock *dbModifyLock = nil;
         {
             NSArray *images = [[[newArray lastObject] valueForKey: @"images"] allObjects];
             
-            // Take the most recent image
-            images = [images sortedArrayUsingDescriptors: [NSArray arrayWithObject: [NSSortDescriptor sortDescriptorWithKey:@"date" ascending:YES]]];
+            // Take the most recent image: dates tie within a second, and the SR stored later is the newer (#645)
+            images = [HorosArchivedSRImages sortedOldestFirst: images];
             image = [images lastObject];
         }
         else
@@ -1905,8 +1920,8 @@ static NSRecursiveLock *dbModifyLock = nil;
         
         if( [images count] > 1)
         {
-            // Take the most recent image
-            images = [images sortedArrayUsingDescriptors: [NSArray arrayWithObject: [NSSortDescriptor sortDescriptorWithKey:@"date" ascending: YES]]];
+            // Take the most recent image: dates tie within a second, and the SR stored later is the newer (#645)
+            images = [HorosArchivedSRImages sortedOldestFirst: images];
         }
     }
     @catch (NSException * e)
@@ -1991,8 +2006,8 @@ static NSRecursiveLock *dbModifyLock = nil;
         
         if( [images count] > 1)
         {
-            // Take the most recent image
-            images = [images sortedArrayUsingDescriptors: [NSArray arrayWithObject: [NSSortDescriptor sortDescriptorWithKey:@"date" ascending: YES]]];
+            // Take the most recent image: dates tie within a second, and the SR stored later is the newer (#645)
+            images = [HorosArchivedSRImages sortedOldestFirst: images];
         }
     }
     @catch (NSException * e)

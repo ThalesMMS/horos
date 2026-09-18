@@ -207,10 +207,17 @@ static CGFloat CPRMPRDCMViewCurveMouseTrackingDistance = 20.0;
 	if( rect.size.width > 10)
 	{
 		NSString *name = [NSString stringWithFormat: @"mpr-%d", viewID];
-		HorosCPRRenderDecision *decision = [HorosCPRRenderLifecycle beginDrawNamed: name];
-		if( decision.accepted == NO)
+		HorosCPRRenderLifecycle *lifecycle = [windowController renderLifecycle];
+		HorosCPRRenderDecision *decision = [lifecycle beginDrawNamed: name];
+		if( lifecycle && decision.accepted == NO)
 		{
 			NSLog(@"CPR draw skipped: %@", decision.diagnosis);
+
+			// Returning paints nothing, and nothing marks this view again: the
+			// panel would stay blank. Only the nested pass is unwanted, so ask
+			// for another one once the stack has unwound.
+			if( [decision.phase isEqualToString: @"reentrant"])
+				dispatch_async( dispatch_get_main_queue(), ^{ [self setNeedsDisplay: YES];});
 			return;
 		}
 		@try
@@ -219,7 +226,7 @@ static CGFloat CPRMPRDCMViewCurveMouseTrackingDistance = 20.0;
 		}
 		@finally
 		{
-			[HorosCPRRenderLifecycle endDrawNamed: name];
+			[lifecycle endDrawNamed: name];
 		}
 	}
 }
@@ -273,9 +280,7 @@ static CGFloat CPRMPRDCMViewCurveMouseTrackingDistance = 20.0;
 
 - (void) checkForFrame
 {
-	NSRect frame = [self convertRectToBacking: [self frame]];
-	NSPoint o = [self convertPoint: NSMakePoint(0, 0) toView:0L];
-	frame.origin = o;
+	NSRect frame = [self convertRect: [self bounds] toView: nil];
 	
 	if( NSEqualRects( frame, [vrView frame]) == NO)
 	{
@@ -1037,7 +1042,7 @@ static CGFloat CPRMPRDCMViewCurveMouseTrackingDistance = 20.0;
 	}
 	else
 	{
-		[HorosCPRRenderLifecycle markCurveReady];
+		[[windowController renderLifecycle] markCurveReady];
 	}
 }
 
@@ -1508,10 +1513,10 @@ static CGFloat CPRMPRDCMViewCurveMouseTrackingDistance = 20.0;
 	[self updateViewMPR: NO];
 	[self updateMousePosition: theEvent];
 	
-	[windowController delayedFullLODRendering: self];
+	[self displayIfNeeded];
 	
-//	[NSObject cancelPreviousPerformRequestsWithTarget: windowController selector:@selector(delayedFullLODRendering:) object: self];	
-//	[windowController performSelector: @selector(delayedFullLODRendering:) withObject: self afterDelay: 0.2];
+	[NSObject cancelPreviousPerformRequestsWithTarget: windowController selector:@selector(delayedFullLODRendering:) object: self];
+	[windowController performSelector: @selector(delayedFullLODRendering:) withObject: self afterDelay: 0.2];
 }
 
 - (void)rightMouseDown:(NSEvent *)theEvent

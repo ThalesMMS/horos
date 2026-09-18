@@ -66,8 +66,6 @@
 #include <dcmtk/dcmdata/dcdict.h>
 #include <dcmtk/dcmdata/dcdeftag.h>
 
-extern NSRecursiveLock *PapyrusLock;
-
 @implementation BrowserController (BrowserControllerDCMTKCategory)
 
 + (NSString*) compressionString: (NSString*) string

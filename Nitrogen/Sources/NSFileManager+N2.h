@@ -42,6 +42,9 @@
 @interface NSFileManager (N2)
 
 -(void) moveItemAtPathToTrash: (NSString*) path;
+// The system Trash of the item's volume; NO, with the item left in place, when it
+// cannot be trashed. resultingPath is where the system put it.
+-(BOOL) moveItemAtPathToTrash: (NSString*) path resultingPath: (NSString**) resultingPath error: (NSError**) error;
 -(NSString*)findSystemFolderOfType:(int)folderType forDomain:(int)domain __deprecated;
 -(NSString*)userApplicationSupportFolderForApp;
 -(NSString*)tmpFilePathInDir:(NSString*)dirPath;

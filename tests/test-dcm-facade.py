@@ -2,7 +2,7 @@
 """DCM.framework names, aliases and plugin headers survive the DCMTK migration (#372).
 
 Migrating parsing to DCMTK does not authorize deleting DCM.framework, PluginFilter
-or the class names plugins already compile against. ystarrev's plugin-system
+or the class names plugins already compile against. The donor's plugin-system
 removal is out of scope. PatientsName and PatientName must resolve to the same
 tag. A valid DICOM file whose decoder is missing is kept, not deleted.
 """
@@ -34,7 +34,7 @@ if 'DCMTagNameAlias.m in Sources' not in pbx:
 if 'Horos DCM Framework' not in pbx:
     failures.append('the Horos DCM Framework target is gone')
 if (root / 'Scripts/test_plugin_cleanup.py').exists() or (root / 'tests/test_plugin_cleanup.py').exists():
-    failures.append('ystarrev test_plugin_cleanup.py was copied; plugin removal is out of scope')
+    failures.append('the donor test_plugin_cleanup.py was copied; plugin removal is out of scope')
 
 plugin_text = plugin.read_text(encoding='latin1') if plugin.is_file() else ''
 for token in ('DCMPix.h', 'ViewerController.h', 'DCMView.h', 'ROI.h',
@@ -54,7 +54,7 @@ import Foundation
 @main struct Check {
     static func main() {
         precondition(HorosDCMFacade.requiredFrameworkName == "DCM.framework")
-        precondition(HorosDCMFacade.ystarrevPluginCleanupTestThatMustNotBeCopied == "test_plugin_cleanup.py")
+        precondition(HorosDCMFacade.donorPluginCleanupTestThatMustNotBeCopied == "test_plugin_cleanup.py")
         for name in ["PluginFilter", "DCMPix", "DCMView", "ROI", "ViewerController"] {
             precondition(HorosDCMFacade.requiredPluginTypes.contains(name))
             precondition(!HorosDCMFacade.mayRemovePluginFacingType(name))

@@ -122,28 +122,6 @@
 			name = Submodules;
 			productName = "Git Submodule Sync";
 		};
-		9920CBEC202A0BA600FE0A2A /* Grok */ = {
-			isa = PBXAggregateTarget;
-			buildConfigurationList = 9920CBF1202A0BA600FE0A2A /* Build configuration list for PBXAggregateTarget "Grok" */;
-			buildPhases = (
-				9920CBEF202A0BA600FE0A2A /* CMake */,
-				9920CBF0202A0BA600FE0A2A /* Make */,
-			);
-			dependencies = (
-				9920CBED202A0BA600FE0A2A /* PBXTargetDependency */,
-			);
-			name = Grok;
-			productName = Grok;
-		};
-		BF7486A50CC6AA5C00198387 /* Documentation */ = {
-			isa = PBXAggregateTarget;
-			buildConfigurationList = BF7486AA0CC6AA7C00198387 /* Build configuration list for PBXAggregateTarget "Documentation" */;
-			buildPhases = (
-				BF7486A40CC6AA5C00198387 /* ShellScript */,
-			);
-			name = Documentation;
-			productName = Documentation;
-		};
 		F35B0D7C289535B6008ABE3E /* FeedbackReporter */ = {
 			isa = PBXAggregateTarget;
 			buildConfigurationList = F35B0D85289535B6008ABE3E /* Build configuration list for PBXAggregateTarget "FeedbackReporter" */;
@@ -189,6 +167,20 @@
 		5F9A0C000000000000002010 /* AutoCleanupPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F9A0C000000000000001010 /* AutoCleanupPreview.swift */; };
 		5F9A0C000000000000002020 /* ApplicationMenuLookup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F9A0C000000000000001020 /* ApplicationMenuLookup.swift */; };
 		99E3A59DBF64555CAB4F65B6 /* RetrieveListenerRequirement.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24200105551B5A3B9BA97357 /* RetrieveListenerRequirement.swift */; };
+		3F72B2C9BBF445C2B9B3EA37 /* HorosDatabaseServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FFA8B8C1A9E4C2C951F8EA6 /* HorosDatabaseServer.swift */; };
+		2429C3B9C69D41568D8EFB9E /* MetalPerformanceTrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86BA53B4117D4B8D82C7E73F /* MetalPerformanceTrace.swift */; };
+		2354B2BCE262DC6C14F8C07B /* MetalComputePipelineCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5190DE254EA3F2B1A0E0CC85 /* MetalComputePipelineCache.swift */; };
+		6420A1B2C3D4E5F601642002 /* HeaderImagePair.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6420A1B2C3D4E5F601642001 /* HeaderImagePair.swift */; };
+		6450A1B2C3D4E5F601645002 /* ArchivedSRImages.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6450A1B2C3D4E5F601645001 /* ArchivedSRImages.swift */; };
+		6410A1B2C3D4E5F601641002 /* FileIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6410A1B2C3D4E5F601641001 /* FileIdentity.swift */; };
+		6510A1B2C3D4E5F601651002 /* ArchivedSRReference.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6510A1B2C3D4E5F601651001 /* ArchivedSRReference.swift */; };
+		6530A1B2C3D4E5F601653002 /* NativeFilterMenus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6530A1B2C3D4E5F601653001 /* NativeFilterMenus.swift */; };
+		6490A1B2C3D4E5F601649002 /* RichTextReportPDF.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6490A1B2C3D4E5F601649001 /* RichTextReportPDF.swift */; };
+		0355F087C5A31ACC3FF6054D /* Metal4ComputeSubmitter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A713B4D7E6C40B4B25D7684 /* Metal4ComputeSubmitter.swift */; };
+		75AC1EF2073C4BEFAD382458 /* RetrieveThreadGroup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C7147122F514F2FBBF22FB2 /* RetrieveThreadGroup.swift */; };
+		A06FEEF9AF1A46F591548F98 /* SharedDatabaseRequests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C865A4695DC4160BE543330 /* SharedDatabaseRequests.swift */; };
+		AA368A526B194636BB81CBAC /* SharedDatabaseWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AD8DFDDFEE64DAA8785D5E1 /* SharedDatabaseWire.swift */; };
+		F7E98C7044B04F9EAAC15419 /* IncomingFolderOnQuit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CEE9E5FDEBD4FEEAD43C9CE /* IncomingFolderOnQuit.swift */; };
 		75DA7190BC6544B9A5D36352 /* PlanarMetal4Renderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1514BB20EAE94E9DBB05640A /* PlanarMetal4Renderer.swift */; };
 		128CE698F7BC430BA73251E3 /* PreviewWindowing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AB36C38AE644EAF9826D453 /* PreviewWindowing.swift */; };
 		16901A785077478A80E502F8 /* DatabaseTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50125FBCD95648129DECDEF0 /* DatabaseTransport.swift */; };
@@ -611,8 +603,6 @@
 		59DC28B711C6126B00DAD5B4 /* NSAppleEventDescriptor+N2.mm in Sources */ = {isa = PBXBuildFile; fileRef = 59DC28B511C6126B00DAD5B4 /* NSAppleEventDescriptor+N2.mm */; };
 		59DC28C011C614A100DAD5B4 /* NSXMLNode+N2.h in Headers */ = {isa = PBXBuildFile; fileRef = 59DC28BE11C614A100DAD5B4 /* NSXMLNode+N2.h */; };
 		59DC28C111C614A100DAD5B4 /* NSXMLNode+N2.mm in Sources */ = {isa = PBXBuildFile; fileRef = 59DC28BF11C614A100DAD5B4 /* NSXMLNode+N2.mm */; };
-		59DC28C611C6152400DAD5B4 /* N2CSV.h in Headers */ = {isa = PBXBuildFile; fileRef = 59DC28C411C6152400DAD5B4 /* N2CSV.h */; };
-		59DC28C711C6152400DAD5B4 /* N2CSV.mm in Sources */ = {isa = PBXBuildFile; fileRef = 59DC28C511C6152400DAD5B4 /* N2CSV.mm */; };
 		59DC290A11C6178500DAD5B4 /* DiscBurningOptions.h in Headers */ = {isa = PBXBuildFile; fileRef = 59DC290811C6178500DAD5B4 /* DiscBurningOptions.h */; };
 		59DC290B11C6178500DAD5B4 /* DiscBurningOptions.mm in Sources */ = {isa = PBXBuildFile; fileRef = 59DC290911C6178500DAD5B4 /* DiscBurningOptions.mm */; };
 		59DC290E11C617A300DAD5B4 /* DicomCompressor.h in Headers */ = {isa = PBXBuildFile; fileRef = 59DC290C11C617A300DAD5B4 /* DicomCompressor.h */; };
@@ -621,7 +611,6 @@
 		59E379D0116B293A00E84FE3 /* NSImage+OsiriX.m in Sources */ = {isa = PBXBuildFile; fileRef = 59E379CE116B293A00E84FE3 /* NSImage+OsiriX.m */; };
 		59E379D8116B295B00E84FE3 /* DicomAlbum.h in Headers */ = {isa = PBXBuildFile; fileRef = 59E379D6116B295B00E84FE3 /* DicomAlbum.h */; };
 		59E379D9116B295B00E84FE3 /* DicomAlbum.m in Sources */ = {isa = PBXBuildFile; fileRef = 59E379D7116B295B00E84FE3 /* DicomAlbum.m */; };
-		59E5236012BF5E440094E668 /* N2Task.mm in Sources */ = {isa = PBXBuildFile; fileRef = 59E5235F12BF5E3E0094E668 /* N2Task.mm */; };
 		59E52B3712C109B80094E668 /* DicomDatabase.h in Headers */ = {isa = PBXBuildFile; fileRef = 59E52B3512C109B80094E668 /* DicomDatabase.h */; };
 		59E52B3812C109B80094E668 /* DicomDatabase.mm in Sources */ = {isa = PBXBuildFile; fileRef = 59E52B3612C109B80094E668 /* DicomDatabase.mm */; };
 		59E8352712F9ABAC006B930A /* N2ManagedDatabase.h in Headers */ = {isa = PBXBuildFile; fileRef = 59E8352512F9ABAC006B930A /* N2ManagedDatabase.h */; };
@@ -653,7 +642,6 @@
 		710EF1F31FD00E29000B555B /* Horos.h in Headers */ = {isa = PBXBuildFile; fileRef = 710EF1F11FD00E28000B555B /* Horos.h */; };
 		710EF1F41FD00E29000B555B /* Horos.m in Sources */ = {isa = PBXBuildFile; fileRef = 710EF1F21FD00E29000B555B /* Horos.m */; };
 		710EF1F61FD025BC000B555B /* Horos.m in Sources */ = {isa = PBXBuildFile; fileRef = 710EF1F21FD00E29000B555B /* Horos.m */; };
-		71125D4B215376FC00EB0AA5 /* PathForImage.h in Headers */ = {isa = PBXBuildFile; fileRef = 71125D4A215376FC00EB0AA5 /* PathForImage.h */; };
 		711849771590A377006AB447 /* SMTPClient.h in Headers */ = {isa = PBXBuildFile; fileRef = 711849751590A377006AB447 /* SMTPClient.h */; };
 		711849781590A377006AB447 /* SMTPClient.m in Sources */ = {isa = PBXBuildFile; fileRef = 711849761590A377006AB447 /* SMTPClient.m */; };
 		7128FD771487D54A00AB54A1 /* N2UnclickableSplitView.h in Headers */ = {isa = PBXBuildFile; fileRef = 7128FD751487D54A00AB54A1 /* N2UnclickableSplitView.h */; };
@@ -1161,10 +1149,6 @@
 		AB10FB461129338A009EB238 /* N2StepView.mm in Sources */ = {isa = PBXBuildFile; fileRef = AB10FAF51129338A009EB238 /* N2StepView.mm */; };
 		AB10FB471129338A009EB238 /* N2StepsView.h in Headers */ = {isa = PBXBuildFile; fileRef = AB10FAF61129338A009EB238 /* N2StepsView.h */; };
 		AB10FB481129338A009EB238 /* N2StepsView.mm in Sources */ = {isa = PBXBuildFile; fileRef = AB10FAF71129338A009EB238 /* N2StepsView.mm */; };
-		AB10FB491129338A009EB238 /* N2Pair.h in Headers */ = {isa = PBXBuildFile; fileRef = AB10FAF91129338A009EB238 /* N2Pair.h */; };
-		AB10FB4A1129338A009EB238 /* N2Pair.mm in Sources */ = {isa = PBXBuildFile; fileRef = AB10FAFA1129338A009EB238 /* N2Pair.mm */; };
-		AB10FB4B1129338A009EB238 /* N2SingletonObject.h in Headers */ = {isa = PBXBuildFile; fileRef = AB10FAFB1129338A009EB238 /* N2SingletonObject.h */; };
-		AB10FB4C1129338A009EB238 /* N2SingletonObject.mm in Sources */ = {isa = PBXBuildFile; fileRef = AB10FAFC1129338A009EB238 /* N2SingletonObject.mm */; };
 		AB10FB4D1129338A009EB238 /* NSTextView+N2.h in Headers */ = {isa = PBXBuildFile; fileRef = AB10FAFE1129338A009EB238 /* NSTextView+N2.h */; };
 		AB10FB4E1129338A009EB238 /* NSTextView+N2.mm in Sources */ = {isa = PBXBuildFile; fileRef = AB10FAFF1129338A009EB238 /* NSTextView+N2.mm */; };
 		AB10FB4F1129338A009EB238 /* NSString+N2.h in Headers */ = {isa = PBXBuildFile; fileRef = AB10FB001129338A009EB238 /* NSString+N2.h */; };
@@ -1183,12 +1167,8 @@
 		AB10FB5C1129338A009EB238 /* NS(Attributed)String+Geometrics.m in Sources */ = {isa = PBXBuildFile; fileRef = AB10FB0D1129338A009EB238 /* NS(Attributed)String+Geometrics.m */; };
 		AB10FB5D1129338A009EB238 /* NSDictionary+N2.h in Headers */ = {isa = PBXBuildFile; fileRef = AB10FB0E1129338A009EB238 /* NSDictionary+N2.h */; };
 		AB10FB5E1129338A009EB238 /* NSDictionary+N2.mm in Sources */ = {isa = PBXBuildFile; fileRef = AB10FB0F1129338A009EB238 /* NSDictionary+N2.mm */; };
-		AB10FB5F1129338A009EB238 /* NSMutableDictionary+N2.h in Headers */ = {isa = PBXBuildFile; fileRef = AB10FB101129338A009EB238 /* NSMutableDictionary+N2.h */; };
-		AB10FB601129338A009EB238 /* NSMutableDictionary+N2.mm in Sources */ = {isa = PBXBuildFile; fileRef = AB10FB111129338A009EB238 /* NSMutableDictionary+N2.mm */; };
 		AB10FB611129338A009EB238 /* NSInvocation+N2.h in Headers */ = {isa = PBXBuildFile; fileRef = AB10FB121129338A009EB238 /* NSInvocation+N2.h */; };
 		AB10FB621129338A009EB238 /* NSInvocation+N2.mm in Sources */ = {isa = PBXBuildFile; fileRef = AB10FB131129338A009EB238 /* NSInvocation+N2.mm */; };
-		AB10FB631129338A009EB238 /* NSURL+N2.h in Headers */ = {isa = PBXBuildFile; fileRef = AB10FB141129338A009EB238 /* NSURL+N2.h */; };
-		AB10FB641129338A009EB238 /* NSURL+N2.mm in Sources */ = {isa = PBXBuildFile; fileRef = AB10FB151129338A009EB238 /* NSURL+N2.mm */; };
 		AB10FB651129338A009EB238 /* NSPanel+N2.h in Headers */ = {isa = PBXBuildFile; fileRef = AB10FB161129338A009EB238 /* NSPanel+N2.h */; };
 		AB10FB661129338A009EB238 /* NSPanel+N2.mm in Sources */ = {isa = PBXBuildFile; fileRef = AB10FB171129338A009EB238 /* NSPanel+N2.mm */; };
 		AB10FB671129338A009EB238 /* NSView+N2.h in Headers */ = {isa = PBXBuildFile; fileRef = AB10FB181129338A009EB238 /* NSView+N2.h */; };
@@ -1288,6 +1268,8 @@
 		AB87FA7C0C06BEB200CD2976 /* nifti1_io.h in Headers */ = {isa = PBXBuildFile; fileRef = AB87FA770C06BEB200CD2976 /* nifti1_io.h */; };
 		AB87FA7D0C06BEB200CD2976 /* znzlib.c in Sources */ = {isa = PBXBuildFile; fileRef = AB87FA780C06BEB200CD2976 /* znzlib.c */; };
 		AB87FA7E0C06BEB200CD2976 /* znzlib.h in Headers */ = {isa = PBXBuildFile; fileRef = AB87FA790C06BEB200CD2976 /* znzlib.h */; };
+		024E56A17A35733DC7FDF830 /* nifti1_io_version.h in Headers */ = {isa = PBXBuildFile; fileRef = F042624425FC7B23F89F8B6C /* nifti1_io_version.h */; };
+		20A51EE8CA072D480AB2233B /* znzlib_version.h in Headers */ = {isa = PBXBuildFile; fileRef = 667EFE2B4DB5E3CA0DEC9447 /* znzlib_version.h */; };
 		AB91224E10DA7199006E0AAB /* BonjourPublisher.h in Headers */ = {isa = PBXBuildFile; fileRef = A99B7E5008858D31004328C0 /* BonjourPublisher.h */; };
 		AB9139B906839830006F3936 /* PIC.icns in Resources */ = {isa = PBXBuildFile; fileRef = AB9139B706839830006F3936 /* PIC.icns */; };
 		AB9139BA06839830006F3936 /* lsm.icns in Resources */ = {isa = PBXBuildFile; fileRef = AB9139B806839830006F3936 /* lsm.icns */; };
@@ -2006,33 +1988,12 @@
 			remoteGlobalIDString = AB724F300ADE6ECB00A212A0;
 			remoteInfo = Decompress;
 		};
-		9920CBEE202A0BA600FE0A2A /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 29B97313FDCFA39411CA2CEA /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = 71E6C0B01FBAD31E00FF75B6;
-			remoteInfo = Submodules;
-		};
 		9937E81A24363D3700768B14 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 29B97313FDCFA39411CA2CEA /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = 71A5232A2021D3420065793A;
 			remoteInfo = OpenSSL;
-		};
-		99C0EE1A202A101000D88E8D /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 29B97313FDCFA39411CA2CEA /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = 9920CBEC202A0BA600FE0A2A;
-			remoteInfo = Grok;
-		};
-		99C0EE1C202A102600D88E8D /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 29B97313FDCFA39411CA2CEA /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = 9920CBEC202A0BA600FE0A2A;
-			remoteInfo = Grok;
 		};
 		99C0EE20202A63EA00D88E8D /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -2151,6 +2112,20 @@
 		5F9A0C000000000000001010 /* AutoCleanupPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AutoCleanupPreview.swift"; sourceTree = "<group>"; };
 		5F9A0C000000000000001020 /* ApplicationMenuLookup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ApplicationMenuLookup.swift"; sourceTree = "<group>"; };
 		24200105551B5A3B9BA97357 /* RetrieveListenerRequirement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RetrieveListenerRequirement.swift"; sourceTree = "<group>"; };
+		3FFA8B8C1A9E4C2C951F8EA6 /* HorosDatabaseServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HorosDatabaseServer.swift"; sourceTree = "<group>"; };
+		86BA53B4117D4B8D82C7E73F /* MetalPerformanceTrace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MetalPerformanceTrace.swift"; sourceTree = "<group>"; };
+		5190DE254EA3F2B1A0E0CC85 /* MetalComputePipelineCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MetalComputePipelineCache.swift"; sourceTree = "<group>"; };
+		6420A1B2C3D4E5F601642001 /* HeaderImagePair.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HeaderImagePair.swift"; sourceTree = "<group>"; };
+		6450A1B2C3D4E5F601645001 /* ArchivedSRImages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ArchivedSRImages.swift"; sourceTree = "<group>"; };
+		6410A1B2C3D4E5F601641001 /* FileIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "FileIdentity.swift"; sourceTree = "<group>"; };
+		6510A1B2C3D4E5F601651001 /* ArchivedSRReference.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ArchivedSRReference.swift"; sourceTree = "<group>"; };
+		6530A1B2C3D4E5F601653001 /* NativeFilterMenus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "NativeFilterMenus.swift"; sourceTree = "<group>"; };
+		6490A1B2C3D4E5F601649001 /* RichTextReportPDF.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RichTextReportPDF.swift"; sourceTree = "<group>"; };
+		5A713B4D7E6C40B4B25D7684 /* Metal4ComputeSubmitter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Metal4ComputeSubmitter.swift"; sourceTree = "<group>"; };
+		1C7147122F514F2FBBF22FB2 /* RetrieveThreadGroup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RetrieveThreadGroup.swift"; sourceTree = "<group>"; };
+		5C865A4695DC4160BE543330 /* SharedDatabaseRequests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SharedDatabaseRequests.swift"; sourceTree = "<group>"; };
+		3AD8DFDDFEE64DAA8785D5E1 /* SharedDatabaseWire.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SharedDatabaseWire.swift"; sourceTree = "<group>"; };
+		1CEE9E5FDEBD4FEEAD43C9CE /* IncomingFolderOnQuit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "IncomingFolderOnQuit.swift"; sourceTree = "<group>"; };
 		1514BB20EAE94E9DBB05640A /* PlanarMetal4Renderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PlanarMetal4Renderer.swift"; sourceTree = "<group>"; };
 		1AB36C38AE644EAF9826D453 /* PreviewWindowing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PreviewWindowing.swift"; sourceTree = "<group>"; };
 		50125FBCD95648129DECDEF0 /* DatabaseTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DatabaseTransport.swift"; sourceTree = "<group>"; };
@@ -2183,7 +2158,6 @@
 		A38400000000000000000001 /* PrintSelection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrintSelection.swift; sourceTree = "<group>"; };
 		A49000000000000000000001 /* SendWhatFilter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SendWhatFilter.swift; sourceTree = "<group>"; };
 		A37100000000000000000001 /* HorosDIMSEPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HorosDIMSEPolicy.swift; sourceTree = "<group>"; };
-		A37200000000000000000001 /* HorosDCMFacade.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HorosDCMFacade.swift; sourceTree = "<group>"; };
 		A37200000000000000000011 /* DCMTagNameAlias.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = DCMTagNameAlias.h; sourceTree = "<group>"; };
 		A37200000000000000000012 /* DCMTagNameAlias.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = DCMTagNameAlias.m; sourceTree = "<group>"; };
 		A15600000000000000000001 /* T2FitMap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = T2FitMap.swift; sourceTree = "<group>"; };
@@ -2644,8 +2618,6 @@
 		59DC28B511C6126B00DAD5B4 /* NSAppleEventDescriptor+N2.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = "NSAppleEventDescriptor+N2.mm"; sourceTree = "<group>"; };
 		59DC28BE11C614A100DAD5B4 /* NSXMLNode+N2.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = "NSXMLNode+N2.h"; sourceTree = "<group>"; };
 		59DC28BF11C614A100DAD5B4 /* NSXMLNode+N2.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = "NSXMLNode+N2.mm"; sourceTree = "<group>"; };
-		59DC28C411C6152400DAD5B4 /* N2CSV.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = N2CSV.h; sourceTree = "<group>"; };
-		59DC28C511C6152400DAD5B4 /* N2CSV.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = N2CSV.mm; sourceTree = "<group>"; };
 		59DC290811C6178500DAD5B4 /* DiscBurningOptions.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = DiscBurningOptions.h; sourceTree = "<group>"; };
 		59DC290911C6178500DAD5B4 /* DiscBurningOptions.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = DiscBurningOptions.mm; sourceTree = "<group>"; };
 		59DC290C11C617A300DAD5B4 /* DicomCompressor.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = DicomCompressor.h; sourceTree = "<group>"; };
@@ -2657,8 +2629,6 @@
 		59E379CE116B293A00E84FE3 /* NSImage+OsiriX.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = "NSImage+OsiriX.m"; sourceTree = "<group>"; };
 		59E379D6116B295B00E84FE3 /* DicomAlbum.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = DicomAlbum.h; sourceTree = "<group>"; };
 		59E379D7116B295B00E84FE3 /* DicomAlbum.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = DicomAlbum.m; sourceTree = "<group>"; };
-		59E5235E12BF5E3E0094E668 /* N2Task.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = N2Task.h; sourceTree = "<group>"; };
-		59E5235F12BF5E3E0094E668 /* N2Task.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = N2Task.mm; sourceTree = "<group>"; };
 		59E52B3512C109B80094E668 /* DicomDatabase.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = DicomDatabase.h; sourceTree = "<group>"; };
 		59E52B3612C109B80094E668 /* DicomDatabase.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = DicomDatabase.mm; sourceTree = "<group>"; };
 		59E8352512F9ABAC006B930A /* N2ManagedDatabase.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = N2ManagedDatabase.h; sourceTree = "<group>"; };
@@ -2685,7 +2655,6 @@
 		5F92186123F455A8000B8754 /* dcmprscu */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.executable"; name = dcmprscu; path = DCMTK/dcmprscu; sourceTree = BUILT_PRODUCTS_DIR; };
 		710EF1F11FD00E28000B555B /* Horos.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = Horos.h; sourceTree = "<group>"; };
 		710EF1F21FD00E29000B555B /* Horos.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = Horos.m; sourceTree = "<group>"; };
-		71125D4A215376FC00EB0AA5 /* PathForImage.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PathForImage.h; sourceTree = "<group>"; };
 		711849751590A377006AB447 /* SMTPClient.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = SMTPClient.h; sourceTree = "<group>"; };
 		711849761590A377006AB447 /* SMTPClient.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = SMTPClient.m; sourceTree = "<group>"; };
 		7128FD751487D54A00AB54A1 /* N2UnclickableSplitView.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = N2UnclickableSplitView.h; sourceTree = "<group>"; };
@@ -3222,10 +3191,6 @@
 		AB10FAF51129338A009EB238 /* N2StepView.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = N2StepView.mm; sourceTree = "<group>"; };
 		AB10FAF61129338A009EB238 /* N2StepsView.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = N2StepsView.h; sourceTree = "<group>"; };
 		AB10FAF71129338A009EB238 /* N2StepsView.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = N2StepsView.mm; sourceTree = "<group>"; };
-		AB10FAF91129338A009EB238 /* N2Pair.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = N2Pair.h; sourceTree = "<group>"; };
-		AB10FAFA1129338A009EB238 /* N2Pair.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = N2Pair.mm; sourceTree = "<group>"; };
-		AB10FAFB1129338A009EB238 /* N2SingletonObject.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = N2SingletonObject.h; sourceTree = "<group>"; };
-		AB10FAFC1129338A009EB238 /* N2SingletonObject.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = N2SingletonObject.mm; sourceTree = "<group>"; };
 		AB10FAFE1129338A009EB238 /* NSTextView+N2.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = "NSTextView+N2.h"; sourceTree = "<group>"; };
 		AB10FAFF1129338A009EB238 /* NSTextView+N2.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = "NSTextView+N2.mm"; sourceTree = "<group>"; };
 		AB10FB001129338A009EB238 /* NSString+N2.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = "NSString+N2.h"; sourceTree = "<group>"; };
@@ -3244,12 +3209,8 @@
 		AB10FB0D1129338A009EB238 /* NS(Attributed)String+Geometrics.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = "NS(Attributed)String+Geometrics.m"; sourceTree = "<group>"; };
 		AB10FB0E1129338A009EB238 /* NSDictionary+N2.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = "NSDictionary+N2.h"; sourceTree = "<group>"; };
 		AB10FB0F1129338A009EB238 /* NSDictionary+N2.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = "NSDictionary+N2.mm"; sourceTree = "<group>"; };
-		AB10FB101129338A009EB238 /* NSMutableDictionary+N2.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = "NSMutableDictionary+N2.h"; sourceTree = "<group>"; };
-		AB10FB111129338A009EB238 /* NSMutableDictionary+N2.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = "NSMutableDictionary+N2.mm"; sourceTree = "<group>"; };
 		AB10FB121129338A009EB238 /* NSInvocation+N2.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = "NSInvocation+N2.h"; sourceTree = "<group>"; };
 		AB10FB131129338A009EB238 /* NSInvocation+N2.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = "NSInvocation+N2.mm"; sourceTree = "<group>"; };
-		AB10FB141129338A009EB238 /* NSURL+N2.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = "NSURL+N2.h"; sourceTree = "<group>"; };
-		AB10FB151129338A009EB238 /* NSURL+N2.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = "NSURL+N2.mm"; sourceTree = "<group>"; };
 		AB10FB161129338A009EB238 /* NSPanel+N2.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = "NSPanel+N2.h"; sourceTree = "<group>"; };
 		AB10FB171129338A009EB238 /* NSPanel+N2.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = "NSPanel+N2.mm"; sourceTree = "<group>"; };
 		AB10FB181129338A009EB238 /* NSView+N2.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = "NSView+N2.h"; sourceTree = "<group>"; };
@@ -3328,6 +3289,8 @@
 		AB87FA770C06BEB200CD2976 /* nifti1_io.h */ = {isa = PBXFileReference; fileEncoding = 30; lastKnownFileType = sourcecode.c.h; path = nifti1_io.h; sourceTree = "<group>"; };
 		AB87FA780C06BEB200CD2976 /* znzlib.c */ = {isa = PBXFileReference; fileEncoding = 30; lastKnownFileType = sourcecode.c.c; path = znzlib.c; sourceTree = "<group>"; };
 		AB87FA790C06BEB200CD2976 /* znzlib.h */ = {isa = PBXFileReference; fileEncoding = 30; lastKnownFileType = sourcecode.c.h; path = znzlib.h; sourceTree = "<group>"; };
+		F042624425FC7B23F89F8B6C /* nifti1_io_version.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = nifti1_io_version.h; sourceTree = "<group>"; };
+		667EFE2B4DB5E3CA0DEC9447 /* znzlib_version.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = znzlib_version.h; sourceTree = "<group>"; };
 		AB9139B706839830006F3936 /* PIC.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = PIC.icns; sourceTree = "<group>"; };
 		AB9139B806839830006F3936 /* lsm.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = lsm.icns; sourceTree = "<group>"; };
 		AB92A3A70642B32D0048DC15 /* SmallLogo.tif */ = {isa = PBXFileReference; lastKnownFileType = image.tiff; path = SmallLogo.tif; sourceTree = "<group>"; };
@@ -4071,7 +4034,6 @@
 				29B97316FDCFA39411CA2CEA /* main.m */,
 				32E422140C97301600E193CA /* altivecFunctions.h */,
 				434B46151A19F2A3008CF8CF /* options.h */,
-				71125D4A215376FC00EB0AA5 /* PathForImage.h */,
 			);
 			name = "Other Sources";
 			sourceTree = "<group>";
@@ -4980,8 +4942,6 @@
 				AB10FAAA11293378009EB238 /* N2Shell.mm */,
 				5997898011B7B461002DB107 /* N2HexadecimalNumberFormatter.h */,
 				5997898111B7B461002DB107 /* N2HexadecimalNumberFormatter.mm */,
-				59E5235E12BF5E3E0094E668 /* N2Task.h */,
-				59E5235F12BF5E3E0094E668 /* N2Task.mm */,
 				59E8352512F9ABAC006B930A /* N2ManagedDatabase.h */,
 				59E8352612F9ABAC006B930A /* N2ManagedDatabase.mm */,
 				59DB270214507ADF00E78E03 /* N2MutableUInteger.h */,
@@ -5074,12 +5034,6 @@
 		AB10FAF81129338A009EB238 /* Stuff */ = {
 			isa = PBXGroup;
 			children = (
-				59DC28C411C6152400DAD5B4 /* N2CSV.h */,
-				59DC28C511C6152400DAD5B4 /* N2CSV.mm */,
-				AB10FAF91129338A009EB238 /* N2Pair.h */,
-				AB10FAFA1129338A009EB238 /* N2Pair.mm */,
-				AB10FAFB1129338A009EB238 /* N2SingletonObject.h */,
-				AB10FAFC1129338A009EB238 /* N2SingletonObject.mm */,
 				59B696621337C957009356ED /* N2DirectoryEnumerator.h */,
 				59B696631337C957009356ED /* N2DirectoryEnumerator.mm */,
 			);
@@ -5135,12 +5089,8 @@
 				84D7BBE2154A941A007B5A86 /* NSNotificationCenter+N2.mm */,
 				596EB3F4118ABBB000880192 /* NSWindow+N2.h */,
 				596EB3F5118ABBB000880192 /* NSWindow+N2.mm */,
-				AB10FB101129338A009EB238 /* NSMutableDictionary+N2.h */,
-				AB10FB111129338A009EB238 /* NSMutableDictionary+N2.mm */,
 				AB10FB121129338A009EB238 /* NSInvocation+N2.h */,
 				AB10FB131129338A009EB238 /* NSInvocation+N2.mm */,
-				AB10FB141129338A009EB238 /* NSURL+N2.h */,
-				AB10FB151129338A009EB238 /* NSURL+N2.mm */,
 				AB10FB161129338A009EB238 /* NSPanel+N2.h */,
 				AB10FB171129338A009EB238 /* NSPanel+N2.mm */,
 				AB10FB181129338A009EB238 /* NSView+N2.h */,
@@ -5252,8 +5202,10 @@
 				AB87FA750C06BEB200CD2976 /* nifti1.h */,
 				AB87FA760C06BEB200CD2976 /* nifti1_io.c */,
 				AB87FA770C06BEB200CD2976 /* nifti1_io.h */,
+				F042624425FC7B23F89F8B6C /* nifti1_io_version.h */,
 				AB87FA780C06BEB200CD2976 /* znzlib.c */,
 				AB87FA790C06BEB200CD2976 /* znzlib.h */,
+				667EFE2B4DB5E3CA0DEC9447 /* znzlib_version.h */,
 			);
 			path = NIfTI_Library;
 			sourceTree = SOURCE_ROOT;
@@ -5821,6 +5773,14 @@
 				5F9A0C000000000000001010 /* AutoCleanupPreview.swift */,
 				5F9A0C000000000000001020 /* ApplicationMenuLookup.swift */,
 				24200105551B5A3B9BA97357 /* RetrieveListenerRequirement.swift */,
+				3FFA8B8C1A9E4C2C951F8EA6 /* HorosDatabaseServer.swift */,
+				86BA53B4117D4B8D82C7E73F /* MetalPerformanceTrace.swift */,
+				5190DE254EA3F2B1A0E0CC85 /* MetalComputePipelineCache.swift */,
+				5A713B4D7E6C40B4B25D7684 /* Metal4ComputeSubmitter.swift */,
+				1C7147122F514F2FBBF22FB2 /* RetrieveThreadGroup.swift */,
+				5C865A4695DC4160BE543330 /* SharedDatabaseRequests.swift */,
+				3AD8DFDDFEE64DAA8785D5E1 /* SharedDatabaseWire.swift */,
+				1CEE9E5FDEBD4FEEAD43C9CE /* IncomingFolderOnQuit.swift */,
 				1514BB20EAE94E9DBB05640A /* PlanarMetal4Renderer.swift */,
 				1AB36C38AE644EAF9826D453 /* PreviewWindowing.swift */,
 				50125FBCD95648129DECDEF0 /* DatabaseTransport.swift */,
@@ -5951,6 +5911,12 @@
 				5F9A0C000000000000001071 /* PagesPDFConversion.swift */,
 				5F9A0C000000000000001153 /* ReportImagePlacement.swift */,
 				5F9A0C000000000000001009 /* ImportedFileNames.swift */,
+				6420A1B2C3D4E5F601642001 /* HeaderImagePair.swift */,
+				6450A1B2C3D4E5F601645001 /* ArchivedSRImages.swift */,
+				6410A1B2C3D4E5F601641001 /* FileIdentity.swift */,
+				6510A1B2C3D4E5F601651001 /* ArchivedSRReference.swift */,
+				6530A1B2C3D4E5F601653001 /* NativeFilterMenus.swift */,
+				6490A1B2C3D4E5F601649001 /* RichTextReportPDF.swift */,
 				5F9A0C000000000000001008 /* VOILookupTable.swift */,
 				5F9A0C000000000000001007 /* H264PictureOrder.swift */,
 				5F9A0C000000000000001006 /* H264StreamDecoder.swift */,
@@ -6488,6 +6454,7 @@
 				7E0B3A4D0675273500908593 /* DCM.h in Headers */,
 				7E0B3A530675273600908593 /* DCMAttribute.h in Headers */,
 				7E0B3A5F0675273C00908593 /* DCMAttributeTag.h in Headers */,
+				A37200000000000000000021 /* DCMTagNameAlias.h in Headers */,
 				7E0B3A6A0675273E00908593 /* DCMDataContainer.h in Headers */,
 				7E0B3A760675274000908593 /* DCMObject.h in Headers */,
 				7E0B3A820675274100908593 /* DCMValueRepresentation.h in Headers */,
@@ -6623,7 +6590,6 @@
 				994FABF71CEBFB8C00980A15 /* MiddleAlignedTextFieldCell.h in Headers */,
 				999B0B631BB70F0800AF018A /* O2HMigrationAssistant.h in Headers */,
 				710EF1F31FD00E29000B555B /* Horos.h in Headers */,
-				71125D4B215376FC00EB0AA5 /* PathForImage.h in Headers */,
 				433F9A8A1A1B7C1C00E52C6C /* vtkHorosFixedPointVolumeRayCastMapper.h in Headers */,
 				A21300000000000000000004 /* VRRayCastZBufferGuard.h in Headers */,
 				994FABF31CEBF25800980A15 /* OnOffSwitchControlCell.h in Headers */,
@@ -6674,6 +6640,8 @@
 				AB87FA7A0C06BEB200CD2976 /* nifti1.h in Headers */,
 				AB87FA7C0C06BEB200CD2976 /* nifti1_io.h in Headers */,
 				AB87FA7E0C06BEB200CD2976 /* znzlib.h in Headers */,
+				024E56A17A35733DC7FDF830 /* nifti1_io_version.h in Headers */,
+				20A51EE8CA072D480AB2233B /* znzlib_version.h in Headers */,
 				ABB230BD0C2F95DD00B38596 /* JPEGExif.h in Headers */,
 				AB64A2DB0C4E0F61000E0981 /* HornRegistration.h in Headers */,
 				CE882AC60C889B6500D4F982 /* XMLRPCMethods.h in Headers */,
@@ -6743,8 +6711,6 @@
 				AB10FB431129338A009EB238 /* N2Steps.h in Headers */,
 				AB10FB451129338A009EB238 /* N2StepView.h in Headers */,
 				AB10FB471129338A009EB238 /* N2StepsView.h in Headers */,
-				AB10FB491129338A009EB238 /* N2Pair.h in Headers */,
-				AB10FB4B1129338A009EB238 /* N2SingletonObject.h in Headers */,
 				AB10FB4D1129338A009EB238 /* NSTextView+N2.h in Headers */,
 				AB10FB4F1129338A009EB238 /* NSString+N2.h in Headers */,
 				AB10FB511129338A009EB238 /* NSImage+N2.h in Headers */,
@@ -6754,9 +6720,7 @@
 				AB10FB591129338A009EB238 /* NSButton+N2.h in Headers */,
 				AB10FB5B1129338A009EB238 /* NS(Attributed)String+Geometrics.h in Headers */,
 				AB10FB5D1129338A009EB238 /* NSDictionary+N2.h in Headers */,
-				AB10FB5F1129338A009EB238 /* NSMutableDictionary+N2.h in Headers */,
 				AB10FB611129338A009EB238 /* NSInvocation+N2.h in Headers */,
-				AB10FB631129338A009EB238 /* NSURL+N2.h in Headers */,
 				AB10FB651129338A009EB238 /* NSPanel+N2.h in Headers */,
 				AB10FB671129338A009EB238 /* NSView+N2.h in Headers */,
 				AB10FB691129338A009EB238 /* NSImageView+N2.h in Headers */,
@@ -6799,7 +6763,6 @@
 				59DC28B211C611F100DAD5B4 /* NSThread+N2.h in Headers */,
 				59DC28B611C6126B00DAD5B4 /* NSAppleEventDescriptor+N2.h in Headers */,
 				59DC28C011C614A100DAD5B4 /* NSXMLNode+N2.h in Headers */,
-				59DC28C611C6152400DAD5B4 /* N2CSV.h in Headers */,
 				59DC290A11C6178500DAD5B4 /* DiscBurningOptions.h in Headers */,
 				59DC290E11C617A300DAD5B4 /* DicomCompressor.h in Headers */,
 				5926824C11CF62DA00CFA81F /* ThreadCell.h in Headers */,
@@ -6989,7 +6952,6 @@
 			);
 			dependencies = (
 				40B0497BA48998F153501DDD /* PBXTargetDependency */,
-				99C0EE1B202A101000D88E8D /* PBXTargetDependency */,
 				71A523192021D2400065793A /* PBXTargetDependency */,
 				71A5234D20220F990065793A /* PBXTargetDependency */,
 				71A5233F2021DB770065793A /* PBXTargetDependency */,
@@ -7024,7 +6986,6 @@
 				AB28B42A05B7921E00A9906C /* Headers */,
 				AB28B42B05B7921E00A9906C /* Resources */,
 				7183153F161065BE0098576F /* Replace Weasis ext-config.properties and zip resources */,
-				59BDEE70117CB3A6007F1F2C /* Zip Horos Launcher into Resources */,
 				AB28B42C05B7921E00A9906C /* Sources */,
 				AB28B42D05B7921E00A9906C /* Frameworks */,
 				CECA66E306CD8C1500D8750E /* Copy Frameworks */,
@@ -7104,7 +7065,6 @@
 			);
 			dependencies = (
 				50777B29AA7A17FDFEACA89B /* PBXTargetDependency */,
-				99C0EE1D202A102600D88E8D /* PBXTargetDependency */,
 				71A5231B2021D2480065793A /* PBXTargetDependency */,
 				71A5230B2021C8A80065793A /* PBXTargetDependency */,
 				71A5234F20220FA10065793A /* PBXTargetDependency */,
@@ -7191,14 +7151,12 @@
 				AB0F3A2B1046BD2B004129DD /* API */,
 				AB724F300ADE6ECB00A212A0 /* Decompress */,
 				4A2F5931078D148300C514A2 /* Unzip Binaries */,
-				BF7486A50CC6AA5C00198387 /* Documentation */,
 				71A5234420220F780065793A /* VTK */,
 				71A523342021DB180065793A /* ITK */,
 				71A522F72021AB220065793A /* GDCM */,
 				71A5230E2021D1B60065793A /* CharLS */,
 				71A5231C2021D2B50065793A /* OpenJPEG */,
 				71A5232A2021D3420065793A /* OpenSSL */,
-				9920CBEC202A0BA600FE0A2A /* Grok */,
 				71E6C0B01FBAD31E00FF75B6 /* Submodules */,
 				5F1E2A682411AE7E00365A0C /* DCMTK */,
 				F35B0D7C289535B6008ABE3E /* FeedbackReporter */,
@@ -7647,26 +7605,28 @@
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			name = "Unzip Binaries";
+			outputPaths = (
+				"$(SRCROOT)/Binaries/DB_Previous_Models/OsiriXDB_Previous_DataModel1.1.mom",
+				"$(SRCROOT)/Binaries/DB_Previous_Models/OsiriXDB_Previous_DataModel1.5.mom",
+				"$(SRCROOT)/Binaries/DB_Previous_Models/OsiriXDB_Previous_DataModel2.0.mom",
+				"$(SRCROOT)/Binaries/DB_Previous_Models/OsiriXDB_Previous_DataModel2.1.mom",
+				"$(SRCROOT)/Binaries/DB_Previous_Models/OsiriXDB_Previous_DataModel2.2.mom",
+				"$(SRCROOT)/Binaries/DB_Previous_Models/OsiriXDB_Previous_DataModel2.3.mom",
+				"$(SRCROOT)/Binaries/DB_Previous_Models/OsiriXDB_Previous_DataModel2.4.mom",
+				"$(SRCROOT)/Binaries/PAGES",
+				"$(SRCROOT)/Binaries/OsiriX Report.template",
+				"$(SRCROOT)/Binaries/3DconnexionClient.framework",
+				"$(SRCROOT)/Binaries/dciodvfy",
+				"$(SRCROOT)/Binaries/Ming/libfreetypeOsiriX.a",
+				"$(SRCROOT)/Binaries/Ming/libgifOsiriX.a",
+				"$(SRCROOT)/Binaries/Ming/libmingOsiriX.a",
+				"$(SRCROOT)/Binaries/Ming/libpng12OsiriX.a",
+				"$(SRCROOT)/Binaries/homephone.framework",
+				"$(SRCROOT)/Binaries/weasis",
+			);
 			shellPath = /bin/sh;
 			shellScript = (
 				"sh \"Horos/Scripts/Horos/Unzip.sh\"",
-				"",
-			);
-		};
-		59BDEE70117CB3A6007F1F2C /* Zip Horos Launcher into Resources */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			name = "Zip Horos Launcher into Resources";
-			shellPath = /bin/sh;
-			shellScript = (
-				"#cd \"${BUILT_PRODUCTS_DIR}\"",
-				"#product=\"Horos Launcher.app\"",
-				"#dest=\"${UNLOCALIZED_RESOURCES_FOLDER_PATH}/Horos Launcher.zip\"",
-				"#rm -f \"$dest\"",
-				"#zip -qr \"$dest\" \"$product\"",
-				"",
-				"#product=\"$SRCROOT/Binaries/Horos Launcher.zip\"",
-				"#cp \"$product\" \"${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"",
 				"",
 			);
 		};
@@ -7901,26 +7861,6 @@
 				"",
 			);
 		};
-		9920CBEF202A0BA600FE0A2A /* CMake */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			name = CMake;
-			shellPath = /bin/sh;
-			shellScript = (
-				"sh \"Horos/Scripts/$TARGET_NAME/CMake.sh\"",
-				"",
-			);
-		};
-		9920CBF0202A0BA600FE0A2A /* Make */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			name = Make;
-			shellPath = /bin/sh;
-			shellScript = (
-				"sh \"Horos/Scripts/$TARGET_NAME/Make.sh\"",
-				"",
-			);
-		};
 		AB0F3A3F1046BE51004129DD /* Copy Headers and Create Horos.h */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
@@ -7947,16 +7887,6 @@
 				"#cp -f \"$PROJECT_DIR/Binaries/odt2pdf/build/odt2pdf\" \"$BUILT_PRODUCTS_DIR/$CONTENTS_FOLDER_PATH/MacOS/\"",
 				"exit 0",
 				"",
-				"",
-			);
-		};
-		BF7486A40CC6AA5C00198387 /* ShellScript */ = {
-			isa = PBXShellScriptBuildPhase;
-			shellPath = /bin/sh;
-			shellScript = (
-				"/Applications/Doxygen.app/Contents/Resources/doxygen Doxyfile-horos",
-				"/Applications/Doxygen.app/Contents/Resources/doxygen Doxyfile-dcmframework",
-				"exit 0",
 				"",
 			);
 		};
@@ -8112,6 +8042,14 @@
 				5F9A0C000000000000002010 /* AutoCleanupPreview.swift in Sources */,
 				5F9A0C000000000000002020 /* ApplicationMenuLookup.swift in Sources */,
 				99E3A59DBF64555CAB4F65B6 /* RetrieveListenerRequirement.swift in Sources */,
+				3F72B2C9BBF445C2B9B3EA37 /* HorosDatabaseServer.swift in Sources */,
+				2429C3B9C69D41568D8EFB9E /* MetalPerformanceTrace.swift in Sources */,
+				2354B2BCE262DC6C14F8C07B /* MetalComputePipelineCache.swift in Sources */,
+				0355F087C5A31ACC3FF6054D /* Metal4ComputeSubmitter.swift in Sources */,
+				75AC1EF2073C4BEFAD382458 /* RetrieveThreadGroup.swift in Sources */,
+				A06FEEF9AF1A46F591548F98 /* SharedDatabaseRequests.swift in Sources */,
+				AA368A526B194636BB81CBAC /* SharedDatabaseWire.swift in Sources */,
+				F7E98C7044B04F9EAAC15419 /* IncomingFolderOnQuit.swift in Sources */,
 				75DA7190BC6544B9A5D36352 /* PlanarMetal4Renderer.swift in Sources */,
 				128CE698F7BC430BA73251E3 /* PreviewWindowing.swift in Sources */,
 				16901A785077478A80E502F8 /* DatabaseTransport.swift in Sources */,
@@ -8158,7 +8096,6 @@
 				A38400000000000000000002 /* PrintSelection.swift in Sources */,
 				A49000000000000000000002 /* SendWhatFilter.swift in Sources */,
 				A37100000000000000000002 /* HorosDIMSEPolicy.swift in Sources */,
-				A37200000000000000000002 /* HorosDCMFacade.swift in Sources */,
 				A15600000000000000000002 /* T2FitMap.swift in Sources */,
 				A15600000000000000000013 /* ViewerController+T2FitMap.m in Sources */,
 				A24200000000000000000002 /* ROIEnhancement.swift in Sources */,
@@ -8236,6 +8173,12 @@
 				5F9A0C000000000000002071 /* PagesPDFConversion.swift in Sources */,
 				5F9A0C000000000000002153 /* ReportImagePlacement.swift in Sources */,
 				5F9A0C000000000000002009 /* ImportedFileNames.swift in Sources */,
+				6420A1B2C3D4E5F601642002 /* HeaderImagePair.swift in Sources */,
+				6450A1B2C3D4E5F601645002 /* ArchivedSRImages.swift in Sources */,
+				6410A1B2C3D4E5F601641002 /* FileIdentity.swift in Sources */,
+				6510A1B2C3D4E5F601651002 /* ArchivedSRReference.swift in Sources */,
+				6530A1B2C3D4E5F601653002 /* NativeFilterMenus.swift in Sources */,
+				6490A1B2C3D4E5F601649002 /* RichTextReportPDF.swift in Sources */,
 				5F9A0C000000000000002008 /* VOILookupTable.swift in Sources */,
 				5F9A0C000000000000002007 /* H264PictureOrder.swift in Sources */,
 				5F9A0C000000000000002006 /* H264StreamDecoder.swift in Sources */,
@@ -8528,8 +8471,6 @@
 				AB10FB441129338A009EB238 /* N2Steps.mm in Sources */,
 				AB10FB461129338A009EB238 /* N2StepView.mm in Sources */,
 				AB10FB481129338A009EB238 /* N2StepsView.mm in Sources */,
-				AB10FB4A1129338A009EB238 /* N2Pair.mm in Sources */,
-				AB10FB4C1129338A009EB238 /* N2SingletonObject.mm in Sources */,
 				AB10FB4E1129338A009EB238 /* NSTextView+N2.mm in Sources */,
 				AB10FB501129338A009EB238 /* NSString+N2.mm in Sources */,
 				AB10FB521129338A009EB238 /* NSImage+N2.mm in Sources */,
@@ -8539,9 +8480,7 @@
 				AB10FB5A1129338A009EB238 /* NSButton+N2.mm in Sources */,
 				AB10FB5C1129338A009EB238 /* NS(Attributed)String+Geometrics.m in Sources */,
 				AB10FB5E1129338A009EB238 /* NSDictionary+N2.mm in Sources */,
-				AB10FB601129338A009EB238 /* NSMutableDictionary+N2.mm in Sources */,
 				AB10FB621129338A009EB238 /* NSInvocation+N2.mm in Sources */,
-				AB10FB641129338A009EB238 /* NSURL+N2.mm in Sources */,
 				AB10FB661129338A009EB238 /* NSPanel+N2.mm in Sources */,
 				AB10FB681129338A009EB238 /* NSView+N2.mm in Sources */,
 				AB10FB6A1129338A009EB238 /* NSImageView+N2.mm in Sources */,
@@ -8584,7 +8523,6 @@
 				59DC28B311C611F100DAD5B4 /* NSThread+N2.mm in Sources */,
 				59DC28B711C6126B00DAD5B4 /* NSAppleEventDescriptor+N2.mm in Sources */,
 				59DC28C111C614A100DAD5B4 /* NSXMLNode+N2.mm in Sources */,
-				59DC28C711C6152400DAD5B4 /* N2CSV.mm in Sources */,
 				59DC290B11C6178500DAD5B4 /* DiscBurningOptions.mm in Sources */,
 				59DC290F11C617A300DAD5B4 /* DicomCompressor.mm in Sources */,
 				5926824D11CF62DA00CFA81F /* ThreadCell.mm in Sources */,
@@ -8615,7 +8553,6 @@
 				597BB93212A7E0F200D0A172 /* NSUserDefaults+OsiriX.mm in Sources */,
 				590A3DCE12A92920004581C2 /* WebPortalDatabase.mm in Sources */,
 				59EBFDDD12BA5A1B00809C61 /* WebPortal+Email+Log.mm in Sources */,
-				59E5236012BF5E440094E668 /* N2Task.mm in Sources */,
 				59E52B3812C109B80094E668 /* DicomDatabase.mm in Sources */,
 				599115F012D7224A00924B5C /* BrowserController.m in Sources */,
 				5969033E12DDE30800379E41 /* WebPortalConnection+Data.mm in Sources */,
@@ -8922,25 +8859,10 @@
 			target = AB724F300ADE6ECB00A212A0 /* Decompress */;
 			targetProxy = 71C99EA01D19A80A00208F3B /* PBXContainerItemProxy */;
 		};
-		9920CBED202A0BA600FE0A2A /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = 71E6C0B01FBAD31E00FF75B6 /* Submodules */;
-			targetProxy = 9920CBEE202A0BA600FE0A2A /* PBXContainerItemProxy */;
-		};
 		9937E81B24363D3700768B14 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 71A5232A2021D3420065793A /* OpenSSL */;
 			targetProxy = 9937E81A24363D3700768B14 /* PBXContainerItemProxy */;
-		};
-		99C0EE1B202A101000D88E8D /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = 9920CBEC202A0BA600FE0A2A /* Grok */;
-			targetProxy = 99C0EE1A202A101000D88E8D /* PBXContainerItemProxy */;
-		};
-		99C0EE1D202A102600D88E8D /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = 9920CBEC202A0BA600FE0A2A /* Grok */;
-			targetProxy = 99C0EE1C202A102600D88E8D /* PBXContainerItemProxy */;
 		};
 		99C0EE21202A63EA00D88E8D /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -9816,7 +9738,6 @@
 					"$CONFIGURATION_TEMP_DIR/GDCM.build/Install/wlib",
 					"$CONFIGURATION_TEMP_DIR/ITK.build/Install/wlib",
 					"$CONFIGURATION_TEMP_DIR/VTK.build/Install/wlib",
-					"$CONFIGURATION_TEMP_DIR/Grok.build/Install/lib",
 					"$CONFIGURATION_TEMP_DIR/CharLS.build/Install/lib",
 					"/opt/homebrew/lib",
 					"$(PROJECT_DIR)/DICOMPrint",
@@ -9867,7 +9788,6 @@
 				SYSTEM_HEADER_SEARCH_PATHS = (
 					"$CONFIGURATION_TEMP_DIR/OpenJPEG.build/Install/include",
 					"$CONFIGURATION_TEMP_DIR/OpenJPEG.build/Install/include/OpenJPEG",
-					"$CONFIGURATION_TEMP_DIR/Grok.build/Install/include",
 					"$CONFIGURATION_TEMP_DIR/GDCM.build/Install/include",
 					"$CONFIGURATION_TEMP_DIR/CharLS.build/Install/include",
 					"$CONFIGURATION_TEMP_DIR/ITK.build/Install/include",
@@ -9916,14 +9836,12 @@
 					"$(CONFIGURATION_TEMP_DIR)/DCMTK.build/Install/include",
 					$CONFIGURATION_TEMP_DIR/OpenJPEG.build/Install/include,
 					$CONFIGURATION_TEMP_DIR/OpenJPEG.build/Install/include/OpenJPEG,
-					$CONFIGURATION_TEMP_DIR/Grok.build/Install/include,
 					$CONFIGURATION_TEMP_DIR/CharLS.build/Install/include,
 				);
 				INFOPLIST_FILE = "DCM Framework/Info.plist";
 				INSTALL_PATH = "@executable_path/../Frameworks";
 				LIBRARY_SEARCH_PATHS = (
 					"$CONFIGURATION_TEMP_DIR/OpenJPEG.build/Install/lib",
-					"$CONFIGURATION_TEMP_DIR/Grok.build/Install/lib",
 					"$CONFIGURATION_TEMP_DIR/CharLS.build/Install/lib",
 					"$(inherited)",
 					"$(CONFIGURATION_TEMP_DIR)/DCMTK.build/Install/lib",
@@ -9954,16 +9872,6 @@
 			};
 			name = Release;
 		};
-		43E98D201A32BF6A001B9E51 /* Release configuration for PBXAggregateTarget "Documentation" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CLANG_ENABLE_OBJC_WEAK = YES;
-				DEAD_CODE_STRIPPING = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = NO;
-				PRODUCT_NAME = Documentation;
-			};
-			name = Release;
-		};
 		43E98D211A32BF6A001B9E51 /* Release configuration for PBXNativeTarget "Decompress" */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = F3C3F0702893A429004B2F61 /* Horos.xcconfig */;
@@ -9985,7 +9893,6 @@
 					"$(inherited)",
 					"Binaries/Ming",
 					"$CONFIGURATION_TEMP_DIR/GDCM.build/Install/wlib",
-					"$CONFIGURATION_TEMP_DIR/Grok.build/Install/lib",
 					"$CONFIGURATION_TEMP_DIR/CharLS.build/Install/lib",
 					"$CONFIGURATION_TEMP_DIR/OpenJPEG.build/Install/lib",
 					"$(CONFIGURATION_TEMP_DIR)/OpenSSL.build/Install/lib",
@@ -10023,7 +9930,6 @@
 				SYSTEM_HEADER_SEARCH_PATHS = (
 					"$CONFIGURATION_TEMP_DIR/OpenJPEG.build/Install/include",
 					"$CONFIGURATION_TEMP_DIR/OpenJPEG.build/Install/include/OpenJPEG",
-					"$CONFIGURATION_TEMP_DIR/Grok.build/Install/include",
 					"$CONFIGURATION_TEMP_DIR/CharLS.build/Install/include",
 					"$CONFIGURATION_TEMP_DIR/GDCM.build/Install/include",
 					"$CONFIGURATION_TEMP_DIR/VTK.build/Install/include",
@@ -10252,14 +10158,12 @@
 					"$(CONFIGURATION_TEMP_DIR)/DCMTK.build/Install/include",
 					$CONFIGURATION_TEMP_DIR/OpenJPEG.build/Install/include,
 					$CONFIGURATION_TEMP_DIR/OpenJPEG.build/Install/include/OpenJPEG,
-					$CONFIGURATION_TEMP_DIR/Grok.build/Install/include,
 					$CONFIGURATION_TEMP_DIR/CharLS.build/Install/include,
 				);
 				INFOPLIST_FILE = "DCM Framework/Info.plist";
 				INSTALL_PATH = "@executable_path/../Frameworks";
 				LIBRARY_SEARCH_PATHS = (
 					"$CONFIGURATION_TEMP_DIR/OpenJPEG.build/Install/lib",
-					"$CONFIGURATION_TEMP_DIR/Grok.build/Install/lib",
 					"$CONFIGURATION_TEMP_DIR/CharLS.build/Install/lib",
 					"$(inherited)",
 					"$(CONFIGURATION_TEMP_DIR)/DCMTK.build/Install/lib",
@@ -10322,7 +10226,6 @@
 					"$CONFIGURATION_TEMP_DIR/GDCM.build/Install/wlib",
 					"$CONFIGURATION_TEMP_DIR/ITK.build/Install/wlib",
 					"$CONFIGURATION_TEMP_DIR/VTK.build/Install/wlib",
-					"$CONFIGURATION_TEMP_DIR/Grok.build/Install/lib",
 					"$CONFIGURATION_TEMP_DIR/CharLS.build/Install/lib",
 					"/opt/homebrew/lib",
 					"$(PROJECT_DIR)/DICOMPrint",
@@ -10374,7 +10277,6 @@
 				SYSTEM_HEADER_SEARCH_PATHS = (
 					"$CONFIGURATION_TEMP_DIR/OpenJPEG.build/Install/include",
 					"$CONFIGURATION_TEMP_DIR/OpenJPEG.build/Install/include/OpenJPEG",
-					"$CONFIGURATION_TEMP_DIR/Grok.build/Install/include",
 					"$CONFIGURATION_TEMP_DIR/GDCM.build/Install/include",
 					"$CONFIGURATION_TEMP_DIR/CharLS.build/Install/include",
 					"$CONFIGURATION_TEMP_DIR/ITK.build/Install/include",
@@ -10467,26 +10369,6 @@
 			};
 			name = Debug;
 		};
-		9920CBF2202A0BA600FE0A2A /* Debug configuration for PBXAggregateTarget "Grok" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CLANG_ENABLE_OBJC_WEAK = YES;
-				DEAD_CODE_STRIPPING = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = NO;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-			};
-			name = Debug;
-		};
-		9920CBF3202A0BA600FE0A2A /* Release configuration for PBXAggregateTarget "Grok" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CLANG_ENABLE_OBJC_WEAK = YES;
-				DEAD_CODE_STRIPPING = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = NO;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-			};
-			name = Release;
-		};
 		AB0F3A2E1046BD2D004129DD /* Debug configuration for PBXNativeTarget "API" */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = F3C3F0702893A429004B2F61 /* Horos.xcconfig */;
@@ -10529,7 +10411,6 @@
 					"$(inherited)",
 					"Binaries/Ming",
 					"$CONFIGURATION_TEMP_DIR/GDCM.build/Install/wlib",
-					"$CONFIGURATION_TEMP_DIR/Grok.build/Install/lib",
 					"$CONFIGURATION_TEMP_DIR/CharLS.build/Install/lib",
 					"$CONFIGURATION_TEMP_DIR/OpenJPEG.build/Install/lib",
 					"$(CONFIGURATION_TEMP_DIR)/OpenSSL.build/Install/lib",
@@ -10568,7 +10449,6 @@
 				SYSTEM_HEADER_SEARCH_PATHS = (
 					"$CONFIGURATION_TEMP_DIR/OpenJPEG.build/Install/include",
 					"$CONFIGURATION_TEMP_DIR/OpenJPEG.build/Install/include/OpenJPEG",
-					"$CONFIGURATION_TEMP_DIR/Grok.build/Install/include",
 					"$CONFIGURATION_TEMP_DIR/CharLS.build/Install/include",
 					"$CONFIGURATION_TEMP_DIR/GDCM.build/Install/include",
 					"$CONFIGURATION_TEMP_DIR/VTK.build/Install/include",
@@ -10585,16 +10465,6 @@
 					"$(inherited)",
 					"$(PROJECT_DIR)/Horos/Sources",
 				);
-			};
-			name = Debug;
-		};
-		BF7486A60CC6AA5D00198387 /* Debug configuration for PBXAggregateTarget "Documentation" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CLANG_ENABLE_OBJC_WEAK = YES;
-				DEAD_CODE_STRIPPING = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = NO;
-				PRODUCT_NAME = Documentation;
 			};
 			name = Debug;
 		};
@@ -10733,14 +10603,6 @@
 			);
 			defaultConfigurationName = Release;
 		};
-		9920CBF1202A0BA600FE0A2A /* Build configuration list for PBXAggregateTarget "Grok" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				9920CBF2202A0BA600FE0A2A /* Debug configuration for PBXAggregateTarget "Grok" */,
-				9920CBF3202A0BA600FE0A2A /* Release configuration for PBXAggregateTarget "Grok" */,
-			);
-			defaultConfigurationName = Release;
-		};
 		AB0F3A321046BD2D004129DD /* Build configuration list for PBXNativeTarget "API" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -10754,14 +10616,6 @@
 			buildConfigurations = (
 				AB724FF40ADE6ECB00A212A0 /* Debug configuration for PBXNativeTarget "Decompress" */,
 				43E98D211A32BF6A001B9E51 /* Release configuration for PBXNativeTarget "Decompress" */,
-			);
-			defaultConfigurationName = Release;
-		};
-		BF7486AA0CC6AA7C00198387 /* Build configuration list for PBXAggregateTarget "Documentation" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				BF7486A60CC6AA5D00198387 /* Debug configuration for PBXAggregateTarget "Documentation" */,
-				43E98D201A32BF6A001B9E51 /* Release configuration for PBXAggregateTarget "Documentation" */,
 			);
 			defaultConfigurationName = Release;
 		};

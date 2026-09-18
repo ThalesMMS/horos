@@ -41,7 +41,6 @@
 #include "options.h"
 
 extern unsigned char* compressJPEG(int inQuality, unsigned char* inImageBuffP, int inImageHeight, int inImageWidth, int monochrome, int *destSize);
-extern NSRecursiveLock* PapyrusLock;
 
 @implementation NSImage (OsiriX)
 

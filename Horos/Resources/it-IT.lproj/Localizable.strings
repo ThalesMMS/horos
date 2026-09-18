@@ -2883,3 +2883,10 @@
 "The files were not sent to the shared database. Check the other computer and send them again." = "I file non sono stati inviati al database condiviso. Verificare l’altro computer e inviarli di nuovo.";
 "The shared-database operation did not complete. Check the other computer before repeating it." = "L’operazione sul database condiviso non è stata completata. Verificare l’altro computer prima di ripeterla.";
 "This graphics device has no Metal 4; the viewer is using the existing renderer." = "Questa scheda grafica non dispone di Metal 4; il visualizzatore usa il renderer esistente.";
+"The remote database index is 4 GB or larger and cannot be transferred by database sharing." = "L’indice del database remoto è di 4 GB o più e non può essere trasferito con la condivisione del database.";
+"The report could not be converted to PDF. The original report has been left unchanged." = "Non è stato possibile convertire il report in PDF. Il report originale non è stato modificato.";
+"The report could not be read as %@: %@" = "Non è stato possibile leggere il report come %@: %@";
+"The report could not be laid out in pages: part of it does not fit a page." = "Non è stato possibile impaginare il report: una parte non entra in una pagina.";
+"The PDF could not be created at %@." = "Non è stato possibile creare il PDF in %@.";
+"The PDF written for the report is not readable: %@" = "Il PDF scritto per il report non è leggibile: %@";
+"The PDF could not be saved at %@: %@" = "Non è stato possibile salvare il PDF in %@: %@";

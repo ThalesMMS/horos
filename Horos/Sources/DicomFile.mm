@@ -88,7 +88,6 @@
 #include "Horos.h"
 
 extern NSString * convertDICOM( NSString *inputfile);
-extern NSRecursiveLock *PapyrusLock;
 
 static BOOL DEFAULTSSET = NO;
 static BOOL COMMENTSAUTOFILL = NO, COMMENTSFROMDICOMFILES = NO;
@@ -1829,6 +1828,34 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
 
 #include "Analyze.h"
 
+// The bytes of image data an Analyze 7.5 header needs for what DCMPix reads of
+// it: dim[3] frames of dim[1] x dim[2] voxels from the start of the .img, at the
+// width its datatype gives. -1 for a header with no columns or rows, 0 for a
+// datatype DCMPix does not read, whose length this cannot judge. The header was
+// all this looked at, so an .img cut short - an interrupted copy - still became
+// a series whose frames were read past the end of the file.
+static long long HorosAnalyzeImageBytes(const struct dsr *analyze, BOOL swapped)
+{
+    short columns = analyze->dime.dim[ 1], rows = analyze->dime.dim[ 2], frames = analyze->dime.dim[ 3];
+    short datatype = analyze->dime.datatype;
+    if( swapped)
+    {
+        columns = Endian16_Swap( columns); rows = Endian16_Swap( rows);
+        frames = Endian16_Swap( frames); datatype = Endian16_Swap( datatype);
+    }
+    if( columns <= 0 || rows <= 0)
+        return -1;
+    long long bytesPerVoxel = 0;
+    switch( datatype)
+    {
+        case 2: bytesPerVoxel = 1; break;
+        case 4: bytesPerVoxel = 2; break;
+        case 8: case 16: bytesPerVoxel = 4; break;
+        case 64: bytesPerVoxel = 8; break;
+    }
+    return (long long) columns * rows * (frames > 0 ? frames : 1) * bytesPerVoxel;
+}
+
 -(short) getAnalyze
 {
     struct dsr  *Analyze;
@@ -1847,11 +1874,36 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
                 
                 Analyze = (struct dsr*) [file bytes];
                 
+                short endian = Analyze->dime.dim[ 0];		// dim[0]
+                if ((endian < 0) || (endian > 15))
+                {
+                    intelByteOrder = YES;
+                }
+                
+                NSString *imagePath = [[filePath stringByDeletingPathExtension] stringByAppendingPathExtension:@"img"];
+                long long needed = HorosAnalyzeImageBytes( Analyze, intelByteOrder);
+                unsigned long long available = [[[NSFileManager defaultManager] attributesOfItemAtPath:imagePath error:NULL] fileSize];
+                if( needed < 0 || available < (unsigned long long) needed)
+                {
+                    NSLog( @"---- Analyze: %@ describes %lld bytes of image data and %@ holds %llu; not indexed",
+                          [filePath lastPathComponent], needed, [imagePath lastPathComponent], available);
+                    [fileType release];
+                    fileType = nil;
+                    return -1;
+                }
+                
                 name = [[NSString alloc] initWithCString: replaceBadCharacter(Analyze->hk.db_name, NSISOLatin1StringEncoding) encoding: NSASCIIStringEncoding];
                 patientID = [[NSString alloc] initWithString:name];
-                studyID = [[NSString alloc] initWithString:name];
-                self.serieID = [[filePath lastPathComponent] stringByDeletingPathExtension];
-                imageID = [[NSString alloc] initWithString:name];
+                // The study, the series and the image are this file's own: named after the dataset and
+                // the file alone, two files called alike were one series (#641).
+#ifndef DECOMPRESS_APP
+                NSString *fileKey = [HorosFileIdentity keyForPath: filePath];
+#else
+                NSString *fileKey = @"";
+#endif
+                studyID = [[NSString alloc] initWithFormat:@"%@-%@", name, fileKey];
+                self.serieID = [NSString stringWithFormat:@"%@-%@", [[filePath lastPathComponent] stringByDeletingPathExtension], fileKey];
+                imageID = [[NSString alloc] initWithFormat:@"%@-%@", name, fileKey];
                 study = [[NSString alloc] initWithString:[[filePath lastPathComponent] stringByDeletingPathExtension]];
                 serie = [[NSString alloc] initWithString:[[filePath lastPathComponent] stringByDeletingPathExtension]];
                 Modality = [[NSString alloc] initWithString:@"ANZ"];
@@ -1859,12 +1911,6 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
                 date = [[Horos dateWithString:[NSString stringWithCString: Analyze->hist.exp_date encoding: NSISOLatin1StringEncoding] calendarFormat:@"%Y%m%d"] retain];
                 if(date == nil) date = [[[[NSFileManager defaultManager] attributesOfItemAtPath: filePath error: nil] fileCreationDate] retain];
                 if( date == nil) date = [[NSDate date] retain];
-                
-                short endian = Analyze->dime.dim[ 0];		// dim[0]
-                if ((endian < 0) || (endian > 15))
-                {
-                    intelByteOrder = YES;
-                }
                 
                 height = Analyze->dime.dim[ 1];
                 if( intelByteOrder) height = Endian16_Swap( height);
@@ -1901,6 +1947,23 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
 }
 
 #ifndef DECOMPRESS_APP
+// The bytes a NIfTI-1 header says its voxels need, counted as nifti1_io counts
+// them before reading: every dimension up to dim[0], one that is not positive
+// past dim[1] taken as 1. 0 when the header describes no readable data, which
+// nifti_image_read refuses too (dim[0] outside 1...7, dim[1] not positive, a
+// datatype without a size).
+static unsigned long long HorosNIfTIVoxelBytes(const struct nifti_1_header *header)
+{
+    int bytesPerVoxel = 0, swapSize = 0;
+    nifti_datatype_sizes( header->datatype, &bytesPerVoxel, &swapSize);
+    if( bytesPerVoxel <= 0 || header->dim[ 0] < 1 || header->dim[ 0] > 7 || header->dim[ 1] <= 0)
+        return 0;
+    unsigned long long voxels = 1;
+    for( int axis = 1; axis <= header->dim[ 0]; axis++)
+        voxels *= (unsigned long long) (header->dim[ axis] > 0 ? header->dim[ axis] : 1);
+    return voxels * bytesPerVoxel;
+}
+
 -(short) getNIfTI
 {
     // NIfTI support developed by Zack Mahdavi at the Center for Neurological Imaging, a division of Harvard Medical School
@@ -1920,22 +1983,53 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
         if( NIfTI == nil)
             return -1;
         
-        fileType = [@"NIfTI" retain];
+        NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfItemAtPath:filePath error:NULL];
         
         if( (NIfTI->magic[0] == 'n') &&
            (NIfTI->magic[1] == 'i' || NIfTI->magic[1] == '+') &&
            (NIfTI->magic[2] == '1') &&
            (NIfTI->magic[3] == '\0'))
         {
+            // nifti_read_header reads the header and nothing after it, so a
+            // truncated file - an interrupted transfer, a full disk - passed here
+            // as a series of dim[3] frames, and opening it crashed the viewer.
+            // The voxels have to be there, where nifti1_io reads them: from
+            // vox_offset but not before the 348 header bytes in a .nii, from
+            // vox_offset (or the start, if it is negative) in the .img of a pair.
+            unsigned long long needed = HorosNIfTIVoxelBytes( NIfTI), available = 0;
+            long long offset = (long long) NIfTI->vox_offset;
+            if( NIfTI->magic[1] == '+')
+            {
+                if( offset < 348) offset = 348;
+                available = [attributes fileSize];
+            }
+            else
+            {
+                if( offset < 0) offset = 0;
+                available = [[[NSFileManager defaultManager] attributesOfItemAtPath:[[filePath stringByDeletingPathExtension] stringByAppendingPathExtension:@"img"] error:NULL] fileSize];
+            }
+            if( needed == 0 || available < (unsigned long long) offset + needed)
+            {
+                NSLog( @"---- NIfTI: %@ describes %llu bytes of voxels from byte %lld and holds %llu; not indexed",
+                      [filePath lastPathComponent], needed, offset, available);
+                free( NIfTI);
+                return -1;
+            }
+            
+            fileType = [@"NIfTI" retain];
+            
             name = [[DicomFile NSreplaceBadCharacter: [filePath lastPathComponent]] retain];
             patientID = [[NSString alloc] initWithString:name];
-            studyID = [[NSString alloc] initWithString:name];
-            self.serieID = [[filePath lastPathComponent] stringByDeletingPathExtension];
-            imageID = [[NSString alloc] initWithString:name];
+            // The study, the series and the image are this file's own: named after the file alone,
+            // subject1/brain.nii and subject2/brain.nii were one series (#641).
+            NSString *fileKey = [HorosFileIdentity keyForPath: filePath];
+            studyID = [[NSString alloc] initWithFormat:@"%@-%@", name, fileKey];
+            self.serieID = [NSString stringWithFormat:@"%@-%@", [[filePath lastPathComponent] stringByDeletingPathExtension], fileKey];
+            imageID = [[NSString alloc] initWithFormat:@"%@-%@", name, fileKey];
             study = [[NSString alloc] initWithString:[[filePath lastPathComponent] stringByDeletingPathExtension]];
             serie = [[NSString alloc] initWithString:[[filePath lastPathComponent] stringByDeletingPathExtension]];
             Modality = [[NSString alloc] initWithString:@"NIfTI"];
-            date = [[[[NSFileManager defaultManager] attributesOfItemAtPath:filePath error:NULL] fileCreationDate] retain];
+            date = [[attributes fileCreationDate] retain];
             if( date == nil) date = [[NSDate date] retain];
             
             width = NIfTI->dim[ 1];
@@ -1962,6 +2056,8 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
             
             if( name != nil && studyID != nil && self.serieID != nil && imageID != nil)
             {
+                // The header is the caller's to free, on this path as on the others.
+                free( NIfTI);
                 return 0;   // success
             }
         }
@@ -1986,9 +2082,24 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
     
     if([self isNIfTIFile: file])
     {
-        NIfTI = nifti_image_read( [file UTF8String], 0);
+        // nifti_image_read refuses a header it cannot use - no datatype, a bad
+        // dim[1] - and nifti_image_to_ascii then answers NULL, which was handed to
+        // -initWithCString:encoding:. Both results are the caller's to free.
+        NIfTI = nifti_image_read( [file fileSystemRepresentation], 0);
+        char *ascii = NIfTI ? nifti_image_to_ascii(NIfTI) : NULL;
         
-        returnString = [[[NSString alloc] initWithCString:nifti_image_to_ascii(NIfTI) encoding:NSUTF8StringEncoding] autorelease];
+        if( ascii == NULL)
+        {
+            NSLog( @"---- NIfTI: the header of %@ cannot be described", [file lastPathComponent]);
+            if( NIfTI) nifti_image_free( NIfTI);
+            return xmlDoc;
+        }
+        
+        // descrip and aux_file are bytes, not necessarily UTF-8.
+        returnString = [[[NSString alloc] initWithCString:ascii encoding:NSUTF8StringEncoding] autorelease];
+        if( returnString == nil)
+            returnString = [[[NSString alloc] initWithCString:ascii encoding:NSISOLatin1StringEncoding] autorelease];
+        free( ascii);
         NSLog(@"NIFTI INFO:  %@", returnString);
         
         // Now build the XML document
@@ -2048,7 +2159,13 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
                 [node addAttribute:[NSXMLNode attributeWithName:@"vr" stringValue:@""]];
                 [node addAttribute:[NSXMLNode attributeWithName:@"attributeTag" stringValue:@""]];
                 
-                NSXMLElement *childNode = [[[NSXMLElement alloc] initWithName:@"value" stringValue:[NSString stringWithUTF8String:ext->edata]] autorelease];
+                // edata is esize - 8 bytes with no terminator of its own: reading
+                // it as a C string ran past the extension into whatever followed.
+                NSUInteger length = ext->edata && ext->esize > 8 ? strnlen( ext->edata, ext->esize - 8) : 0;
+                NSString *extensionText = length ? [[[NSString alloc] initWithBytes:ext->edata length:length encoding:NSUTF8StringEncoding] autorelease] : @"";
+                if( extensionText == nil)
+                    extensionText = [[[NSString alloc] initWithBytes:ext->edata length:length encoding:NSISOLatin1StringEncoding] autorelease];
+                NSXMLElement *childNode = [[[NSXMLElement alloc] initWithName:@"value" stringValue:extensionText] autorelease];
                 [childNode addAttribute:[NSXMLNode attributeWithName:@"number" stringValue:@"0"]];
                 [node addChild:childNode];
                 
@@ -2057,6 +2174,8 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
                 ext++;
             }
         }
+        
+        nifti_image_free( NIfTI);
     }
     return xmlDoc;
 }

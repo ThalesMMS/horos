@@ -70,6 +70,28 @@ for binary in (application, helper):
         failures.append('%s exports multiple global JPEG-LS decoders' % binary.name)
     print('%s: %d global CharLS API definitions; DCMTK codec is private' % (binary.name, len(defining)))
 
+# DCM.framework is the binary that runs the project's CharLS (#617):
+# -[DCMPixelDataAttribute convertJPEGLSToHost:] includes <CharLS/charls.h> and calls
+# the 2.x API, and the DCM target links -lCharLS. It has to carry that copy whole,
+# and nothing of GDCM's or DCMTK's.
+framework = root / 'build/Build/Products/Debug/Horos.app/Contents/Frameworks/DCM.framework/Versions/A/DCM'
+if not framework.exists():
+    print('skip: DCM.framework is not built')
+    sys.exit(2)
+carried = {line.split()[-1] for line in subprocess.check_output(['nm', str(framework)], text=True).splitlines()
+           if line.split()}
+if fingerprints['CharLS'] - carried:
+    failures.append("DCM.framework lacks the project's CharLS: %s" % sorted(fingerprints['CharLS'] - carried)[:3])
+for other in ('gdcmcharls', 'dcmtkcharls'):
+    if fingerprints[other] & carried:
+        failures.append('DCM.framework carries symbols of %s as well' % other)
+decoders = [line for line in subprocess.check_output(['nm', '-g', str(framework)], text=True).splitlines()
+            if line.endswith(' T _JpegLsDecode')]
+if len(decoders) != 1:
+    failures.append('DCM.framework defines %d global JPEG-LS decoders' % len(decoders))
+print("DCM.framework: the project's CharLS 2.x (%d of %d distinctive symbols), no other copy"
+      % (len(fingerprints['CharLS'] & carried), len(fingerprints['CharLS'])))
+
 # DCMTK's 1.x adapter and codec are partially linked before their private
 # definitions are localized. No 1.x reference can bind to GDCM's 2.x API.
 isolated = build / 'DCMTK.build/Install/lib/libhorosdcmjpls.a'

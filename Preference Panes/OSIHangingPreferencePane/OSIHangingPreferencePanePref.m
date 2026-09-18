@@ -37,7 +37,7 @@
 
 #import "WindowLayoutManager.h"
 #import "OSIHangingPreferencePanePref.h"
-#import "NSArray+N2.h"
+#import <CoreFoundation/CoreFoundation.h>
 #import "NSPreferencePane+OsiriX.h"
 #import "Notifications.h"
 #import "AppController.h"
@@ -412,7 +412,37 @@
 
 -(void) willSelect
 {
-	hangingProtocols = [[[NSUserDefaults standardUserDefaults] objectForKey:@"HANGINGPROTOCOLS"] deepMutableCopy];
+    // The protocols are edited in a copy that is mutable at every level and shares
+    // nothing with what NSUserDefaults holds (#618). It was made by a recursive
+    // copy in Nitrogen; Core Foundation makes the same copy of a property list.
+    // The copy of the previous visit is released here: the pane lives as long as
+    // the application, and each return to it kept one more.
+    [hangingProtocols release];
+    hangingProtocols = nil;
+    hangingProtocolsUnusable = NO;
+
+    id saved = [[NSUserDefaults standardUserDefaults] objectForKey:@"HANGINGPROTOCOLS"];
+    if ([saved isKindOfClass:[NSDictionary class]])
+        hangingProtocols = (NSMutableDictionary *)CFPropertyListCreateDeepCopy(kCFAllocatorDefault, (CFPropertyListRef)saved,
+                                                                               kCFPropertyListMutableContainers);
+    if (hangingProtocols == nil)
+    {
+        // Missing, not a dictionary, or not a property list the copy can take: a
+        // value this pane cannot have written. It is shown as the registered
+        // protocols and is not written back, so leaving the pane does not replace
+        // it (the old copy raised on it or wrote it over).
+        if (saved)
+        {
+            NSLog( @"---- HANGINGPROTOCOLS holds %@, which the Protocols pane cannot edit; it is left as it is", [saved class]);
+            hangingProtocolsUnusable = YES;
+        }
+        NSDictionary *registered = [[[NSUserDefaults standardUserDefaults] volatileDomainForName:NSRegistrationDomain] objectForKey:@"HANGINGPROTOCOLS"];
+        if ([registered isKindOfClass:[NSDictionary class]])
+            hangingProtocols = (NSMutableDictionary *)CFPropertyListCreateDeepCopy(kCFAllocatorDefault, (CFPropertyListRef)registered,
+                                                                                   kCFPropertyListMutableContainers);
+        if (hangingProtocols == nil)
+            hangingProtocols = [[NSMutableDictionary alloc] init];
+    }
 	
     for( NSString *modality in hangingProtocols)
     {
@@ -459,8 +489,11 @@
             [protocol setObject: @([WindowLayoutManager imagesColumnsForHangingProtocol: protocol]) forKey: @"Image Columns"];
         }
     }
-    [[NSUserDefaults standardUserDefaults] setObject:hangingProtocols forKey:@"HANGINGPROTOCOLS"];
-    [[NSUserDefaults standardUserDefaults] synchronize];
+    if (hangingProtocolsUnusable == NO)
+    {
+        [[NSUserDefaults standardUserDefaults] setObject:hangingProtocols forKey:@"HANGINGPROTOCOLS"];
+        [[NSUserDefaults standardUserDefaults] synchronize];
+    }
 }
 @end
 

@@ -9,7 +9,7 @@ for the first time. Everything below was run on the machine described under
 | Tool | Why | Checked with |
 |---|---|---|
 | Xcode | builds the application and the dependencies | `xcodebuild -version` |
-| `cmake` | configures ITK, VTK, GDCM, DCMTK, OpenJPEG, OpenSSL, Grok, CharLS | `cmake --version` |
+| `cmake` | configures ITK, VTK, GDCM, DCMTK, OpenJPEG, OpenSSL, CharLS | `cmake --version` |
 | `pkg-config` | same | `pkg-config --version` |
 | `git-lfs` | VTK-m assets | `git-lfs --version` |
 
@@ -94,21 +94,17 @@ same isolated bundle and database:
 HOROS_DEV_CONFIGURATION=Release script/build_and_run.sh --verify
 ```
 
-The JPEG 2000 loading comparison and reproduction steps are recorded in
-[docs/openjpeg-performance-validation.md](docs/openjpeg-performance-validation.md).
-The 3D MPR Metal implementation, Retina correction, pixel validation and scroll
-measurements are recorded in
-[docs/mpr-metal-performance-validation.md](docs/mpr-metal-performance-validation.md).
-The native VR Metal option, CPU/OsiriX comparison and rendering measurements
-are recorded in
-[docs/vr-metal-performance-validation.md](docs/vr-metal-performance-validation.md).
+The JPEG 2000 loading comparison, the 3D MPR Metal implementation with its
+Retina correction, pixel validation and scroll measurements, and the native VR
+Metal option with its CPU/OsiriX comparison each have a validation record with
+reproduction steps, kept per issue with the rest of the documentation.
 
 | | |
 |---|---|
 | `script/build_and_run.sh --verify` | launch and report the process identifier, then return |
 | `script/build_and_run.sh --debug` | launch under `lldb` |
 | `script/build_and_run.sh --logs` | stream the unified log for the process |
-| `script/build_and_run.sh --diagnostics` | run in the foreground under Xcode's Main Thread Checker, see [docs/main-thread-diagnostics.md](docs/main-thread-diagnostics.md) |
+| `script/build_and_run.sh --diagnostics` | run in the foreground under Xcode's Main Thread Checker |
 
 ## Tests
 
@@ -134,32 +130,26 @@ was checked, on what build, and what was left unverified.
   The policy keeps the product
   minimum, the SDK and the encoded target as three separate numbers
   (`HorosPlatformPolicy`). A package built for 26 must not be offered as an
-  installable update to a Mac below it. See
-  [docs/macos26-deployment.md](docs/macos26-deployment.md).
+  installable update to a Mac below it.
 - Most prebuilt binaries under `Binaries/` that lack `arm64` are inert — the
   linker reports ignoring them, or nothing references them. The helper that
   reaches a user is `dciodvfy` (Meta-Data → Validator), now an arm64 binary
-  in `Binaries/dciodvfy.zip`. See
-  [docs/binary-architecture-audit.md](docs/binary-architecture-audit.md)
-  and [docs/arm64-only-distribution.md](docs/arm64-only-distribution.md).
+  in `Binaries/dciodvfy.zip`.
 
 ## License and credits
 
-Horos is LGPLv3, based on OsiriX (LGPLv3). Grok is AGPLv3, not LGPL. Other
+Horos is LGPLv3, based on OsiriX (LGPLv3). Other
 linked libraries keep their own terms (DCMTK, ITK, VTK, GDCM, OpenJPEG,
-OpenSSL, CharLS). See [LICENSE](LICENSE), [COPYING.LESSER](COPYING.LESSER),
-[NOTICE](NOTICE) and [docs/license-attribution.md](docs/license-attribution.md).
-The About window lists the same credits, including **ystarrev/horos** and
-Yves Starreveld. License texts from that project at
-`23722fb552d96fa2d60c7f58a6d4ac2c27950f86` are versioned under
-`docs/third-party/`. This workbench keeps the Purview/HorosCloud notice that
-the origin LICENSE omits. Plugins and the DICOMweb client are not removed to
-simplify licensing. This is not legal advice.
+OpenSSL, CharLS). See [LICENSE](LICENSE), [COPYING.LESSER](COPYING.LESSER) and
+[NOTICE](NOTICE). Selected excerpts were adapted from **ystarrev/horos**,
+authored by Yves Starreveld, and the About window carries that credit. This
+workbench keeps the Purview/HorosCloud notice that the origin LICENSE omits.
+Plugins and the DICOMweb client are not removed to simplify licensing. This is
+not legal advice.
 
 ## ROI interchange
 
-ROIs can be exported and imported as documented JSON: see
-[docs/roi-interchange-json.md](docs/roi-interchange-json.md).
+ROIs can be exported and imported as documented JSON.
 
 ## Verified on
 

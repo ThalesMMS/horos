@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The manifest of this adoption phase, for a later incorporation (#610).
 
-Writes `docs/ystarrev-delta3-manifest.json`: which origin commits were read,
+Writes `docs/donor-delta3-manifest.json`: which origin commits were read,
 which workbench commits carry the adoption, what each delivery decided, and
 which tests and documents stand behind it. Nothing is pushed anywhere - this
 records what would be offered, and to whom, if somebody later asks for it.
@@ -20,7 +20,6 @@ import sys
 root = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 parser.add_argument('--check', action='store_true')
-parser.add_argument('--origin', type=Path, default=Path('/Users/thales/ystarrev/horos'))
 arguments = parser.parse_args()
 
 ORIGIN_COMMITS = [
@@ -110,12 +109,11 @@ def commit_for(issue):
 
 
 manifest = {
-    'phase': 'ystarrev delta 3',
+    'phase': 'donor delta 3',
     'purpose': 'record what was adopted, for a possible later incorporation into ThalesMMS/horos',
     'published': False,
     'origin': {
-        'repository': 'ystarrev/horos',
-        'localReadOnlyCheckout': str(arguments.origin),
+        'repository': 'donor fork of Horos (credited in NOTICE)',
         'baseline': BASELINE,
         'commits': [{'sha': sha, 'subject': subject} for sha, subject in ORIGIN_COMMITS],
     },
@@ -145,7 +143,7 @@ manifest = {
 }
 
 text = json.dumps(manifest, indent=2, sort_keys=True) + '\n'
-target = root / 'docs/ystarrev-delta3-manifest.json'
+target = root / 'docs/donor-delta3-manifest.json'
 if arguments.check:
     current = target.read_text() if target.exists() else ''
     if current != text:

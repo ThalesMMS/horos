@@ -6,7 +6,7 @@ No application, DICOM data, database or external network service is involved.
 """
 from collections import Counter
 from contextlib import contextmanager
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 import subprocess
 import sys
@@ -15,6 +15,8 @@ import threading
 import time
 import xml.etree.ElementTree as ET
 import xmlrpc.client
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
+from local_http import ThreadingLocalHTTPServer  # a fixture binds without the DNS (#647)
 
 root = Path(__file__).resolve().parents[1]
 UID_A, UID_B = '1.2.3.4', '1.2.3.5'
@@ -58,7 +60,7 @@ def server(dispatch):
             except (BrokenPipeError, ConnectionResetError):
                 pass  # the bounded-timeout case intentionally closes its socket
 
-    http = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    http = ThreadingLocalHTTPServer(('127.0.0.1', 0), Handler)
     thread = threading.Thread(target=lambda: http.serve_forever(poll_interval=0.01), daemon=True)
     thread.start()
     try:

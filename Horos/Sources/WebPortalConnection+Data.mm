@@ -2449,7 +2449,16 @@ const NSString* const GenerateMovieDicomImagesParamKey = @"dicomImageArray";
 					
 					if (!self.response.data.length)
 					{
-						[dcmPix checkImageAvailble: curWW :curWL];
+						// The DCMPix is shared by every request for this object and frame
+						// (wadoCache). Once it has an 8-bit representation,
+						// -checkImageAvailble:: only stores the window it is given, as it
+						// is: (0, 0), which a request without a window makes for a series
+						// without one, became a window of width zero, and the second
+						// rendering came out white wherever the first was not black.
+						// -changeWLWW:: reads (0, 0) as "choose the window", which is
+						// what the first rendering did through -allocate8bitRepresentation,
+						// and without a representation it is -checkImageAvailble:: itself.
+						[dcmPix changeWLWW: curWL :curWW];
 						
 						image = [dcmPix image];
 						float width = [image size].width;

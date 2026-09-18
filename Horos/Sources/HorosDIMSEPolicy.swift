@@ -10,7 +10,7 @@ public final class HorosDIMSEPolicy: NSObject {
     @objc public static let compiledLibraryVersion = "3.7.0+"
     @objc public static let bundledToolsPath = "DCMTK"
     @objc public static let bundledToolsVersion = "3.7.0+"
-    @objc public static let ystarrevDCMTKVersion = "3.7.0"
+    @objc public static let donorDCMTKVersion = "3.7.0"
     @objc public static let implementationClassUID = "1.2.276.0.7230010.3.0.3.7.0"
     @objc public static let licenseIdentifier = "dcmtk"
     @objc public static let cmakeToolsTree = bundledToolsPath
@@ -296,7 +296,7 @@ public final class HorosDIMSEPolicy: NSObject {
 
     public static var mayPatchTrackedUpstreamTree: Bool { false }
     public static var compiledTreeIsUpstreamPin: Bool { true }
-    public static var ystarrevPinIsAdopted: Bool { false }
+    public static var donorPinIsAdopted: Bool { false }
 
     public static func compiledLibraryIsUpstreamUnpatched() -> Bool { true }
 

@@ -41,7 +41,7 @@ if sdk_major < PRODUCT_MINIMUM_MAJOR and encoded_major >= PRODUCT_MINIMUM_MAJOR:
     fail(f'SDK {sdk} cannot encode MACOSX_DEPLOYMENT_TARGET {encoded}')
 
 if 'DEVELOPMENT_TEAM = TPT6TVH8UY' in config or 'HOROS_DEVELOPMENT_TEAM = TPT6TVH8UY' in config:
-    fail('ystarrev DEVELOPMENT_TEAM TPT6TVH8UY must not be copied into Config.xcconfig')
+    fail('the donor DEVELOPMENT_TEAM TPT6TVH8UY must not be copied into Config.xcconfig')
 if 'DEVELOPMENT_TEAM = $(HOROS_DEVELOPMENT_TEAM)' not in config:
     fail('tracked DEVELOPMENT_TEAM must stay $(HOROS_DEVELOPMENT_TEAM)')
 if '#include? "Config.local.xcconfig"' not in config:

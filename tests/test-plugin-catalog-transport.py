@@ -10,6 +10,9 @@ import subprocess
 import tempfile
 import threading
 import time
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
+from local_http import ThreadingLocalHTTPServer  # a fixture binds without the DNS (#647)
 root=Path(__file__).resolve().parent.parent
 entry={'name':'Synthetic Catalog Entry','version':'1.0','download_url':'https://example.invalid/test.zip'}
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -57,8 +60,8 @@ with tempfile.TemporaryDirectory(prefix='horos-catalog-network-') as directory:
  p=Path(directory);(p/'test.m').write_text(program)
  subprocess.run(['xcrun','clang','-fblocks','-framework','Foundation','-I',str(root/'Horos/Sources'),str(p/'test.m'),'-o',str(p/'test')],check=True)
  subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-days','1','-subj','/CN=localhost','-keyout',str(p/'key.pem'),'-out',str(p/'cert.pem')],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
- http_server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Handler)
- tls=http.server.ThreadingHTTPServer(('127.0.0.1',0),Handler)
+ http_server=ThreadingLocalHTTPServer(('127.0.0.1',0),Handler)
+ tls=ThreadingLocalHTTPServer(('127.0.0.1',0),Handler)
  context=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);context.load_cert_chain(p/'cert.pem',p/'key.pem');tls.socket=context.wrap_socket(tls.socket,server_side=True)
  for server in [http_server,tls]:threading.Thread(target=server.serve_forever,daemon=True).start()
  try:

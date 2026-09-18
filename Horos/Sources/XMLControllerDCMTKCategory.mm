@@ -69,8 +69,6 @@
 #include <GDCM/gdcmSequenceOfItems.h>
 #include <GDCM/gdcmItem.h>
 
-extern NSRecursiveLock *PapyrusLock;
-
 // One sequence to descend on the way to an element: which sequence, and which
 // of its items. Kept as numbers rather than gdcm types so the parser below has
 // no dependency beyond Foundation.

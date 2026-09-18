@@ -48,15 +48,6 @@
 @end
 
 
-@interface N2DirectoryEnumeratorReleaser : NSThread {
-    DIR* _dir;
-}
-
-+ (void)releaseDIR:(DIR*)dir;
-
-@end
-
-
 @implementation N2DirectoryEnumerator
 
 @synthesize filesOnly = _filesOnly;
@@ -207,34 +198,15 @@
 	} else return nil;
 }
 
+// Each handle is closed here, once, on the thread that enumerates (#627). A
+// thread used to be started for every closedir - one per folder of a scan -
+// which cost more than the call and left descriptors open until it ran.
 -(void)popDIR {
 	if (DIRs.count) {
 		DIR* dir = self.DIR;
 		[DIRs removeLastObject];
-		[N2DirectoryEnumeratorReleaser releaseDIR:dir];
+		if (dir) closedir(dir);
 	}
-}
-
-@end
-
-@implementation N2DirectoryEnumeratorReleaser
-
-+ (void)releaseDIR:(DIR*)dir {
-    [[[[self alloc] initWithDIR:dir] autorelease] start];
-}
-
-- (id)initWithDIR:(DIR*)dir {
-    if ((self = [super init])) {
-        _dir = dir;
-    }
-    
-    return self;
-}
-
-- (void)main {
-    @autoreleasepool {
-        closedir(_dir);
-    }
 }
 
 @end

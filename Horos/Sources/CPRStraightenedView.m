@@ -407,10 +407,17 @@ extern int splitPosition[ 3];
 {
 	if( rect.size.width > 10)
 	{
-		HorosCPRRenderDecision *decision = [HorosCPRRenderLifecycle beginDrawNamed:@"straightened"];
-		if( decision.accepted == NO)
+		HorosCPRRenderLifecycle *lifecycle = [[self windowController] renderLifecycle];
+		HorosCPRRenderDecision *decision = [lifecycle beginDrawNamed:@"straightened"];
+		if( lifecycle && decision.accepted == NO)
 		{
 			NSLog(@"CPR draw skipped: %@", decision.diagnosis);
+
+			// Returning paints nothing, and nothing marks this view again: the
+			// panel would stay blank. Only the nested pass is unwanted, so ask
+			// for another one once the stack has unwound.
+			if( [decision.phase isEqualToString: @"reentrant"])
+				dispatch_async( dispatch_get_main_queue(), ^{ [self setNeedsDisplay: YES];});
 			return;
 		}
 		_processingRequest = YES;
@@ -424,12 +431,18 @@ extern int splitPosition[ 3];
 			}
 			[self _sendNewRequestIfNeeded];
 			[self _adjustROIs];
+
+			// The flag suppresses setNeedsDisplay: while the request is built.
+			// Clear it before super draws: the generator's callback is delivered
+			// inside that draw, and a repaint asked for while the flag is up is
+			// dropped for good - nothing marks the view a second time.
+			_processingRequest = NO;
 			[super drawRect: rect];
 		}
 		@finally
 		{
 			_processingRequest = NO;
-			[HorosCPRRenderLifecycle endDrawNamed:@"straightened"];
+			[lifecycle endDrawNamed:@"straightened"];
 		}
 	}
 }
@@ -1385,7 +1398,11 @@ extern int splitPosition[ 3];
             HorosCPRStraightenedDecision *decision = [session beginGenerationWithPixelsWide:(NSInteger)request.pixelsWide];
             if (decision.accepted == NO) {
                 NSLog(@"CPR straightened: %@", decision.diagnosis);
-                self.lastRequest = request;
+
+                // lastRequest names the request the generator is working on.
+                // Recording one that was never sent made an identical request
+                // compare equal and be skipped for ever, so a panel refused
+                // once stayed blank even after the curve became valid again.
                 [request release];
                 _needsNewRequest = NO;
                 return;

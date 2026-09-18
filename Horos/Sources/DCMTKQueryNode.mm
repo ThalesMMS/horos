@@ -1344,9 +1344,11 @@ subOpCallback(void * /*subOpCallbackData*/ ,
         downloader.WADOBaseTotal = 0;
         downloader.WADOGrandTotal = self.numberImages.integerValue; // For the GUI progress bar
         
-        while( (WADOCFind.isExecuting || self.childrenCount) && [[NSThread currentThread] isCancelled] == NO)
+        // isFinished, not isExecuting: the worker may not have begun executing after
+        // the pause above, and the loop then never ran (#634).
+        while( (WADOCFind.isFinished == NO || self.childrenCount) && [[NSThread currentThread] isCancelled] == NO)
         {
-            if( self.childrenCount > 50 || WADOCFind.isExecuting == NO)
+            if( self.childrenCount > 50 || WADOCFind.isFinished)
             {
                 NSArray *childrenArray = nil;
                 @synchronized( _children)
@@ -1402,7 +1404,7 @@ subOpCallback(void * /*subOpCallbackData*/ ,
             [WADOCFind cancel];
             // The discovery worker owns the query until it exits. Do not purge
             // its children or report completion while it is still updating them.
-            while (WADOCFind.isExecuting) [NSThread sleepForTimeInterval: 0.05];
+            while (!WADOCFind.isFinished) [NSThread sleepForTimeInterval: 0.05];
         }
         [downloader release];
         
@@ -1747,9 +1749,11 @@ subOpCallback(void * /*subOpCallbackData*/ ,
                     [WADOCFind start];
                     [NSThread sleepForTimeInterval: 0.1];
                     
-                    while( (WADOCFind.isExecuting || self.childrenCount) && [[NSThread currentThread] isCancelled] == NO)
+                    // isFinished, not isExecuting: the worker may not have begun executing
+                    // after the pause above, and the loop then never ran (#634).
+                    while( (WADOCFind.isFinished == NO || self.childrenCount) && [[NSThread currentThread] isCancelled] == NO)
                     {
-                        if( self.childrenCount > 50 || WADOCFind.isExecuting == NO)
+                        if( self.childrenCount > 50 || WADOCFind.isFinished)
                         {
                             NSMutableDictionary *seriesUIDsToRetrieve = [NSMutableDictionary dictionary];
                             NSMutableArray *imagesUIDsWithoutSeriesInstanceUID = [NSMutableArray array];
@@ -1885,26 +1889,14 @@ subOpCallback(void * /*subOpCallbackData*/ ,
                                                              ]];
                                     }
                                     
-                                    BOOL executing = NO;
-                                    do
-                                    {
-                                        executing = NO;
-                                        
-                                        for( NSThread *t in threads)
-                                            if( t.isExecuting) executing = YES;
-                                        
-                                        if( [[NSThread currentThread] isCancelled])
-                                            for( NSThread *t in threads)
-                                                [t cancel];
-                                        
-                                        [NSThread sleepForTimeInterval: 0.05];
-                                    }
-                                    while( executing);
+                                    // Until every thread has finished. Asking whether one was still
+                                    // executing ended the wait at once: a thread just started has not
+                                    // begun executing, so the IMAGE level was judged, and the move
+                                    // closed, while its images were still arriving (#634).
+                                    [HorosRetrieveThreadGroup waitForThreads: threads propagatingCancellationOf: [NSThread currentThread]];
                                     
-                                    retrievedDone = YES;
-                                    
-                                    for( NSThread *t in threads)
-                                        if( t.isCancelled) retrievedDone = NO;
+                                    // A thread that failed its association cancels itself.
+                                    retrievedDone = ![HorosRetrieveThreadGroup anyCancelled: threads];
                                 }
                                 else
                                 {
@@ -1966,26 +1958,14 @@ subOpCallback(void * /*subOpCallbackData*/ ,
                                                              ]];
                                     }
                                     
-                                    BOOL executing = NO;
-                                    do
-                                    {
-                                        executing = NO;
-                                        
-                                        for( NSThread *t in threads)
-                                            if( t.isExecuting) executing = YES;
-                                        
-                                        if( [[NSThread currentThread] isCancelled])
-                                            for( NSThread *t in threads)
-                                                [t cancel];
-                                        
-                                        [NSThread sleepForTimeInterval: 0.05];
-                                    }
-                                    while( executing);
+                                    // Until every thread has finished. Asking whether one was still
+                                    // executing ended the wait at once: a thread just started has not
+                                    // begun executing, so the IMAGE level was judged, and the move
+                                    // closed, while its images were still arriving (#634).
+                                    [HorosRetrieveThreadGroup waitForThreads: threads propagatingCancellationOf: [NSThread currentThread]];
                                     
-                                    retrievedDone = YES;
-                                    
-                                    for( NSThread *t in threads)
-                                        if( t.isCancelled) retrievedDone = NO;
+                                    // A thread that failed its association cancels itself.
+                                    retrievedDone = ![HorosRetrieveThreadGroup anyCancelled: threads];
                                 }
                             }
                             else
@@ -1999,6 +1979,15 @@ subOpCallback(void * /*subOpCallbackData*/ ,
                         
                         [NSThread sleepForTimeInterval: 0.1];
                     }
+                    
+                    if( [[NSThread currentThread] isCancelled])
+                    {
+                        // The worker adds children until it returns: the list is not
+                        // purged and restored under it.
+                        [WADOCFind cancel];
+                        while( WADOCFind.isFinished == NO) [NSThread sleepForTimeInterval: 0.05];
+                    }
+                    
                     [self purgeChildren];
                     
                     [self setChildren: childrenCopy];
@@ -2048,9 +2037,20 @@ subOpCallback(void * /*subOpCallbackData*/ ,
     }
     @finally {
         if (localRetrieve && _retrieveInventory) {
+            // What the retrieve received is indexed by the importer's timer, after the transfer has
+            // returned: the inventory is judged once those instances are in the index, or when the
+            // indexing stops progressing (#646). Not on the main thread, whose run loop drives that timer.
+            BOOL receivedIndexed = YES;
+            if (!NSThread.isMainThread) {
+                NSTimeInterval patience = MAX(10, 3 * [[NSUserDefaults standardUserDefaults] integerForKey:@"LISTENERCHECKINTERVAL"]);
+                receivedIndexed = [_retrieveInventory waitForReceivedImportsRefreshing:^{ [self refreshRetrieveInventory]; }
+                                                                              patience:patience
+                                                                             cancelled:^BOOL{ return NSThread.currentThread.isCancelled; }];
+            }
             [self refreshRetrieveInventory];
             [_retrieveInventory finish];
-            if (_retrieveInventory.needsAttention && showErrorMessage && !reportedDICOMwebFailure && !NSThread.currentThread.isCancelled)
+            // An instance received but still not in the index after that wait is not local either.
+            if ((_retrieveInventory.needsAttention || !receivedIndexed) && showErrorMessage && !reportedDICOMwebFailure && !NSThread.currentThread.isCancelled)
                 [DCMTKQueryNode performSelectorOnMainThread:@selector(errorMessage:) withObject:@[
                     NSLocalizedString(@"Retrieve Incomplete", nil),
                     [NSString stringWithFormat:@"%@\nManifest: %@", _retrieveInventory.summary, _retrieveInventory.path],

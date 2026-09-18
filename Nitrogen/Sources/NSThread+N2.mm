@@ -40,6 +40,9 @@
 #import "N2Debug.h"
 //#import "NSException+N2.h"
 
+// Kept (#626): replacing this subclass with -[NSThread initWithBlock:] (and a
+// block around the caller's for the pool and the exception) or with
+// -initWithTarget:selector:object: started every thread 1-5 % slower, measured.
 @interface N2BlockThread : NSThread {
     void (^_block)();
 }
@@ -55,6 +58,17 @@
     [bt start];
     return bt;
 }
+
+// The keys below are notified by hand, only when the value read changes. Left
+// automatic, KVO also wrapped each setter in a notification of its own, so every
+// call notified, changed or not, and a change notified twice (#626).
++(BOOL)automaticallyNotifiesObserversOfUniqueId { return NO; }
++(BOOL)automaticallyNotifiesObserversOfIsCancelled { return NO; }
++(BOOL)automaticallyNotifiesObserversOfSupportsCancel { return NO; }
++(BOOL)automaticallyNotifiesObserversOfSupportsBackgrounding { return NO; }
++(BOOL)automaticallyNotifiesObserversOfStatus { return NO; }
++(BOOL)automaticallyNotifiesObserversOfProgress { return NO; }
++(BOOL)automaticallyNotifiesObserversOfProgressDetails { return NO; }
 
 -(NSComparisonResult)compare:(id)obj {
 	//NSException *e = [NSException exceptionWithName: @"NSThread compare" reason: @"compare:" userInfo: nil];	
@@ -184,14 +198,35 @@ static NSString* const SuperThreadNameKey = @"SuperThreadName";
 	}
 }
 
+// The details -progressDetails shows for the operation at `index` when it has
+// none of its own: the innermost ones of the operations around it.
+static NSString* N2ProgressDetailsAround(NSArray* stack, NSUInteger index) {
+	for (NSInteger i = (NSInteger)index-1; i >= 0; --i) {
+		NSString* details = [[stack objectAtIndex:i] objectForKey:NSThreadProgressDetailsKey];
+		if (details)
+			return details;
+	}
+	return nil;
+}
+
+static BOOL N2SameProgressDetails(NSString* a, NSString* b) {
+	return a == b || [a isEqualToString:b];
+}
+
 -(void)exitOperation {
 	@synchronized (self) {
 		if (self.stackArray.count > 1) {
+            // Leaving an operation shows the details of the one around it again:
+            // observers of the details hear of it when what they read changes,
+            // as observers of the status do (#626).
+            BOOL detailsChange = !N2SameProgressDetails(self.progressDetails, N2ProgressDetailsAround(self.stackArray, self.stackArray.count-1));
             [self willChangeValueForKey:NSThreadStatusKey];
+            if (detailsChange) [self willChangeValueForKey:NSThreadProgressDetailsKey];
 			NSNumber* temp = [[[self.currentOperationDictionary objectForKey:SuperThreadProgressKey] retain] autorelease];
 			NSString* name = [[[self.currentOperationDictionary objectForKey:SuperThreadNameKey] retain] autorelease];
             
             [self.stackArray removeLastObject];
+            if (detailsChange) [self didChangeValueForKey:NSThreadProgressDetailsKey];
             [self didChangeValueForKey:NSThreadStatusKey];
             
             self.name = name;
@@ -404,15 +439,23 @@ NSString* const NSThreadProgressDetailsKey = @"progressDetails";
 //    	return nil;
     
 	@synchronized (self) {
-		NSString* previousProgressDetails = self.status;
-		if (previousProgressDetails == progressDetails || [progressDetails isEqualToString:previousProgressDetails])
+		NSMutableArray* stack = self.stackArray;
+		NSMutableDictionary* operation = stack.lastObject;
+		if (!operation || N2SameProgressDetails([operation objectForKey:NSThreadProgressDetailsKey], progressDetails))
 			return;
-		
-		[self willChangeValueForKey:NSThreadProgressDetailsKey];
+
+		// Observers hear of a change when what -progressDetails returns changes
+		// (#626). The details used to be compared with the status instead, which
+		// dropped a detail that read like the status and repeated an unchanged
+		// one; and nil in a nested operation shows the details around it.
+		NSString* next = progressDetails? progressDetails : N2ProgressDetailsAround(stack, stack.count-1);
+		BOOL change = !N2SameProgressDetails(self.progressDetails, next);
+
+		if (change) [self willChangeValueForKey:NSThreadProgressDetailsKey];
 		if (progressDetails)
-			[self.currentOperationDictionary setObject:[[progressDetails copy] autorelease] forKey:NSThreadProgressDetailsKey];
-		else [self.currentOperationDictionary removeObjectForKey:NSThreadProgressDetailsKey];
-		[self didChangeValueForKey:NSThreadProgressDetailsKey];
+			[operation setObject:[[progressDetails copy] autorelease] forKey:NSThreadProgressDetailsKey];
+		else [operation removeObjectForKey:NSThreadProgressDetailsKey];
+		if (change) [self didChangeValueForKey:NSThreadProgressDetailsKey];
 	}
 	
 }

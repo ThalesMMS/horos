@@ -18,7 +18,8 @@ class Event:
         return result
 
 namespace = dict(time=time, lock=Lock(), record={}, FAILING=set(),
-    arguments=SimpleNamespace(repair_flag=None, omit_instance=-1, duplicate_instance=-1, stall_after=-1, instance_delay=.2),
+    arguments=SimpleNamespace(repair_flag=None, omit_instance=-1, duplicate_instance=-1, stall_after=-1, instance_delay=.2,
+                              fail_image_retrieve=False),
     INSTANCES=[SimpleNamespace(StudyInstanceUID='1', SeriesInstanceUID='2', SOPInstanceUID='3', InstanceNumber=1)])
 exec(compile(ast.Module(body=[function], type_ignores=[]), str(path), 'exec'), namespace)
 answers = list(namespace['on_get'](Event()))

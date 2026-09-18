@@ -40,6 +40,7 @@
 @interface OSIHangingPreferencePanePref : NSPreferencePane 
 {
 	NSMutableDictionary *hangingProtocols;
+	BOOL hangingProtocolsUnusable; // what is stored cannot be edited, so it is not written back
 	NSString *modalityForHangingProtocols;
 	IBOutlet NSWindow *mainWindow;
     IBOutlet NSMenu *windowsTilingPopup;

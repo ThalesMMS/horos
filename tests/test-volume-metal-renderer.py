@@ -21,6 +21,14 @@ compositing, and compares. Tolerances are fixed here, before any comparison:
   the shading toggle each change exactly what they should;
 - a 16384 × 16384 × 2048 volume is refused naming its dimensions, while 800²
   and 1352² matrices of 64 slices are accepted by the memory rule.
+
+The transfer function stays on the GPU while it does not change (#621), and a
+renderer that keeps it draws exactly what one that makes it anew draws: with the
+camera turning, the window moving, presets alternating, only the colours or only
+the opacities changing, another volume uploaded, and two viewers interleaved, BGRA
+and scalars are equal to the bit, and a CLUT or opacity table is made only when
+its contents change, one of each kept; release drops them; the bridge keeps the
+opacity table while the host sends the same curve points.
 """
 import json
 import math
@@ -245,7 +253,9 @@ struct Case: Encodable {
 @main struct Check {
     static func main() throws {
         guard let device = MTLCreateSystemDefaultDevice() else { exit(2) }
-        let engine = try VolumeMetalRenderer(device: device, hardwareFiltering: CommandLine.arguments.last != "manual", emptySpaceSkipping: CommandLine.arguments.last != "unskipped")
+        let backend: MetalComputeBackend = CommandLine.arguments.last == "metal4" ? .metal4 : .metal3
+        if backend == .metal4 && !Metal4ComputeSubmitter.isSupported(device) { exit(3) }
+        let engine = try VolumeMetalRenderer(device: device, hardwareFiltering: CommandLine.arguments.last != "manual", emptySpaceSkipping: CommandLine.arguments.last != "unskipped", backend: backend)
         var cases = [Case]()
         var messages = [String: String]()
 
@@ -350,6 +360,80 @@ struct Case: Encodable {
                 messages["region-outside"] = refusal { _ = try request(SIMD2(11, 9), origin: SIMD2(30, 0)) }
             }
         }
+        // #621: kept transfer resources draw what freshly made ones draw.
+        let kept = try VolumeMetalRenderer(device: device, backend: backend), fresh = try VolumeMetalRenderer(device: device, backend: backend)
+        let other = try VolumeMetalRenderer(device: device, backend: backend)
+        try kept.upload(iso); try other.upload(iso)
+        let curveA: [SIMD2<Float>] = [SIMD2(0, 0), SIMD2(120, 0), SIMD2(160, 0.35), SIMD2(256, 0.9)]
+        let curveB: [SIMD2<Float>] = [SIMD2(0, 0), SIMD2(100, 0), SIMD2(256, 0.6)]
+        func transfer(_ clut: [[Int]], _ curve: [SIMD2<Float>], level: Float = 120) throws -> VolumeTransferFunction {
+            try VolumeTransferFunction(level: level, width: 240, colour: clutData(clut), opacity: VolumeTransferFunction.opacityTable(points: curve))
+        }
+        func turning(_ step: Int) throws -> VolumeCamera {
+            let angle = Float(step) * 0.35
+            return try VolumeCamera(position: centre + SIMD3(20 * sin(angle), 6, -20 * cos(angle)), focalPoint: centre, viewUp: SIMD3(0, -1, 0),
+                                    parallel: true, parallelScale: 6, viewAngle: 30, clippingRange: nil)
+        }
+        // The fresh renderer drops its transfer resources before every frame, as every frame did before #621.
+        func same(_ renderer: VolumeMetalRenderer, _ volume: ResliceVolume, _ camera: VolumeCamera, _ function: VolumeTransferFunction,
+                  _ mode: VolumeRenderingMode = .composite) throws -> Bool {
+            let request = try VolumeRenderRequest(camera: camera, transfer: function, mode: mode, shading: VolumeShading(enabled: true),
+                                                  crop: nil, width: 23, height: 19, sampleStep: 0.5)
+            fresh.release(); try fresh.upload(volume)
+            let expected = try fresh.render(request), got = try renderer.render(request)
+            return expected.bgra == got.bgra && expected.scalar == got.scalar
+        }
+        func uploads(_ renderer: VolumeMetalRenderer) -> String { "\(renderer.colourTableUploads)/\(renderer.opacityTableUploads)" }
+        var equal = true
+        let presetA = try transfer(twoTone, curveA), presetB = try transfer(grey, curveB)
+        for step in 0..<12 where try !same(kept, iso, turning(step), presetA) { equal = false }
+        for mode in [VolumeRenderingMode.maximum, .minimum, .mean] where try !same(kept, iso, turning(3), presetA, mode) { equal = false }
+        messages["transferTurning"] = uploads(kept)
+        for level in stride(from: Float(60), through: 180, by: 20) where try !same(kept, iso, turning(5), transfer(twoTone, curveA, level: level)) { equal = false }
+        messages["transferWindow"] = uploads(kept)
+        for step in 0..<6 where try !same(kept, iso, turning(step), step % 2 == 0 ? presetB : presetA) { equal = false }
+        messages["transferPresets"] = uploads(kept)
+        if try !same(kept, iso, turning(1), transfer(grey, curveA)) { equal = false }
+        messages["transferColourOnly"] = uploads(kept)
+        if try !same(kept, iso, turning(1), transfer(grey, curveB)) { equal = false }
+        messages["transferOpacityOnly"] = uploads(kept)
+        try kept.upload(aniso)
+        if try !same(kept, aniso, turning(2), transfer(grey, curveB)) { equal = false }
+        messages["transferVolume"] = uploads(kept)
+        try kept.upload(iso)
+        for step in 0..<4 {
+            if try !same(kept, iso, turning(step), presetB) || !same(other, iso, turning(step), presetA) { equal = false }
+        }
+        messages["transferViewers"] = uploads(kept) + " " + uploads(other)
+        kept.release(); try kept.upload(iso)
+        if try !same(kept, iso, turning(0), presetB) { equal = false }
+        messages["transferReleased"] = uploads(kept)
+        messages["transferEqual"] = equal ? "yes" : "no"
+        // #623: every Metal 4 slot comes back.
+        if let slots = kept.submissionSlots {
+            messages["metal4Slots"] = slots.inFlight == 0 && slots.made == slots.idle ? "idle" : "made \(slots.made), in flight \(slots.inFlight), idle \(slots.idle)"
+        }
+
+        // The bridge keeps the opacity table while the host sends the same curve points in new objects.
+        let bridge = try VolumeRendererBridge.make()
+        try bridge.uploadVolume(voxels(W, H, D, phantom) as NSData, width: W, height: H, depth: D, spacingX: 1, spacingY: 1, spacingZ: 1)
+        func bridged(_ points: [Float], _ step: Int) throws -> Data {
+            let camera = try turning(step)
+            let numbers = [camera.position.x, camera.position.y, camera.position.z, camera.focalPoint.x, camera.focalPoint.y, camera.focalPoint.z,
+                           camera.viewUp.x, camera.viewUp.y, camera.viewUp.z, 1, 6, 30].map { NSNumber(value: $0) }
+            return try bridge.render(camera: numbers, near: 0, far: -1, level: 120, width: 240, clut: clutData(twoTone) as NSData,
+                                     opacityPoints: points.map { NSNumber(value: $0) }, mode: 0, shading: [1, 0.15, 0.9, 0.3, 15].map { NSNumber(value: $0) },
+                                     crop: [], width: 23, height: 19, sampleStep: 0.5, scalarBackground: .nan, scalarOut: nil) as Data
+        }
+        let first = try bridged([0, 0, 120, 0, 160, 0.35, 256, 0.9], 0)
+        var bridgeEqual = true
+        for step in 1..<5 { _ = try bridged([0, 0, 120, 0, 160, 0.35, 256, 0.9], step) }
+        if try bridged([0, 0, 120, 0, 160, 0.35, 256, 0.9], 0) != first { bridgeEqual = false }
+        messages["bridgeSameCurve"] = "\(bridge.colourTableUploads)/\(bridge.opacityTableUploads)"
+        _ = try bridged([0, 0, 100, 0, 256, 0.6], 0)
+        messages["bridgeNewCurve"] = "\(bridge.colourTableUploads)/\(bridge.opacityTableUploads)"
+        messages["bridgeEqual"] = bridgeEqual ? "yes" : "no"
+
         messages["memory-huge"] = refusal { _ = try engine.memoryRequirement(width: 16384, height: 16384, depth: 2048) }
         messages["memory-800"] = refusal { _ = try engine.memoryRequirement(width: 800, height: 800, depth: 64) }
         messages["memory-1352"] = refusal { _ = try engine.memoryRequirement(width: 1352, height: 1352, depth: 64) }
@@ -376,26 +460,34 @@ def main():
     with tempfile.TemporaryDirectory() as directory:
         work = Path(directory)
         (work / 'Check.swift').write_text(driver)
-        sources = ['VolumeAllocation.swift', 'VolumeSession.swift', 'MPRMetalReslicer.swift', 'VolumeMetalRenderer.swift']
+        sources = ['VolumeAllocation.swift', 'VolumeSession.swift', 'MPRMetalReslicer.swift', 'VolumeMetalRenderer.swift',
+                   'MetalPerformanceTrace.swift', 'MetalComputePipelineCache.swift', 'Metal4ComputeSubmitter.swift']
         command = ['xcrun', 'swiftc', '-O', '-parse-as-library', '-suppress-warnings',
                    *[str(root / 'Horos/Sources' / name) for name in sources], str(work / 'Check.swift'), '-o', str(work / 'check')]
         subprocess.run(command, check=True)
         payload = {'cases': [], 'messages': {}}
         accelerated = None
-        for interpolation in ('hardware', 'manual', 'unskipped'):
+        for interpolation in ('hardware', 'manual', 'unskipped', 'metal4'):
             result = subprocess.run([str(work / 'check'), interpolation], capture_output=True, timeout=240)
             if result.returncode == 2:
                 print('skipped: no Metal device', file=sys.stderr)
                 return 2
+            if result.returncode == 3 and interpolation == 'metal4':
+                print('note: this device has no Metal 4 submission; only Metal 3 was checked', file=sys.stderr)
+                continue
             if result.returncode:
                 sys.stderr.write(result.stderr.decode(errors='replace'))
                 raise SystemExit('driver failed with %d' % result.returncode)
             run = json.loads(result.stdout)
             if interpolation == 'hardware':
                 accelerated = run['cases']
-            if interpolation == 'unskipped':
+            if interpolation in ('unskipped', 'metal4'):
+                # Empty-space skipping, and Metal 4 submission (#623), change nothing in the pictures.
                 for before, after in zip(accelerated, run['cases']):
-                    assert before['bgra'] == after['bgra'] and before['scalar'] == after['scalar'], 'empty-space skipping changed ' + before['name']
+                    assert before['name'] == after['name'] and before['bgra'] == after['bgra'] and before['scalar'] == after['scalar'], \
+                        '%s changed %s' % ('empty-space skipping' if interpolation == 'unskipped' else 'Metal 4', before['name'])
+            if interpolation == 'metal4':
+                assert run['messages'].get('metal4Slots') == 'idle', 'Metal 4 slots not given back: %r' % run['messages'].get('metal4Slots')
             payload['cases'].extend(run['cases'])
             payload['messages'].update(run['messages'])
 
@@ -481,10 +573,28 @@ def main():
             failures.append('%s was not refused as expected: %r' % (key, m[key][:100]))
     if m['releasedReady'] != 'no':
         failures.append('release() left the renderer ready')
+    # #621: counts are CLUT textures / opacity tables made so far by the renderer that keeps them.
+    for key, expected, meaning in (
+            ('transferTurning', '1/1', 'twelve camera positions and three projections with one transfer function'),
+            ('transferWindow', '1/1', 'a window moving over the same colours and opacities'),
+            ('transferPresets', '7/7', 'two presets alternating six times after the first'),
+            ('transferColourOnly', '8/7', 'new colours over the same opacities'),
+            ('transferOpacityOnly', '8/8', 'new opacities under the same colours'),
+            ('transferVolume', '8/8', 'another volume with the same transfer function'),
+            ('transferViewers', '8/8 1/1', 'two viewers interleaved, each with its own transfer function'),
+            ('transferReleased', '9/9', 'the first frame after release'),
+            ('bridgeSameCurve', '1/1', 'the host sending the same curve in new objects'),
+            ('bridgeNewCurve', '1/2', 'the host sending a new curve')):
+        if m[key] != expected:
+            failures.append('%s: %s made %s CLUTs/opacity tables, expected %s' % (key, meaning, m[key], expected))
+    if m['transferEqual'] != 'yes':
+        failures.append('a renderer keeping its transfer function drew something other than one making it anew')
+    if m['bridgeEqual'] != 'yes':
+        failures.append('the bridge drew the same frame differently after keeping the opacity table')
     if failures:
         raise SystemExit('\n'.join(failures))
-    print('volume metal renderer: %d cases, %d pixels within tolerance; A215 slabs, centre, crop, clipping, shading and refusals hold'
-          % (len(payload['cases']), checked))
+    print('volume metal renderer: %d cases, %d pixels within tolerance; A215 slabs, centre, crop, clipping, shading and refusals hold; '
+          'the kept transfer function draws what a new one draws' % (len(payload['cases']), checked))
     return 0
 
 

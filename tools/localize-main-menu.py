@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Generate localized UI text from the current English XIB, preserving connections."""
+"""Generate localized UI text from the current English XIB, preserving connections.
+
+The Japanese menu had been translated by hand and stopped following the English one: no
+Format menu, and two items the other languages have were missing (#640). Generating it the
+way the Italian and Spanish ones are generated keeps every language's structure, actions,
+identifiers and shortcuts the English's, and a title with no catalog entry stays English.
+"""
 import argparse
 import html
 import json
@@ -8,7 +14,7 @@ import re
 import subprocess
 from xml.sax.saxutils import escape
 root=Path(__file__).resolve().parents[1]
-parser=argparse.ArgumentParser();parser.add_argument('--check',action='store_true');parser.add_argument('--language',choices=['it-IT','es'],default='it-IT');args=parser.parse_args()
+parser=argparse.ArgumentParser();parser.add_argument('--check',action='store_true');parser.add_argument('--language',choices=['it-IT','es','ja-JP'],default='it-IT');args=parser.parse_args()
 base=root/'Horos/Resources/en.lproj/MainMenu.xib'
 target=root/f'Horos/Resources/{args.language}.lproj/MainMenu.xib'
 catalog=json.loads(subprocess.check_output(['plutil','-convert','json','-o','-',str(target.with_name('Localizable.strings'))]))

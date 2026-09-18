@@ -43,7 +43,6 @@
 #import "Window3DController.h"
 #import "Wait.h"
 #import "BrowserController.h"
-#import "VRControllerVPRO.h"
 #import "Notifications.h"
 #import "DicomDatabase.h"
 

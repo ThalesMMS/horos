@@ -1619,12 +1619,19 @@ static NSString *availablePathInDirectory( NSString *directory, NSString *name);
             if (dataDirPath == nil || [unreadable hasPrefix: dataDirPath] == NO)
                 return;
             
+            // The image stored beside an Analyze or NIfTI header leaves with it (#642).
+            NSString *pairedImage = [HorosHeaderImagePair imagePathForHeader: unreadable];
+            
             if (DELETEFILELISTENER)
             {
                 NSError *removeError = nil;
                 if ([[NSFileManager defaultManager] removeItemAtPath: unreadable error: &removeError])
+                {
                     NSLog( @"---- import: %@ could not be indexed; deleted (DELETEFILELISTENER)",
                           unreadable.lastPathComponent);
+                    if (pairedImage)
+                        [[NSFileManager defaultManager] removeItemAtPath: pairedImage error: NULL];
+                }
                 else
                     NSLog( @"---- import: %@ could not be indexed and could not be deleted (%@); "
                           @"it stays in the database folder", unreadable.lastPathComponent,
@@ -1635,13 +1642,25 @@ static NSString *availablePathInDirectory( NSString *directory, NSString *name);
             NSString *kept = availablePathInDirectory( errorsDirPath, unreadable.lastPathComponent);
             NSError *moveError = nil;
             if ([[NSFileManager defaultManager] moveItemAtPath: unreadable toPath: kept error: &moveError])
+            {
                 NSLog( @"---- import: %@ could not be indexed; kept in %@",
                       unreadable.lastPathComponent, errorsDirPath.lastPathComponent);
+                if (pairedImage)
+                {
+                    NSString *keptImage = [HorosHeaderImagePair imagePathBesideStoredHeader: kept];
+                    if ([[NSFileManager defaultManager] fileExistsAtPath: keptImage])
+                        keptImage = availablePathInDirectory( errorsDirPath, pairedImage.lastPathComponent);
+                    if ([[NSFileManager defaultManager] moveItemAtPath: pairedImage toPath: keptImage error: NULL] == NO)
+                        [[NSFileManager defaultManager] removeItemAtPath: pairedImage error: NULL];
+                }
+            }
             else
             {
                 NSLog( @"---- import: %@ could not be indexed and could not be kept (%@); deleted",
                       unreadable.lastPathComponent, moveError.localizedDescription);
                 [[NSFileManager defaultManager] removeItemAtPath: unreadable error: NULL];
+                if (pairedImage)
+                    [[NSFileManager defaultManager] removeItemAtPath: pairedImage error: NULL];
             }
         };
         
@@ -2777,7 +2796,12 @@ static void HorosAssociateCloudReports(NSArray *dicomFilesArray, NSArray *studie
         N2LogExceptionWithStackTrace(e);
     }
     
-    if (rejectedReports && ![(N2ManagedObjectContext *)self.managedObjectContext defersSaves]) {
+    // A report the app archived itself - after an edit that may have come from a client of the shared database -
+    // is no reason to stop the computer serving it with a modal alert (#651): it is logged.
+    if (rejectedReports && generatedByOsiriX)
+        NSLog( @"---- import: %lu report archive(s) written by Horos could not be read back; existing reports were preserved",
+              (unsigned long) rejectedReports);
+    else if (rejectedReports && ![(N2ManagedObjectContext *)self.managedObjectContext defersSaves]) {
         dispatch_async(dispatch_get_main_queue(), ^{
             NSRunAlertPanel(NSLocalizedString(@"Report import", nil), @"%@",
                 NSLocalizedString(@"OK", nil), nil, nil,
@@ -2892,6 +2916,11 @@ static void HorosAssociateCloudReports(NSArray *dicomFilesArray, NSArray *studie
         // are kept and reported together at the end.
         __block NSUInteger copiedTotal = 0, indexedTotal = 0;
         NSArray *filesInput = [[dict objectForKey: @"filesInput"] sortedArrayUsingSelector:@selector(compare:)]; // sorting the array should make the data access faster on optical media
+        // The headers being imported, to know which .img files come with one (#642).
+        NSMutableSet *inputHeaders = [NSMutableSet set];
+        for (NSString *path in filesInput)
+            if ([[[path pathExtension] lowercaseString] isEqualToString: @"hdr"])
+                [inputHeaders addObject: [path lowercaseString]];
         
         for( int i = 0; i < [filesInput count];)
         {
@@ -2921,6 +2950,13 @@ static void HorosAssociateCloudReports(NSArray *dicomFilesArray, NSArray *studie
                         
                         if( copyFiles)
                         {
+                            // An image whose header is imported too is copied with it, under
+                            // the header's new name: copied on its own, under a number of its
+                            // own, neither file could be read (#642).
+                            NSString *imageHeader = [HorosHeaderImagePair headerPathForImage: srcPath];
+                            if (imageHeader && [inputHeaders containsObject: [imageHeader lowercaseString]])
+                                continue;
+                            
                             NSString *extension = [srcPath pathExtension];
                             
                             if( [extension isEqualToString:@""])
@@ -2942,6 +2978,15 @@ static void HorosAssociateCloudReports(NSArray *dicomFilesArray, NSArray *studie
                                         BOOL copySucceeded = HorosCopyFileForPublication(NSFileManager.defaultManager, srcPath, dstPath,
                                             [[dict objectForKey:@"mountedVolume"] boolValue], &copyError);
                                         if (!copySucceeded) {
+                                            failedCopies++;
+                                            if (!copyFailureDetails.count)
+                                                [copyFailureDetails addObject:copyError.localizedDescription ?: NSLocalizedString(@"The file could not be copied.", nil)];
+                                        }
+                                        NSString *pairedImage = copySucceeded ? [HorosHeaderImagePair imagePathForHeader: srcPath] : nil;
+                                        if (pairedImage && HorosCopyFileForPublication(NSFileManager.defaultManager, pairedImage,
+                                                [HorosHeaderImagePair imagePathBesideStoredHeader: dstPath],
+                                                [[dict objectForKey:@"mountedVolume"] boolValue], &copyError) == NO)
+                                        {
                                             failedCopies++;
                                             if (!copyFailureDetails.count)
                                                 [copyFailureDetails addObject:copyError.localizedDescription ?: NSLocalizedString(@"The file could not be copied.", nil)];
@@ -3298,6 +3343,13 @@ static NSString *availablePathInDirectory( NSString *directory, NSString *name)
             srcPath = [srcPath stringByResolvingSymlinksAndAliases];
             BOOL isAlias = ![srcPath isEqualToString:originalSrcPath];
             
+            // The image of an Analyze or NIfTI pair goes into the database with its header, under the
+            // header's new name (#642). Taken on its own it was not a file this database indexes and,
+            // with DELETEFILELISTENER, it was deleted. One already taken along is no longer here.
+            if ([[[srcPath pathExtension] lowercaseString] isEqualToString: @"img"] &&
+                ([HorosHeaderImagePair headerPathForImage: srcPath] || [[NSFileManager defaultManager] fileExistsAtPath: srcPath] == NO))
+                continue;
+            
             if( filesArray.count && !activityFeedbackShown && showGUI.boolValue) {
                 [ThreadsManager.defaultManager addThreadAndStart:thread];
                 [OsiriX setReceivingIcon];
@@ -3546,11 +3598,16 @@ static NSString *availablePathInDirectory( NSString *directory, NSString *name)
                         // dropped into the incoming folder was called "not a DICOM
                         // file this database can index" and, with DELETEFILELISTENER,
                         // deleted - a file the viewer can open, destroyed on arrival.
+                        // A header with its image beside it is a pair, NIfTI or Analyze 7.5
+                        // (which has no magic for -isNIfTIFile: to find); the reader decides.
+                        NSString *pairedImage = [HorosHeaderImagePair imagePathForHeader: srcPath];
+                        
                         if (isDicomFile == YES ||
                             (([DicomFile isFVTiffFile:srcPath] ||
                               [DicomFile isTiffFile:srcPath] ||
                               [DicomFile isNRRDFile:srcPath] ||
                               [DicomFile isNIfTIFile:srcPath] ||
+                              pairedImage ||
                               (indexesAnything && [DicomFile isImageFile:srcPath]))
                              && [[NSFileManager defaultManager] fileExistsAtPath:dstPath] == NO))
                         {
@@ -3585,12 +3642,19 @@ static NSString *availablePathInDirectory( NSString *directory, NSString *name)
                             {
                                 result = [[NSFileManager defaultManager] copyItemAtPath:srcPath toPath: dstPath error:NULL];
                                 [[NSFileManager defaultManager] removeItemAtPath:originalPath error:NULL];
+                                if (result && pairedImage)
+                                {
+                                    [[NSFileManager defaultManager] copyItemAtPath: pairedImage toPath: [HorosHeaderImagePair imagePathBesideStoredHeader: dstPath] error: NULL];
+                                    [[NSFileManager defaultManager] removeItemAtPath: [HorosHeaderImagePair imagePathBesideStoredHeader: originalPath] error: NULL];
+                                }
                             }
                             else
                             {
                                 result = [[NSFileManager defaultManager] moveItemAtPath:srcPath
                                                                                  toPath:dstPath
                                                                                   error:NULL];
+                                if (result && pairedImage)
+                                    [[NSFileManager defaultManager] moveItemAtPath: pairedImage toPath: [HorosHeaderImagePair imagePathBesideStoredHeader: dstPath] error: NULL];
                             }
                             
                             if (result == YES)

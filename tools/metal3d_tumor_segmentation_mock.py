@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Development smoke-test helper for the Horos tumour-segmentation job contract.
 
-Adapted from ystarrev/horos Scripts/metal3d_tumor_segmentation_mock.py at
-SHA 23722fb552d96fa2d60c7f58a6d4ac2c27950f86. This is not a diagnostic tumour
+Adapted from the donor fork's Scripts/metal3d_tumor_segmentation_mock.py;
+provenance in NOTICE. This is not a diagnostic tumour
 algorithm. It exists to exercise `helper --job job.json` until a local nnU-Net
 folder is configured. Missing weights must not be treated as a successful run.
 """

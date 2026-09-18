@@ -1,0 +1,72 @@
+{
+  "repository": "https://github.com/NIFTI-Imaging/nifti_clib",
+  "revision": "8f72d1165aa62320cc6982d6ddd71a7f6b9924c5",
+  "revision_date": "2024-12-20T19:35:31Z",
+  "components": {
+    "nifti1_io": "2.1.0 (NIFTI1_IO_VERSION; gni_version dated 16 Jun 2022)",
+    "znzlib": "3.0.0 (ZNZLIB_VERSION)"
+  },
+  "note": "A snapshot after the 3.0.1 package release, not a tagged release. Only the NIfTI-1 I/O library and znzlib are vendored; NIfTI-2, nifticdf, tools and the build system are not.",
+  "archive": "https://codeload.github.com/NIFTI-Imaging/nifti_clib/tar.gz/8f72d1165aa62320cc6982d6ddd71a7f6b9924c5",
+  "archive_sha256": "298d494c5d60aadfc81e2ecdc6c0f11a19135093a2d4c09b722c60d5d947773b",
+  "files": {
+    "nifti1.h": {
+      "upstream_path": "niftilib/nifti1.h",
+      "size": 70731,
+      "sha256": "fb86abcab6dcb825da340a3252feb314832dc07b1286e25019dfb3dc07b99486",
+      "git_blob_sha1": "c5677a3529a4e0c1bffb1c2b2c8ef50bf83e32ee"
+    },
+    "nifti1_io.c": {
+      "upstream_path": "niftilib/nifti1_io.c",
+      "size": 278220,
+      "sha256": "c55255247e98c0dfe1a52f4b1385da32187d3589a0e5d165f7db5153eb8d6732",
+      "git_blob_sha1": "563d8a92d6b5eb7e32a86a14aaad96a42e88b3f5"
+    },
+    "nifti1_io.h": {
+      "upstream_path": "niftilib/nifti1_io.h",
+      "size": 28416,
+      "sha256": "7e2f249c0e9cfc42367a76a60ac6939e9c99a1cb1f9a9b32396f8bf91475ee7f",
+      "git_blob_sha1": "313a2631b2444456cc77612863b6a0df52b96ce3"
+    },
+    "nifti1_io_version.h": {
+      "upstream_path": "niftilib/nifti1_io_version.h",
+      "size": 753,
+      "sha256": "e55964d835ad538c021ed129ec2e22401b98307ab7b0bdc80f99282f44b5e017",
+      "git_blob_sha1": "ac5e8203b18165865f5dbfb857c0cdce2167c2cd"
+    },
+    "znzlib.c": {
+      "upstream_path": "znzlib/znzlib.c",
+      "size": 8279,
+      "sha256": "0727003f52acec8e5610fa4a46259be4f07671e436267e175ab139fea704eee0",
+      "git_blob_sha1": "4f892e380812e0a10e055c00f7f7043d932f8235"
+    },
+    "znzlib.h": {
+      "upstream_path": "znzlib/znzlib.h",
+      "size": 4248,
+      "sha256": "592f0dfaa1b70ba844b9d830c915f4cb0377a6f5a892847422612561031ea45f",
+      "git_blob_sha1": "ff031687d2d23e777a77c7d6b54cdf8de1ceddfb"
+    },
+    "znzlib_version.h": {
+      "upstream_path": "znzlib/znzlib_version.h",
+      "size": 689,
+      "sha256": "c97ab871e7c1edfc03f6358d77a9f0ea815521c865278610d453aa3eaf095c92",
+      "git_blob_sha1": "d215fb8ed987acdcdd37321fc6631b0bcf8a3810"
+    },
+    "LICENSE": {
+      "upstream_path": "LICENSE",
+      "size": 388,
+      "sha256": "7e79481776a1413c90b452ce9517f2e470d2e4b0b92ff08869a00e0e64416317",
+      "git_blob_sha1": "cd7ce5662d55ac2b6acaf257247aa84ba7a32ad6"
+    }
+  },
+  "replaced": {
+    "description": "The copies these files replaced: nifti1_io library version 1.43 (7 July 2010), revision not recorded; znzlib.c differed from upstream by commented-out declarations.",
+    "sha256": {
+      "nifti1.h": "d401382fc231bd7af80013811333f7988212fb4d828e543349df1cf9db19fcc6",
+      "nifti1_io.c": "c537cab2a2f90ee2c3d7fed0392ae7ddd4418cabf9277896f354528f723f7102",
+      "nifti1_io.h": "4eb16e793b77564bc91d0fcecd55fd1fdea4f49840138b87bad0309ffe6b3b18",
+      "znzlib.c": "c5f12ec9e9f7d9fbc4d59977bd595873cd80c8f15f58f2abeb29e9a029a38c5d",
+      "znzlib.h": "5f1a67ee07c7065a6bcba7a9d31ef07996f5181d6da14175640ed438f285f4ef"
+    }
+  }
+}

@@ -48,17 +48,33 @@
 
 @implementation NSFileManager (N2)
 
+// Hands the item to the system Trash of its own volume (#613).
+//
+// This used to build ~/.Trash/<name> by hand and *delete* whatever was already
+// there under that name before moving the item in - so trashing a file could
+// permanently destroy an earlier, unrelated item the user had discarded. It
+// also sent items on other volumes to the home Trash as a cross-volume copy.
+// The system picks the destination, renames on collision, and on failure the
+// item stays where it was: nothing is ever deleted as a fallback.
 - (void)moveItemAtPathToTrash: (NSString*) path
 {
-	NSString *trashPath = [[@"~/.Trash/" stringByExpandingTildeInPath] stringByAppendingPathComponent:[path lastPathComponent]];
-	NSError *error = nil;
-    [[NSFileManager defaultManager] removeItemAtPath: trashPath error: nil];
-    NSString *originalTrashPath = trashPath;
-    int i = 2;
-    while( [[NSFileManager defaultManager] fileExistsAtPath: trashPath])
-        trashPath = [originalTrashPath stringByAppendingFormat: @" %d", i++];
-        
-    [[NSFileManager defaultManager] moveItemAtPath:path toPath:trashPath error:&error];
+    NSError *error = nil;
+    if (![self moveItemAtPathToTrash:path resultingPath:NULL error:&error] && path.length)
+        NSLog(@"Could not move %@ to the Trash; it was left where it is: %@", path, error.localizedDescription);
+}
+
+- (BOOL)moveItemAtPathToTrash:(NSString*)path resultingPath:(NSString**)resultingPath error:(NSError**)error
+{
+    if (resultingPath) *resultingPath = nil;
+    if (path.length == 0) {
+        if (error) *error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSFileNoSuchFileError userInfo:@{NSLocalizedDescriptionKey: @"No item was named to move to the Trash."}];
+        return NO;
+    }
+    NSURL *resulting = nil;
+    if (![self trashItemAtURL:[NSURL fileURLWithPath:path] resultingItemURL:&resulting error:error])
+        return NO;
+    if (resultingPath) *resultingPath = resulting.path;
+    return YES;
 }
 
 -(NSString*)findSystemFolderOfType:(int)folderType forDomain:(int)domain {
@@ -202,35 +218,62 @@
     return [self confirmDirectoryAtPath: dirPath subDirectory: NO];
 }
 
+// Resolves "X" and "X.noindex" to the directory "X.noindex", moving a legacy
+// "X" directory there when nothing occupies the new name yet (#612).
+//
+// The two branches used to be swapped: a suffixed path looked for a legacy
+// "X.noindex.noindex", and an unsuffixed one cut eight characters off its own
+// name - out of range for a short path. A regular file in the way was deleted.
+// Nothing is deleted now. A file at the destination is an error the caller
+// sees, and when both directories exist both are kept as they are: merging or
+// replacing either one is not a decision a path helper can make.
 -(NSString*)confirmNoIndexDirectoryAtPath:(NSString*)path {
+	// An empty request creates and renames nothing.
+	if (path.length == 0)
+		return nil;
+
+	NSString* const ext = @".noindex";
+
+	// "INCOMING.noindex/" names the same directory as "INCOMING.noindex". This
+	// runs for every file the database stores, so it reads one character
+	// instead of searching.
+	while (path.length > 1 && [path characterAtIndex:path.length-1] == '/')
+		path = [path substringToIndex:path.length-1];
+
 	NSString* pathWithExt;
 	NSString* pathWithoutExt;
-	NSString* const ext = @".noindex";
-	
+
 	if ([path hasSuffix:ext]) {
 		pathWithExt = path;
-		pathWithoutExt = [path stringByAppendingString:ext];
+		pathWithoutExt = [path substringToIndex:path.length-ext.length];
 	} else {
 		pathWithoutExt = path;
-		pathWithExt = [path substringToIndex:path.length-ext.length];
+		pathWithExt = [path stringByAppendingString:ext];
 	}
-	
-	BOOL pathWithoutExtIsDir = YES, pathWithoutExtExists = [self fileExistsAtPath:pathWithoutExt isDirectory:&pathWithoutExtIsDir];
-	BOOL pathWithExtIsDir = YES, pathWithExtExists = [self fileExistsAtPath:pathWithExt isDirectory:&pathWithExtIsDir];
-	
-	if (pathWithExtExists && !pathWithExtIsDir) {
-		[self removeItemAtPath:pathWithExt error:NULL];
-		pathWithExtExists = [self fileExistsAtPath:pathWithExt isDirectory:&pathWithExtIsDir];
-		if (pathWithExtExists) [NSException raise:NSGenericException format:@"Could not delete file at %@", pathWithExt];
+
+	BOOL pathWithExtIsDir = NO, pathWithExtExists = [self fileExistsAtPath:pathWithExt isDirectory:&pathWithExtIsDir];
+
+	if (pathWithExtExists && !pathWithExtIsDir)
+		[NSException raise:NSGenericException format:@"Cannot create directory at %@: a file already exists there and is left untouched", pathWithExt];
+
+	// A last component that is only ".noindex" has no legacy name: its
+	// "unsuffixed" form is the parent folder, which must never be moved into
+	// itself. Read from the last character, without allocating a component.
+	if (!pathWithExtExists && pathWithoutExt.length > 0 && [pathWithoutExt characterAtIndex:pathWithoutExt.length-1] != '/') {
+		BOOL pathWithoutExtIsDir = NO, pathWithoutExtExists = [self fileExistsAtPath:pathWithoutExt isDirectory:&pathWithoutExtIsDir];
+		if (pathWithoutExtExists && pathWithoutExtIsDir) {
+			NSError* error = nil;
+			BOOL moved = [self moveItemAtPath:pathWithoutExt toPath:pathWithExt error:&error];
+			pathWithExtExists = [self fileExistsAtPath:pathWithExt isDirectory:&pathWithExtIsDir];
+			// Another thread may have created the destination meanwhile: then
+			// both directories exist and both are kept, which is not a failure.
+			if (!pathWithExtExists || !pathWithExtIsDir)
+				[NSException raise:NSGenericException format:@"Could not rename directory at %@ to %@: %@", pathWithoutExt, pathWithExt, error.localizedDescription ?: @"no reason given"];
+			if (!moved)
+				NSLog(@"Kept both %@ and %@: the second appeared while the first was being renamed (%@)", pathWithoutExt, pathWithExt, error.localizedDescription);
+		}
 	}
-	
-	if (!pathWithExtExists && pathWithoutExtExists && pathWithoutExtIsDir) {
-		[self moveItemAtPath:pathWithoutExt toPath:pathWithExt error:NULL];
-		pathWithoutExtExists = [self fileExistsAtPath:pathWithoutExt isDirectory:&pathWithoutExtIsDir];
-		pathWithExtExists = [self fileExistsAtPath:pathWithExt isDirectory:&pathWithExtIsDir];
-		if (!pathWithExtExists) [NSException raise:NSGenericException format:@"Could not rename directory at %@ to %@", pathWithoutExt, pathWithExt];
-	}
-	
+
 	return [self confirmDirectoryAtPath:pathWithExt];
 }
 

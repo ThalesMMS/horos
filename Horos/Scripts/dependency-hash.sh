@@ -5,7 +5,7 @@
 # Every dependency used to hash `env|sort` — the whole build environment — plus
 # `git describe --dirty`. Both are far wider than what a dependency compiles
 # from: editing one Objective-C file flips `--dirty` and rebuilds ITK, VTK, GDCM,
-# DCMTK, OpenSSL, OpenJPEG, Grok and CharLS from scratch, and so does moving the
+# DCMTK, OpenSSL, OpenJPEG and CharLS from scratch, and so does moving the
 # code signing team into a variable, which no dependency reads.
 #
 # What is hashed here is the material that actually reaches the dependency's

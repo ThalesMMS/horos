@@ -100,6 +100,7 @@ static float deg2rad = M_PI / 180.0;
 @synthesize exportSliceIntervalSameAsVolumeSliceInterval;
 @synthesize exportSliceInterval, exportTransverseSliceInterval;
 @synthesize dcmIntervalMin, dcmIntervalMax;
+@synthesize renderLifecycle = _renderLifecycle;
 
 + (double) angleBetweenVector:(float*) a andPlane:(float*) orientation
 {
@@ -560,8 +561,8 @@ static float deg2rad = M_PI / 180.0;
 
 - (void) showWindow:(id) sender
 {
-	[HorosCPRRenderLifecycle reset];
-	[HorosCPRRenderLifecycle beginOpeningResampled: HR_PixList != nil];
+	[self.renderLifecycle reset];
+	[self.renderLifecycle beginOpeningResampled: HR_PixList != nil];
 	mprView1.dontUseAutoLOD = YES;
 	mprView2.dontUseAutoLOD = YES;
 	mprView3.dontUseAutoLOD = YES;
@@ -611,7 +612,7 @@ static float deg2rad = M_PI / 180.0;
 	[mprView3 updateViewMPROnLoading:isInitializing];
 	
 	[super showWindow: sender];
-	[HorosCPRRenderLifecycle markOpen];
+	[self.renderLifecycle markOpen];
 	
 	[self setTool: toolsMatrix];
 	[self selectCurvedPathDrawingTool];
@@ -742,9 +743,20 @@ static float deg2rad = M_PI / 180.0;
 		[window disableUpdatesUntilFlush];
 }
 
+- (HorosCPRRenderLifecycle*) renderLifecycle
+{
+	if( _renderLifecycle == nil)
+		_renderLifecycle = [[HorosCPRRenderLifecycle alloc] init];
+	
+	return _renderLifecycle;
+}
+
 - (void) dealloc
 {
 //    [shadingsPresetsController removeObserver:self forKeyPath:@"selectedObjects" context:CPRController.class];
+    
+    [_renderLifecycle release];
+    _renderLifecycle = nil;
     
     [cprVolumeData invalidateData];
     [cprVolumeData release];
@@ -3730,13 +3742,16 @@ static float deg2rad = M_PI / 180.0;
 		[[self window] setAcceptsMouseMovedEvents: NO];
 		
 		windowWillClose = YES;
-		[HorosCPRRenderLifecycle beginClosing];
+		[self.renderLifecycle beginClosing];
 		
 		[[NSUserDefaults standardUserDefaults] setBool: self.displayMousePosition forKey: @"MPRDisplayMousePosition"];
         [[NSUserDefaults standardUserDefaults] setInteger: self.cprType forKey: @"SavedCPRType"];
         
 		[NSObject cancelPreviousPerformRequestsWithTarget: self selector:@selector(updateViewsAccordingToFrame:) object: nil];
 		[NSObject cancelPreviousPerformRequestsWithTarget: self selector:@selector(delayedFullLODRendering:) object: nil];
+		[NSObject cancelPreviousPerformRequestsWithTarget: self selector:@selector(delayedFullLODRendering:) object: mprView1];
+		[NSObject cancelPreviousPerformRequestsWithTarget: self selector:@selector(delayedFullLODRendering:) object: mprView2];
+		[NSObject cancelPreviousPerformRequestsWithTarget: self selector:@selector(delayedFullLODRendering:) object: mprView3];
 		
 		[[NSNotificationCenter defaultCenter] removeObserver: self];
 		
@@ -3753,7 +3768,7 @@ static float deg2rad = M_PI / 180.0;
 		[hiddenVRController release];
 		
 		[ob setContent: nil];	// To allow the dealloc of CPRController ! otherwise memory leak
-		[HorosCPRRenderLifecycle markClosed];
+		[self.renderLifecycle markClosed];
 		
 		[self autorelease];
 	}

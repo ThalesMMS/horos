@@ -3,13 +3,18 @@
 from pathlib import Path
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import tempfile
 
 root = Path(__file__).resolve().parents[1]
-snap = root / 'docs/third-party/ystarrev-horos-23722fb552d96fa2d60c7f58a6d4ac2c27950f86'
-origin = root.parent / 'ystarrev/horos'
+snap = root / 'docs/third-party/donor-horos-23722fb552d96fa2d60c7f58a6d4ac2c27950f86'
+# The donor checkout is a read-only reference that no clone provides. Point
+# HOROS_DONOR_CHECKOUT at it to run the byte-for-byte comparison; without it
+# the snapshot is still checked against its pinned hashes.
+_donor = os.environ.get('HOROS_DONOR_CHECKOUT')
+origin = Path(_donor).expanduser() if _donor else None
 revision = '23722fb552d96fa2d60c7f58a6d4ac2c27950f86'
 origin_license_sha = 'd885acd3300b5464fe5e6774610b35fb2d83192f272be3325d69b89d2d666f38'
 origin_copying_sha = 'c9f740e3eddbb3a01de0d3924a9afd17782567e20c28e55d0e2436376b5c9000'
@@ -26,7 +31,7 @@ def fail(message):
 
 manifest = json.loads((snap / 'MANIFEST.json').read_text())
 if manifest['revision'] != revision:
-    fail('MANIFEST revision is not the documented ystarrev SHA')
+    fail('MANIFEST revision is not the documented donor SHA')
 if sha256(snap / 'LICENSE') != origin_license_sha:
     fail('snapshotted LICENSE hash drifted')
 if sha256(snap / 'COPYING.LESSER') != origin_copying_sha:
@@ -34,7 +39,7 @@ if sha256(snap / 'COPYING.LESSER') != origin_copying_sha:
 if sha256(root / 'COPYING.LESSER') != origin_copying_sha:
     fail('root COPYING.LESSER no longer matches the origin snapshot')
 
-if origin.is_dir():
+if origin is not None and origin.is_dir():
     # The origin is a read-only reference whose working tree may sit on any
     # revision: the Delta-3 phase reads three later commits from the same clone.
     # Compare the snapshot with the blobs of the pinned revision, which is what
@@ -43,7 +48,7 @@ if origin.is_dir():
         subprocess.run(['git', '-C', str(origin), 'cat-file', '-e', revision + '^{commit}'],
                        check=True, capture_output=True)
     except subprocess.CalledProcessError:
-        fail('../ystarrev/horos does not contain the snapshotted revision %s' % revision)
+        fail('the donor checkout does not contain the snapshotted revision %s' % revision)
     for name in ('LICENSE', 'COPYING.LESSER'):
         blob = subprocess.run(['git', '-C', str(origin), 'show', '%s:%s' % (revision, name)],
                               check=True, capture_output=True).stdout
@@ -70,10 +75,11 @@ if workbench_license == origin_license:
     fail('root LICENSE is a blind replacement of the origin file')
 if 'Purview' not in workbench_license or 'HorosCloud' not in workbench_license:
     fail('root LICENSE dropped the Purview/HorosCloud notice')
-if 'Yves Starreveld' not in workbench_license or 'ystarrev/horos' not in workbench_license:
-    fail('root LICENSE does not credit ystarrev/horos and Yves Starreveld')
-if 'GNU Affero General Public License' not in workbench_license:
-    fail('root LICENSE dropped the Grok AGPLv3 notice')
+if 'Yves Starreveld' not in workbench_license:
+    fail('root LICENSE does not credit Yves Starreveld')
+# Nothing links Grok since #617: LICENSE and NOTICE must not say it does.
+if 'Grok' in workbench_license:
+    fail('root LICENSE still says Horos is linked against Grok')
 if 'Lesser General Public License' not in workbench_license:
     fail('root LICENSE dropped the Horos LGPLv3 terms')
 
@@ -83,25 +89,26 @@ about = (root / 'Binaries/Splash/about.html').read_text(encoding='utf-8')
 licenses_html = (root / 'Binaries/Splash/licenses.html').read_text(encoding='utf-8')
 for text, label in ((notice, 'NOTICE'), (readme, 'README.md'), (about, 'about.html'),
                     (licenses_html, 'licenses.html')):
-    if 'Yves Starreveld' not in text or 'ystarrev/horos' not in text:
-        fail('%s does not credit ystarrev/horos and Yves Starreveld' % label)
+    if 'Yves Starreveld' not in text:
+        fail('%s does not credit Yves Starreveld' % label)
     if 'OsiriX' not in text:
         fail('%s dropped OsiriX credit' % label)
 
 if 'HorosCloud' not in notice or 'Do not import that removal' not in notice and 'not imported' not in notice:
     if 'not imported' not in notice.lower() and 'not import' not in notice:
         fail('NOTICE does not keep the HorosCloud/Purview disposition')
-if 'AGPLv3' not in notice or 'not LGPL' not in notice:
-    fail('NOTICE does not flag Grok AGPLv3 as distinct from LGPL')
+if 'Grok' in notice:
+    fail('NOTICE still lists Grok')
+if 'Do not treat the tree as uniformly LGPL' not in notice:
+    fail('NOTICE no longer says the tree is not uniformly LGPL')
 if 'ONNX' not in notice:
     fail('NOTICE does not record that model weights were not imported')
 
 code = r'''
 import Foundation
 
-precondition(LicenseAttribution.ystarrevRevision == "23722fb552d96fa2d60c7f58a6d4ac2c27950f86")
-precondition(LicenseAttribution.ystarrevRepository == "ystarrev/horos")
-precondition(LicenseAttribution.ystarrevAuthor == "Yves Starreveld")
+precondition(LicenseAttribution.donorRevision == "23722fb552d96fa2d60c7f58a6d4ac2c27950f86")
+precondition(LicenseAttribution.donorAuthor == "Yves Starreveld")
 precondition(LicenseAttribution.catalogID == "L368")
 precondition(LicenseAttribution.originLicenseSHA256 == "d885acd3300b5464fe5e6774610b35fb2d83192f272be3325d69b89d2d666f38")
 precondition(LicenseAttribution.originCopyingLesserSHA256 == "c9f740e3eddbb3a01de0d3924a9afd17782567e20c28e55d0e2436376b5c9000")
@@ -109,23 +116,20 @@ precondition(!LicenseAttribution.treatsAllComponentsAsLGPL())
 
 let components = LicenseAttribution.components()
 let ids = Set(components.map(\.identifier))
-for needed in ["horos", "osirix", "ystarrev", "grok", "dcmtk", "itk", "vtk", "gdcm",
+for needed in ["horos", "osirix", "donor", "dcmtk", "itk", "vtk", "gdcm",
                "openjpeg", "openssl", "charls", "horoscloud", "weights"] {
     precondition(ids.contains(needed), "missing \(needed)")
 }
 
-let grok = components.first { $0.identifier == "grok" }!
-precondition(grok.license == "AGPLv3")
-precondition(grok.incorporated)
-precondition(grok.license != "LGPLv3")
+precondition(!ids.contains("grok"), "Grok is listed, but nothing links it since #617")
 let openssl = components.first { $0.identifier == "openssl" }!
 precondition(openssl.license == "Apache-2.0")
 precondition(openssl.sourcePath == "OpenSSL/upstream/LICENSE.txt")
 
-let ystarrev = components.first { $0.identifier == "ystarrev" }!
-precondition(ystarrev.incorporated)
-precondition(ystarrev.origin == "adapted-source")
-precondition(ystarrev.name.contains("Yves Starreveld"))
+let donor = components.first { $0.identifier == "donor" }!
+precondition(donor.incorporated)
+precondition(donor.origin == "adapted-source")
+precondition(donor.name.contains("Yves Starreveld"))
 
 let cloud = components.first { $0.identifier == "horoscloud" }!
 precondition(cloud.incorporated)
@@ -135,10 +139,10 @@ let weights = components.first { $0.identifier == "weights" }!
 precondition(!weights.incorporated)
 
 precondition(LicenseAttribution.preservesPurviewNotice(in: workbenchLicense))
-precondition(LicenseAttribution.creditsYstarrev(in: workbenchLicense))
+precondition(LicenseAttribution.creditsDonor(in: workbenchLicense))
 precondition(!LicenseAttribution.isBlindOriginReplacement(originLicense: originLicense,
                                                         workbenchLicense: workbenchLicense))
-precondition(LicenseAttribution.creditsYstarrev(in: LicenseAttribution.aboutCreditsHTML()))
+precondition(LicenseAttribution.creditsDonor(in: LicenseAttribution.aboutCreditsHTML()))
 precondition(LicenseAttribution.aboutCreditsHTML().contains("AGPLv3"))
 precondition(LicenseAttribution.materialQuestions().count >= 3)
 
@@ -150,7 +154,7 @@ precondition(LicenseAttribution.missingNotices(inDirectory: incomplete).contains
 precondition(LicenseAttribution.missingNotices(inDirectory: incomplete).contains("Splash/licenses.html"))
 precondition(LicenseAttribution.missingNotices(inDirectory: incomplete).contains("Splash/OpenSSL-LICENSE.txt"))
 
-print("PASS: license catalog, Purview, ystarrev credit, AGPL split, bundle notices")
+print("PASS: license catalog, Purview, donor credit, AGPL split, bundle notices")
 '''
 
 with tempfile.TemporaryDirectory(prefix='horos-license-') as d:

@@ -56,6 +56,7 @@ static char rendererKey, uploadedKey, reasonKey, millisecondsKey;
         }
         if (reason) return NO;
 
+        double convertedFrom = [HorosMetalPerformanceTrace now];
         image->ClearImage();
         const unsigned char *bgra = (const unsigned char *)pixels.bytes;
         const float *alpha = (const float *)opacity.bytes;
@@ -71,6 +72,7 @@ static char rendererKey, uploadedKey, reasonKey, millisecondsKey;
                 rgba[destination + 2] = (bgra[source * 4] * 32767u + 127u) / 255u;
                 rgba[destination + 3] = (unsigned short)(fminf(1, fmaxf(0, alpha[source])) * 32767 + 0.5f);
             }
+        [HorosMetalPerformanceTrace recordHostOperation:@"vr.host_convert" startedAt:convertedFrom];
         return YES;
     }
 }
@@ -231,7 +233,9 @@ static char rendererKey, uploadedKey, reasonKey, millisecondsKey;
                                      width:(NSInteger)width height:(NSInteger)height imageRegion:(NSArray *)imageRegion
                                  scalarOut:(NSMutableData *)scalarOut error:(NSError **)error {
     NSAssert([NSThread isMainThread], @"Volume rendering requires the main thread");
+    double snapshotFrom = [HorosMetalPerformanceTrace now];
     NSDictionary *snapshot = [self horosVolumeSnapshot];
+    [HorosMetalPerformanceTrace recordHostOperation:@"vr.host_snapshot" startedAt:snapshotFrom];
     if (camera.count == 12 && !snapshot[@"error"]) {
         NSMutableDictionary *overridden = [NSMutableDictionary dictionaryWithDictionary:snapshot];
         overridden[@"camera"] = camera; overridden[@"near"] = @(near); overridden[@"far"] = @(far);

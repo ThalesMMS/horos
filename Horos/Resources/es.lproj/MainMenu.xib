@@ -2843,7 +2843,7 @@ Gw
                             <action selector="cancelModal:" target="694" id="14538"/>
                         </connections>
                     </button>
-                    <box title="Sin hay suficiente memory" titlePosition="noTitle" id="14472">
+                    <box title="No hay memoria suficiente" titlePosition="noTitle" id="14472">
                         <rect key="frame" x="39" y="4" width="461" height="113"/>
                         <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
                         <view key="contentView" id="6bQ-qN-SO3">

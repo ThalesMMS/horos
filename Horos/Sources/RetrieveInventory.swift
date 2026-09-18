@@ -180,6 +180,38 @@ public final class RetrieveInventory: NSObject {
         if imported != data.imported { data.imported = imported; save() }
     }
 
+    /// Expected instances this attempt received that the index does not hold yet.
+    @objc public var receivedAwaitingImportCount: Int {
+        Self.lock.lock(); defer { Self.lock.unlock() }
+        return attemptReceived.intersection(data.expected.keys).subtracting(data.imported).count
+    }
+
+    /// Waits for what this attempt received to be in the index, refreshing the imported identities
+    /// with `refresh`. Received files are indexed by the importer's timer, after the transfer has
+    /// returned: judged at once, a retrieve that brought every instance was recorded as incomplete
+    /// (#646). Gives up when the count has not dropped for `patience` seconds, and at once when
+    /// `cancelled`. Returns whether nothing is left waiting.
+    @objc(waitForReceivedImportsRefreshing:patience:cancelled:)
+    public func waitForReceivedImports(refreshing refresh: () -> Void, patience: TimeInterval,
+                                       cancelled: () -> Bool) -> Bool {
+        var awaiting = Int.max
+        var lastProgress = ProcessInfo.processInfo.systemUptime
+        while true {
+            refresh()
+            let count = receivedAwaitingImportCount
+            if count == 0 { return true }
+            if cancelled() { return false }
+            let now = ProcessInfo.processInfo.systemUptime
+            if count < awaiting {
+                awaiting = count
+                lastProgress = now
+            } else if now - lastProgress >= patience {
+                return false
+            }
+            Thread.sleep(forTimeInterval: 0.2)
+        }
+    }
+
     @objc public func finish() {
         Self.lock.lock(); defer { Self.lock.unlock() }
         receivers = max(receivers - 1, 0)

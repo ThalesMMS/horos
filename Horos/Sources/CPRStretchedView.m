@@ -432,10 +432,17 @@ extern int splitPosition[ 3];
 {
 	if( rect.size.width > 10)
 	{
-		HorosCPRRenderDecision *decision = [HorosCPRRenderLifecycle beginDrawNamed:@"stretched"];
-		if( decision.accepted == NO)
+		HorosCPRRenderLifecycle *lifecycle = [[self windowController] renderLifecycle];
+		HorosCPRRenderDecision *decision = [lifecycle beginDrawNamed:@"stretched"];
+		if( lifecycle && decision.accepted == NO)
 		{
 			NSLog(@"CPR draw skipped: %@", decision.diagnosis);
+
+			// Returning paints nothing, and nothing marks this view again: the
+			// panel would stay blank. Only the nested pass is unwanted, so ask
+			// for another one once the stack has unwound.
+			if( [decision.phase isEqualToString: @"reentrant"])
+				dispatch_async( dispatch_get_main_queue(), ^{ [self setNeedsDisplay: YES];});
 			return;
 		}
 		_processingRequest = YES;
@@ -448,12 +455,18 @@ extern int splitPosition[ 3];
 					NSLog(@"CPR invalid geometry: %@", geo);
 			}
 			[self _sendNewRequestIfNeeded];
+
+			// The flag suppresses setNeedsDisplay: while the request is built.
+			// Clear it before super draws: the generator's callback is delivered
+			// inside that draw, and a repaint asked for while the flag is up is
+			// dropped for good - nothing marks the view a second time.
+			_processingRequest = NO;
 			[super drawRect: rect];
 		}
 		@finally
 		{
 			_processingRequest = NO;
-			[HorosCPRRenderLifecycle endDrawNamed:@"stretched"];
+			[lifecycle endDrawNamed:@"stretched"];
 		}
 	}
 }
@@ -1537,15 +1550,11 @@ extern int splitPosition[ 3];
         //        request.vertical = NO;
         
         if ([_lastRequest isEqual:request] == NO) {
-			if (request.slabWidth < 2) {
-				CPRVolumeData *curvedVolume;
-				curvedVolume = [CPRGenerator synchronousRequestVolume:request volumeData:_generator.volumeData];
-				
-				[_generator runUntilAllRequestsAreFinished];
-				[self generator:nil didGenerateVolume:curvedVolume request:request];
-			} else {
-				[_generator requestVolume:request];
-			}
+			// Thin slabs used to be reformatted here, on the main thread, and
+			// drawRect waited for them: that is the lag of #221, fixed in the
+			// straightened view and left behind in this one. Ask asynchronously
+			// and paint when the volume arrives.
+			[_generator requestVolume:request];
 			self.lastRequest = request;
         }
         

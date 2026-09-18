@@ -36,7 +36,10 @@ static char planarEnabledKey, planarRendererKey, planarFallbackKey, scalarCLUTKe
 
 @implementation ViewerController (HorosPlanarHost)
 - (BOOL)horosPlanarMetalEnabled {
-    return [objc_getAssociatedObject(self, &planarEnabledKey) boolValue];
+    // Absent means on, as in the MPR: Metal is the viewer's default, and a frame
+    // it declines falls back to the original path with a visible reason.
+    NSNumber *enabled = objc_getAssociatedObject(self, &planarEnabledKey);
+    return enabled ? enabled.boolValue : YES;
 }
 - (void)togglePlanarMetal:(id)sender {
     objc_setAssociatedObject(self, &planarEnabledKey, @(!self.horosPlanarMetalEnabled), OBJC_ASSOCIATION_RETAIN_NONATOMIC);

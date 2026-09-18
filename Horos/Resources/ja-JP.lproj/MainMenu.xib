@@ -1,9 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<document type="com.apple.InterfaceBuilder3.Cocoa.XIB" version="3.0" toolsVersion="13771" targetRuntime="MacOSX.Cocoa" propertyAccessControl="none">
+<document type="com.apple.InterfaceBuilder3.Cocoa.XIB" version="3.0" toolsVersion="14313.18" targetRuntime="MacOSX.Cocoa" propertyAccessControl="none">
     <dependencies>
         <deployment version="101100" identifier="macosx"/>
-        <plugIn identifier="com.apple.InterfaceBuilder.CocoaPlugin" version="13771"/>
-        <capability name="box content view" minToolsVersion="7.0"/>
+        <plugIn identifier="com.apple.InterfaceBuilder.CocoaPlugin" version="14313.18"/>
         <capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0"/>
     </dependencies>
     <objects>
@@ -17,8 +16,8 @@
         <customObject id="-3" userLabel="Application" customClass="NSObject"/>
         <menu title="MainMenu" systemMenu="main" id="29" userLabel="MainMenu">
             <items>
-                <menuItem title="Horos" id="56">
-                    <menu key="submenu" title="Horos" systemMenu="apple" id="57">
+                <menuItem title="OsiriX" id="56">
+                    <menu key="submenu" title="OsiriX" systemMenu="apple" id="57">
                         <items>
                             <menuItem title="Horos について" id="58">
                                 <modifierMask key="keyEquivalentModifierMask"/>
@@ -517,6 +516,74 @@
                                 <connections>
                                     <action selector="selectAll:" target="-1" id="179"/>
                                 </connections>
+                            </menuItem>
+                        </items>
+                    </menu>
+                </menuItem>
+                <menuItem title="フォーマット" id="1474">
+                    <menu key="submenu" title="フォーマット" id="1489">
+                        <items>
+                            <menuItem title="ツールバーをカスタマイズ..." id="11219">
+                                <connections>
+                                    <action selector="customizeViewerToolBar:" target="-1" id="11221"/>
+                                </connections>
+                            </menuItem>
+                            <menuItem title="Restore Views" id="horos-restore-views">
+                                <connections>
+                                    <action selector="restoreWindowState:" target="-1" id="horos-restore-views-action"/>
+                                </connections>
+                            </menuItem>
+                            <menuItem title="全画面表示" keyEquivalent="f" id="11923">
+                                <connections>
+                                    <action selector="fullScreenMenu:" target="-1" id="11924"/>
+                                </connections>
+                            </menuItem>
+                            <menuItem isSeparatorItem="YES" id="12234">
+                                <modifierMask key="keyEquivalentModifierMask" command="YES"/>
+                            </menuItem>
+                            <menuItem title="フォント" id="1482">
+                                <menu key="submenu" title="フォント" systemMenu="font" id="1493">
+                                    <items>
+                                        <menuItem title="フォントを表示" id="1483">
+                                            <modifierMask key="keyEquivalentModifierMask"/>
+                                            <connections>
+                                                <action selector="orderFrontFontPanel:" target="1528" id="1530"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem title="太字" tag="2" keyEquivalent="b" id="1501">
+                                            <connections>
+                                                <action selector="addFontTrait:" target="1528" id="1529"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem title="斜字" tag="1" id="1515">
+                                            <modifierMask key="keyEquivalentModifierMask"/>
+                                            <connections>
+                                                <action selector="addFontTrait:" target="1528" id="1527"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem isSeparatorItem="YES" id="1507">
+                                            <modifierMask key="keyEquivalentModifierMask" command="YES"/>
+                                        </menuItem>
+                                        <menuItem title="大きく" tag="3" keyEquivalent="+" id="1481">
+                                            <connections>
+                                                <action selector="modifyFont:" target="1528" id="1538"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem title="小さく" tag="4" keyEquivalent="-" id="1487">
+                                            <connections>
+                                                <action selector="modifyFont:" target="1528" id="1537"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem isSeparatorItem="YES" id="1472">
+                                            <modifierMask key="keyEquivalentModifierMask" command="YES"/>
+                                        </menuItem>
+                                        <menuItem title="色" keyEquivalent="C" id="1488">
+                                            <connections>
+                                                <action selector="orderFrontColorPanel:" target="-1" id="1520"/>
+                                            </connections>
+                                        </menuItem>
+                                    </items>
+                                </menu>
                             </menuItem>
                         </items>
                     </menu>
@@ -1599,6 +1666,16 @@ CA
                                     </binding>
                                 </connections>
                             </menuItem>
+                            <menuItem title="Show Primary Measurement Only" id="roi-primary-menu">
+                                <connections>
+                                    <action selector="updateViews:" target="694" id="roi-primary-action"/>
+                                    <binding destination="12279" name="value" keyPath="values.ROIPRIMARYMEASUREMENTONLY" id="roi-primary-binding">
+                                        <dictionary key="options">
+                                            <integer key="NSConditionallySetsEnabled" value="0"/>
+                                        </dictionary>
+                                    </binding>
+                                </connections>
+                            </menuItem>
                             <menuItem title="Display Cobb angle" id="14760">
                                 <connections>
                                     <binding destination="12279" name="value" keyPath="values.displayCobbAngle" id="14763">
@@ -2048,7 +2125,7 @@ Gw
                         <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
                         <textFieldCell key="cell" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" state="on" borderStyle="bezel" alignment="left" drawsBackground="YES" id="13359">
                             <font key="font" metaFont="system"/>
-                            <color key="textColor" name="textColor" catalog="System" colorSpace="catalog"/>
+                            <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                             <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
                         </textFieldCell>
                     </textField>
@@ -2274,7 +2351,7 @@ Gw
                 <searchField wantsLayer="YES" verticalHuggingPriority="750" allowsCharacterPickerTouchBarItem="YES" id="11582">
                     <rect key="frame" x="5" y="20" width="185" height="22"/>
                     <autoresizingMask key="autoresizingMask" widthSizable="YES" flexibleMinY="YES" flexibleMaxY="YES"/>
-                    <searchFieldCell key="cell" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" borderStyle="bezel" placeholderString="Search" bezelStyle="round" id="13362">
+                    <searchFieldCell key="cell" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" borderStyle="bezel" placeholderString="検索" bezelStyle="round" id="13362">
                         <font key="font" metaFont="system"/>
                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                         <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
@@ -2463,7 +2540,7 @@ Gw
                         <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
                         <textFieldCell key="cell" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" state="on" borderStyle="bezel" drawsBackground="YES" id="13374">
                             <font key="font" metaFont="system"/>
-                            <color key="textColor" name="textColor" catalog="System" colorSpace="catalog"/>
+                            <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                             <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
                         </textFieldCell>
                     </textField>
@@ -2521,7 +2598,7 @@ Gw
                         <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
                         <textFieldCell key="cell" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" state="on" borderStyle="bezel" drawsBackground="YES" id="13389">
                             <font key="font" metaFont="system"/>
-                            <color key="textColor" name="textColor" catalog="System" colorSpace="catalog"/>
+                            <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                             <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
                         </textFieldCell>
                     </textField>
@@ -2712,7 +2789,7 @@ Gw
                     <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
                     <textFieldCell key="cell" controlSize="small" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" continuous="YES" sendsActionOnEndEditing="YES" state="on" borderStyle="bezel" drawsBackground="YES" id="13838">
                         <font key="font" metaFont="smallSystem"/>
-                        <color key="textColor" name="textColor" catalog="System" colorSpace="catalog"/>
+                        <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                         <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
                     </textFieldCell>
                     <connections>
@@ -2770,21 +2847,21 @@ Gw
                         <rect key="frame" x="39" y="4" width="461" height="113"/>
                         <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
                         <view key="contentView" id="6bQ-qN-SO3">
-                            <rect key="frame" x="2" y="2" width="457" height="109"/>
+                            <rect key="frame" x="3" y="3" width="455" height="107"/>
                             <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                             <subviews>
                                 <imageView id="14504">
-                                    <rect key="frame" x="12" y="71" width="32" height="32"/>
+                                    <rect key="frame" x="12" y="69" width="32" height="32"/>
                                     <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
                                     <imageCell key="cell" refusesFirstResponder="YES" alignment="left" animates="YES" imageScaling="axesIndependently" image="error" id="14507"/>
                                 </imageView>
                                 <imageView id="14505">
-                                    <rect key="frame" x="414" y="71" width="32" height="32"/>
+                                    <rect key="frame" x="414" y="69" width="32" height="32"/>
                                     <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
                                     <imageCell key="cell" refusesFirstResponder="YES" alignment="left" animates="YES" imageScaling="axesIndependently" image="error" id="14506"/>
                                 </imageView>
                                 <textField verticalHuggingPriority="750" horizontalCompressionResistancePriority="1000" allowsCharacterPickerTouchBarItem="YES" id="14501">
-                                    <rect key="frame" x="61" y="86" width="334" height="17"/>
+                                    <rect key="frame" x="61" y="84" width="334" height="17"/>
                                     <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
                                     <textFieldCell key="cell" sendsActionOnEndEditing="YES" alignment="center" title="OK !" id="14510">
                                         <font key="font" metaFont="system"/>
@@ -2862,7 +2939,7 @@ Gw
                         <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
                         <textFieldCell key="cell" controlSize="mini" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" state="on" borderStyle="bezel" title="1234" drawsBackground="YES" id="14494">
                             <font key="font" metaFont="miniSystem"/>
-                            <color key="textColor" name="textColor" catalog="System" colorSpace="catalog"/>
+                            <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                             <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
                         </textFieldCell>
                         <connections>
@@ -2874,7 +2951,7 @@ Gw
                         <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
                         <textFieldCell key="cell" controlSize="mini" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" state="on" borderStyle="bezel" title="0" drawsBackground="YES" id="14493">
                             <font key="font" metaFont="miniSystem"/>
-                            <color key="textColor" name="textColor" catalog="System" colorSpace="catalog"/>
+                            <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                             <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
                         </textFieldCell>
                         <connections>
@@ -2895,7 +2972,7 @@ Gw
                         <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
                         <textFieldCell key="cell" controlSize="mini" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" state="on" borderStyle="bezel" title="0" drawsBackground="YES" id="14491">
                             <font key="font" metaFont="miniSystem"/>
-                            <color key="textColor" name="textColor" catalog="System" colorSpace="catalog"/>
+                            <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                             <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
                         </textFieldCell>
                         <connections>
@@ -3012,7 +3089,7 @@ Gw
                         <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
                         <clipView key="contentView" id="x65-cS-UGw">
                             <rect key="frame" x="1" y="1" width="582" height="128"/>
-                            <autoresizingMask key="autoresizingMask"/>
+                            <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                             <subviews>
                                 <matrix verticalHuggingPriority="750" selectionByRect="NO" autosizesCells="NO" id="12805">
                                     <rect key="frame" x="0.0" y="0.0" width="111" height="113"/>
@@ -3033,13 +3110,12 @@ Gw
                                     </cells>
                                 </matrix>
                             </subviews>
-                            <color key="backgroundColor" white="1" alpha="1" colorSpace="calibratedWhite"/>
                         </clipView>
-                        <scroller key="horizontalScroller" verticalHuggingPriority="750" horizontal="YES" id="13479">
+                        <scroller key="horizontalScroller" wantsLayer="YES" verticalHuggingPriority="750" horizontal="YES" id="13479">
                             <rect key="frame" x="1" y="113" width="582" height="16"/>
                             <autoresizingMask key="autoresizingMask"/>
                         </scroller>
-                        <scroller key="verticalScroller" hidden="YES" verticalHuggingPriority="750" horizontal="NO" id="13478">
+                        <scroller key="verticalScroller" hidden="YES" wantsLayer="YES" verticalHuggingPriority="750" horizontal="NO" id="13478">
                             <rect key="frame" x="-100" y="-100" width="15" height="300"/>
                             <autoresizingMask key="autoresizingMask"/>
                         </scroller>
@@ -3093,7 +3169,7 @@ Gw
                         <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
                         <clipView key="contentView" id="q7Q-H8-RIB">
                             <rect key="frame" x="1" y="1" width="582" height="128"/>
-                            <autoresizingMask key="autoresizingMask"/>
+                            <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                             <subviews>
                                 <matrix verticalHuggingPriority="750" selectionByRect="NO" autosizesCells="NO" id="12937">
                                     <rect key="frame" x="0.0" y="0.0" width="111" height="113"/>
@@ -3114,13 +3190,12 @@ Gw
                                     </cells>
                                 </matrix>
                             </subviews>
-                            <color key="backgroundColor" white="1" alpha="1" colorSpace="calibratedWhite"/>
                         </clipView>
-                        <scroller key="horizontalScroller" verticalHuggingPriority="750" horizontal="YES" id="13481">
+                        <scroller key="horizontalScroller" wantsLayer="YES" verticalHuggingPriority="750" horizontal="YES" id="13481">
                             <rect key="frame" x="1" y="113" width="582" height="16"/>
                             <autoresizingMask key="autoresizingMask"/>
                         </scroller>
-                        <scroller key="verticalScroller" hidden="YES" verticalHuggingPriority="750" horizontal="NO" id="13480">
+                        <scroller key="verticalScroller" hidden="YES" wantsLayer="YES" verticalHuggingPriority="750" horizontal="NO" id="13480">
                             <rect key="frame" x="-100" y="-100" width="15" height="300"/>
                             <autoresizingMask key="autoresizingMask"/>
                         </scroller>
@@ -3198,7 +3273,7 @@ Gw
                 <outlet property="roisMenu" destination="1709" id="12933"/>
             </connections>
         </customObject>
-        <window title="CD/DVD Password" allowsToolTipsWhenApplicationIsInactive="NO" autorecalculatesKeyViewLoop="NO" oneShot="NO" visibleAtLaunch="NO" animationBehavior="default" id="13805" userLabel="Password">
+        <window title="CD/DVD Password" allowsToolTipsWhenApplicationIsInactive="NO" autorecalculatesKeyViewLoop="NO" visibleAtLaunch="NO" animationBehavior="default" id="13805" userLabel="Password">
             <windowStyleMask key="styleMask" titled="YES"/>
             <rect key="contentRect" x="0.0" y="0.0" width="508" height="149"/>
             <rect key="screenRect" x="0.0" y="0.0" width="2560" height="1417"/>
@@ -3241,7 +3316,7 @@ Gw
                         <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
                         <secureTextFieldCell key="cell" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" borderStyle="bezel" drawsBackground="YES" id="13812">
                             <font key="font" metaFont="system"/>
-                            <color key="textColor" name="textColor" catalog="System" colorSpace="catalog"/>
+                            <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                             <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
                             <allowedInputSourceLocales>
                                 <string>NSAllRomanInputSourcesLocaleIdentifier</string>
@@ -3282,7 +3357,7 @@ Gw
                 </subviews>
             </view>
         </window>
-        <window title="CD/DVD Password" allowsToolTipsWhenApplicationIsInactive="NO" autorecalculatesKeyViewLoop="NO" oneShot="NO" visibleAtLaunch="NO" animationBehavior="default" id="13843" userLabel="ZIPPassword">
+        <window title="CD/DVD Password" allowsToolTipsWhenApplicationIsInactive="NO" autorecalculatesKeyViewLoop="NO" visibleAtLaunch="NO" animationBehavior="default" id="13843" userLabel="ZIPPassword">
             <windowStyleMask key="styleMask" titled="YES"/>
             <rect key="contentRect" x="0.0" y="0.0" width="554" height="127"/>
             <rect key="screenRect" x="0.0" y="0.0" width="2560" height="1417"/>
@@ -3353,7 +3428,7 @@ Gw
                         <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
                         <textFieldCell key="cell" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" state="on" borderStyle="bezel" drawsBackground="YES" id="13866">
                             <font key="font" metaFont="system"/>
-                            <color key="textColor" name="textColor" catalog="System" colorSpace="catalog"/>
+                            <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                             <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
                         </textFieldCell>
                         <connections>
@@ -3363,7 +3438,7 @@ Gw
                 </subviews>
             </view>
         </window>
-        <window title="Window" allowsToolTipsWhenApplicationIsInactive="NO" autorecalculatesKeyViewLoop="NO" oneShot="NO" visibleAtLaunch="NO" animationBehavior="default" id="13869" userLabel="Notification">
+        <window title="Window" allowsToolTipsWhenApplicationIsInactive="NO" autorecalculatesKeyViewLoop="NO" visibleAtLaunch="NO" animationBehavior="default" id="13869" userLabel="Notification">
             <windowStyleMask key="styleMask" titled="YES" closable="YES" miniaturizable="YES" resizable="YES"/>
             <rect key="contentRect" x="0.0" y="0.0" width="813" height="462"/>
             <rect key="screenRect" x="0.0" y="0.0" width="2560" height="1417"/>
@@ -3377,11 +3452,11 @@ Gw
                         <rect key="frame" x="17" y="194" width="779" height="223"/>
                         <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
                         <view key="contentView" id="Gh8-Nc-sVY">
-                            <rect key="frame" x="2" y="2" width="775" height="206"/>
+                            <rect key="frame" x="3" y="3" width="773" height="205"/>
                             <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                             <subviews>
                                 <textField verticalHuggingPriority="750" horizontalCompressionResistancePriority="250" setsMaxLayoutWidthAtFirstLayout="YES" allowsCharacterPickerTouchBarItem="YES" id="13874">
-                                    <rect key="frame" x="14" y="177" width="140" height="11"/>
+                                    <rect key="frame" x="14" y="176" width="140" height="11"/>
                                     <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
                                     <textFieldCell key="cell" controlSize="mini" alignment="left" title="# out of #" id="13875">
                                         <font key="font" metaFont="miniSystem"/>
@@ -3402,11 +3477,11 @@ Gw
                                     </connections>
                                 </textField>
                                 <scrollView autohidesScrollers="YES" horizontalLineScroll="16" horizontalPageScroll="10" verticalLineScroll="16" verticalPageScroll="10" usesPredominantAxisScrolling="NO" horizontalScrollElasticity="none" verticalScrollElasticity="none" id="13878">
-                                    <rect key="frame" x="14" y="8" width="744" height="161"/>
+                                    <rect key="frame" x="14" y="7" width="744" height="161"/>
                                     <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
                                     <clipView key="contentView" id="M3f-Ie-25N">
                                         <rect key="frame" x="1" y="0.0" width="742" height="160"/>
-                                        <autoresizingMask key="autoresizingMask"/>
+                                        <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                                         <subviews>
                                             <tableView verticalHuggingPriority="750" allowsExpansionToolTips="YES" alternatingRowBackgroundColors="YES" autosaveColumns="NO" autosaveName="emailNotificationTable" rowHeight="14" headerView="13882" id="13881">
                                                 <rect key="frame" x="0.0" y="0.0" width="742" height="137"/>
@@ -3484,11 +3559,11 @@ Gw
                                             </tableView>
                                         </subviews>
                                     </clipView>
-                                    <scroller key="horizontalScroller" hidden="YES" verticalHuggingPriority="750" horizontal="YES" id="13880">
+                                    <scroller key="horizontalScroller" hidden="YES" wantsLayer="YES" verticalHuggingPriority="750" horizontal="YES" id="13880">
                                         <rect key="frame" x="1" y="145" width="727" height="15"/>
                                         <autoresizingMask key="autoresizingMask"/>
                                     </scroller>
-                                    <scroller key="verticalScroller" hidden="YES" verticalHuggingPriority="750" horizontal="NO" id="13879">
+                                    <scroller key="verticalScroller" hidden="YES" wantsLayer="YES" verticalHuggingPriority="750" horizontal="NO" id="13879">
                                         <rect key="frame" x="728" y="17" width="15" height="128"/>
                                         <autoresizingMask key="autoresizingMask"/>
                                     </scroller>
@@ -3498,7 +3573,7 @@ Gw
                                     </tableHeaderView>
                                 </scrollView>
                                 <searchField wantsLayer="YES" verticalHuggingPriority="750" allowsCharacterPickerTouchBarItem="YES" id="13895">
-                                    <rect key="frame" x="576" y="177" width="182" height="19"/>
+                                    <rect key="frame" x="576" y="176" width="182" height="19"/>
                                     <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
                                     <searchFieldCell key="cell" controlSize="small" lineBreakMode="clipping" selectable="YES" editable="YES" borderStyle="bezel" alignment="left" placeholderString="All" bezelStyle="round" id="13896">
                                         <font key="font" metaFont="smallSystem"/>
@@ -3573,7 +3648,7 @@ Gw
                         <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
                         <textFieldCell key="cell" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" state="on" borderStyle="bezel" alignment="left" drawsBackground="YES" id="13907">
                             <font key="font" metaFont="system"/>
-                            <color key="textColor" name="textColor" catalog="System" colorSpace="catalog"/>
+                            <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                             <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
                         </textFieldCell>
                         <connections>
@@ -3629,7 +3704,7 @@ Gw
                         <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
                         <textFieldCell key="cell" controlSize="small" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" state="on" borderStyle="bezel" title="asdasd" drawsBackground="YES" id="13992">
                             <font key="font" metaFont="smallSystem"/>
-                            <color key="textColor" name="textColor" catalog="System" colorSpace="catalog"/>
+                            <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                             <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
                         </textFieldCell>
                         <connections>
@@ -3654,7 +3729,7 @@ Gw
                 </binding>
             </connections>
         </arrayController>
-        <window title="Window" allowsToolTipsWhenApplicationIsInactive="NO" autorecalculatesKeyViewLoop="NO" oneShot="NO" visibleAtLaunch="NO" animationBehavior="default" id="13928" userLabel="AddStudiesToUser">
+        <window title="Window" allowsToolTipsWhenApplicationIsInactive="NO" autorecalculatesKeyViewLoop="NO" visibleAtLaunch="NO" animationBehavior="default" id="13928" userLabel="AddStudiesToUser">
             <windowStyleMask key="styleMask" titled="YES" closable="YES" miniaturizable="YES" resizable="YES"/>
             <rect key="contentRect" x="0.0" y="0.0" width="813" height="372"/>
             <rect key="screenRect" x="0.0" y="0.0" width="2560" height="1417"/>
@@ -3668,11 +3743,11 @@ Gw
                         <rect key="frame" x="14" y="56" width="782" height="271"/>
                         <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
                         <view key="contentView" id="Pew-XB-RkS">
-                            <rect key="frame" x="2" y="2" width="778" height="254"/>
+                            <rect key="frame" x="3" y="3" width="776" height="253"/>
                             <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                             <subviews>
                                 <textField verticalHuggingPriority="750" horizontalCompressionResistancePriority="250" setsMaxLayoutWidthAtFirstLayout="YES" allowsCharacterPickerTouchBarItem="YES" id="13939">
-                                    <rect key="frame" x="17" y="225" width="140" height="11"/>
+                                    <rect key="frame" x="17" y="224" width="140" height="11"/>
                                     <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
                                     <textFieldCell key="cell" controlSize="mini" alignment="left" title="# out of #" id="13955">
                                         <font key="font" metaFont="miniSystem"/>
@@ -3693,11 +3768,11 @@ Gw
                                     </connections>
                                 </textField>
                                 <scrollView autohidesScrollers="YES" horizontalLineScroll="16" horizontalPageScroll="10" verticalLineScroll="16" verticalPageScroll="10" usesPredominantAxisScrolling="NO" horizontalScrollElasticity="none" verticalScrollElasticity="none" id="13941">
-                                    <rect key="frame" x="17" y="13" width="744" height="204"/>
+                                    <rect key="frame" x="17" y="12" width="744" height="204"/>
                                     <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
                                     <clipView key="contentView" id="nhs-LN-IpG">
                                         <rect key="frame" x="1" y="0.0" width="742" height="203"/>
-                                        <autoresizingMask key="autoresizingMask"/>
+                                        <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                                         <subviews>
                                             <tableView verticalHuggingPriority="750" allowsExpansionToolTips="YES" alternatingRowBackgroundColors="YES" autosaveColumns="NO" autosaveName="emailNotificationTable" rowHeight="14" headerView="13942" id="13943">
                                                 <rect key="frame" x="0.0" y="0.0" width="742" height="180"/>
@@ -3775,11 +3850,11 @@ Gw
                                             </tableView>
                                         </subviews>
                                     </clipView>
-                                    <scroller key="horizontalScroller" hidden="YES" verticalHuggingPriority="750" horizontal="YES" id="13944">
+                                    <scroller key="horizontalScroller" hidden="YES" wantsLayer="YES" verticalHuggingPriority="750" horizontal="YES" id="13944">
                                         <rect key="frame" x="1" y="145" width="727" height="15"/>
                                         <autoresizingMask key="autoresizingMask"/>
                                     </scroller>
-                                    <scroller key="verticalScroller" hidden="YES" verticalHuggingPriority="750" horizontal="NO" id="13945">
+                                    <scroller key="verticalScroller" hidden="YES" wantsLayer="YES" verticalHuggingPriority="750" horizontal="NO" id="13945">
                                         <rect key="frame" x="728" y="17" width="15" height="128"/>
                                         <autoresizingMask key="autoresizingMask"/>
                                     </scroller>
@@ -3789,7 +3864,7 @@ Gw
                                     </tableHeaderView>
                                 </scrollView>
                                 <searchField wantsLayer="YES" verticalHuggingPriority="750" allowsCharacterPickerTouchBarItem="YES" id="13940">
-                                    <rect key="frame" x="579" y="225" width="182" height="19"/>
+                                    <rect key="frame" x="579" y="224" width="182" height="19"/>
                                     <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
                                     <searchFieldCell key="cell" controlSize="small" lineBreakMode="clipping" selectable="YES" editable="YES" borderStyle="bezel" alignment="left" placeholderString="All" bezelStyle="round" id="13954">
                                         <font key="font" metaFont="smallSystem"/>
@@ -4001,7 +4076,7 @@ Gw
                 </subviews>
             </view>
         </window>
-        <window title="Local Database" allowsToolTipsWhenApplicationIsInactive="NO" autorecalculatesKeyViewLoop="NO" oneShot="NO" releasedWhenClosed="NO" frameAutosaveName="" animationBehavior="default" id="aMa-Mw-HRb" customClass="N2OpenGLViewWithSplitsWindow">
+        <window title="Local Database" allowsToolTipsWhenApplicationIsInactive="NO" autorecalculatesKeyViewLoop="NO" releasedWhenClosed="NO" frameAutosaveName="" animationBehavior="default" id="aMa-Mw-HRb" customClass="N2OpenGLViewWithSplitsWindow">
             <windowStyleMask key="styleMask" titled="YES" closable="YES" miniaturizable="YES" resizable="YES"/>
             <rect key="contentRect" x="283" y="305" width="1043" height="691"/>
             <rect key="screenRect" x="0.0" y="0.0" width="2560" height="1417"/>
@@ -4017,29 +4092,29 @@ Gw
                                 <rect key="frame" x="0.0" y="0.0" width="0.0" height="671"/>
                                 <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                                 <subviews>
-                                    <box borderType="none" title="Albums" titlePosition="noTitle" id="11696">
-                                        <rect key="frame" x="0.0" y="0.0" width="0.0" height="193"/>
+                                    <box borderType="none" title="アルバム" titlePosition="noTitle" id="11696">
+                                        <rect key="frame" x="-3" y="-2" width="6" height="198"/>
                                         <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                                         <view key="contentView" id="QOb-bl-4eV">
-                                            <rect key="frame" x="0.0" y="0.0" width="0.0" height="193"/>
+                                            <rect key="frame" x="0.0" y="0.0" width="6" height="198"/>
                                             <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                                             <subviews>
                                                 <scrollView focusRingType="none" autohidesScrollers="YES" horizontalLineScroll="19" horizontalPageScroll="10" verticalLineScroll="19" verticalPageScroll="10" hasHorizontalScroller="NO" usesPredominantAxisScrolling="NO" horizontalScrollElasticity="none" verticalScrollElasticity="none" id="1466" customClass="HorosDatabaseSidebarScrollView">
-                                                    <rect key="frame" x="-1" y="-1" width="192" height="194"/>
+                                                    <rect key="frame" x="-1" y="-1" width="192" height="199"/>
                                                     <autoresizingMask key="autoresizingMask" heightSizable="YES"/>
                                                     <clipView key="contentView" drawsBackground="NO" id="SVE-qJ-JP0">
-                                                        <rect key="frame" x="1" y="0.0" width="190" height="193"/>
-                                                        <autoresizingMask key="autoresizingMask"/>
+                                                        <rect key="frame" x="1" y="0.0" width="190" height="198"/>
+                                                        <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                                                         <subviews>
                                                             <tableView focusRingType="none" verticalHuggingPriority="750" allowsExpansionToolTips="YES" columnAutoresizingStyle="firstColumnOnly" selectionHighlightStyle="sourceList" columnReordering="NO" multipleSelection="NO" emptySelection="NO" autosaveColumns="NO" headerView="13474" id="1465">
-                                                                <rect key="frame" x="0.0" y="0.0" width="190" height="170"/>
+                                                                <rect key="frame" x="0.0" y="0.0" width="190" height="175"/>
                                                                 <autoresizingMask key="autoresizingMask"/>
                                                                 <size key="intercellSpacing" width="3" height="2"/>
                                                                 <color key="backgroundColor" name="_sourceListBackgroundColor" catalog="System" colorSpace="catalog"/>
                                                                 <color key="gridColor" name="gridColor" catalog="System" colorSpace="catalog"/>
                                                                 <tableColumns>
                                                                     <tableColumn identifier="Source" editable="NO" width="187" minWidth="48" maxWidth="1000" id="1463">
-                                                                        <tableHeaderCell key="headerCell" lineBreakMode="truncatingTail" borderStyle="border" alignment="center" title="Albums">
+                                                                        <tableHeaderCell key="headerCell" lineBreakMode="truncatingTail" borderStyle="border" alignment="center" title="アルバム">
                                                                             <font key="font" metaFont="smallSystem"/>
                                                                             <color key="textColor" name="headerTextColor" catalog="System" colorSpace="catalog"/>
                                                                             <color key="backgroundColor" white="0.33333298560000002" alpha="1" colorSpace="calibratedWhite"/>
@@ -4060,11 +4135,11 @@ Gw
                                                         </subviews>
                                                         <nil key="backgroundColor"/>
                                                     </clipView>
-                                                    <scroller key="horizontalScroller" hidden="YES" verticalHuggingPriority="750" doubleValue="0.0051020408163265302" horizontal="YES" id="13473">
+                                                    <scroller key="horizontalScroller" hidden="YES" wantsLayer="YES" verticalHuggingPriority="750" doubleValue="0.0051020408163265302" horizontal="YES" id="13473">
                                                         <rect key="frame" x="-100" y="-100" width="194" height="15"/>
                                                         <autoresizingMask key="autoresizingMask"/>
                                                     </scroller>
-                                                    <scroller key="verticalScroller" hidden="YES" verticalHuggingPriority="750" horizontal="NO" id="13472">
+                                                    <scroller key="verticalScroller" hidden="YES" wantsLayer="YES" verticalHuggingPriority="750" horizontal="NO" id="13472">
                                                         <rect key="frame" x="-100" y="-100" width="15" height="204"/>
                                                         <autoresizingMask key="autoresizingMask"/>
                                                     </scroller>
@@ -4078,21 +4153,21 @@ Gw
                                         <font key="titleFont" size="12" name="LucidaGrande"/>
                                     </box>
                                     <box borderType="none" title="Sources" titlePosition="noTitle" id="11698">
-                                        <rect key="frame" x="0.0" y="194" width="0.0" height="371"/>
+                                        <rect key="frame" x="-3" y="191" width="6" height="381"/>
                                         <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                                         <view key="contentView" id="Y5m-5B-aBR">
-                                            <rect key="frame" x="0.0" y="0.0" width="0.0" height="371"/>
+                                            <rect key="frame" x="0.0" y="0.0" width="6" height="381"/>
                                             <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                                             <subviews>
                                                 <scrollView focusRingType="none" autohidesScrollers="YES" horizontalLineScroll="19" horizontalPageScroll="10" verticalLineScroll="19" verticalPageScroll="10" hasHorizontalScroller="NO" usesPredominantAxisScrolling="NO" horizontalScrollElasticity="none" verticalScrollElasticity="none" id="11692" customClass="HorosDatabaseSidebarScrollView">
-                                                    <rect key="frame" x="-1" y="-1" width="192" height="373"/>
+                                                    <rect key="frame" x="-1" y="-1" width="192" height="383"/>
                                                     <autoresizingMask key="autoresizingMask" heightSizable="YES"/>
                                                     <clipView key="contentView" drawsBackground="NO" id="Gln-GV-aBY">
-                                                        <rect key="frame" x="1" y="0.0" width="190" height="372"/>
-                                                        <autoresizingMask key="autoresizingMask"/>
+                                                        <rect key="frame" x="1" y="0.0" width="190" height="382"/>
+                                                        <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                                                         <subviews>
                                                             <tableView focusRingType="none" verticalHuggingPriority="750" allowsExpansionToolTips="YES" columnAutoresizingStyle="firstColumnOnly" selectionHighlightStyle="sourceList" columnReordering="NO" columnResizing="NO" multipleSelection="NO" emptySelection="NO" autosaveColumns="NO" headerView="13477" id="11693">
-                                                                <rect key="frame" x="0.0" y="0.0" width="190" height="349"/>
+                                                                <rect key="frame" x="0.0" y="0.0" width="190" height="359"/>
                                                                 <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                                                                 <size key="intercellSpacing" width="3" height="2"/>
                                                                 <color key="backgroundColor" name="_sourceListBackgroundColor" catalog="System" colorSpace="catalog"/>
@@ -4129,11 +4204,11 @@ Gw
                                                         </subviews>
                                                         <nil key="backgroundColor"/>
                                                     </clipView>
-                                                    <scroller key="horizontalScroller" hidden="YES" verticalHuggingPriority="750" doubleValue="0.35062066063538821" horizontal="YES" id="13476">
+                                                    <scroller key="horizontalScroller" hidden="YES" wantsLayer="YES" verticalHuggingPriority="750" doubleValue="0.35062066063538821" horizontal="YES" id="13476">
                                                         <rect key="frame" x="-100" y="-100" width="160" height="15"/>
                                                         <autoresizingMask key="autoresizingMask"/>
                                                     </scroller>
-                                                    <scroller key="verticalScroller" hidden="YES" verticalHuggingPriority="750" horizontal="NO" id="13475">
+                                                    <scroller key="verticalScroller" hidden="YES" wantsLayer="YES" verticalHuggingPriority="750" horizontal="NO" id="13475">
                                                         <rect key="frame" x="-30" y="17" width="15" height="244"/>
                                                         <autoresizingMask key="autoresizingMask"/>
                                                     </scroller>
@@ -4147,21 +4222,21 @@ Gw
                                         <font key="titleFont" size="12" name="LucidaGrande"/>
                                     </box>
                                     <box borderType="none" title="Threads" titlePosition="noTitle" id="14167">
-                                        <rect key="frame" x="0.0" y="566" width="0.0" height="105"/>
+                                        <rect key="frame" x="-3" y="567" width="6" height="108"/>
                                         <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                                         <view key="contentView" id="4XI-MM-5AN">
-                                            <rect key="frame" x="0.0" y="0.0" width="0.0" height="105"/>
+                                            <rect key="frame" x="0.0" y="0.0" width="6" height="108"/>
                                             <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                                             <subviews>
                                                 <scrollView focusRingType="none" autohidesScrollers="YES" horizontalLineScroll="40" horizontalPageScroll="5" verticalLineScroll="40" verticalPageScroll="3" hasHorizontalScroller="NO" usesPredominantAxisScrolling="NO" horizontalScrollElasticity="none" verticalScrollElasticity="none" id="14144" customClass="HorosDatabaseSidebarScrollView">
-                                                    <rect key="frame" x="-1" y="-1" width="192" height="107"/>
+                                                    <rect key="frame" x="-1" y="-1" width="192" height="110"/>
                                                     <autoresizingMask key="autoresizingMask" heightSizable="YES"/>
                                                     <clipView key="contentView" drawsBackground="NO" copiesOnScroll="NO" id="ydr-H4-NAn">
-                                                        <rect key="frame" x="1" y="0.0" width="190" height="106"/>
-                                                        <autoresizingMask key="autoresizingMask"/>
+                                                        <rect key="frame" x="1" y="0.0" width="190" height="109"/>
+                                                        <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                                                         <subviews>
                                                             <tableView focusRingType="none" verticalHuggingPriority="750" allowsExpansionToolTips="YES" columnAutoresizingStyle="firstColumnOnly" selectionHighlightStyle="sourceList" columnReordering="NO" columnResizing="NO" multipleSelection="NO" autosaveColumns="NO" typeSelect="NO" rowHeight="38" headerView="14179" id="14153" customClass="ThreadsTableView">
-                                                                <rect key="frame" x="0.0" y="0.0" width="190" height="83"/>
+                                                                <rect key="frame" x="0.0" y="0.0" width="190" height="86"/>
                                                                 <autoresizingMask key="autoresizingMask"/>
                                                                 <size key="intercellSpacing" width="3" height="2"/>
                                                                 <color key="backgroundColor" name="_sourceListBackgroundColor" catalog="System" colorSpace="catalog"/>
@@ -4185,11 +4260,11 @@ Gw
                                                         </subviews>
                                                         <nil key="backgroundColor"/>
                                                     </clipView>
-                                                    <scroller key="horizontalScroller" hidden="YES" verticalHuggingPriority="750" doubleValue="0.71190558445836027" horizontal="YES" id="14155">
+                                                    <scroller key="horizontalScroller" hidden="YES" wantsLayer="YES" verticalHuggingPriority="750" doubleValue="0.71190558445836027" horizontal="YES" id="14155">
                                                         <rect key="frame" x="-100" y="-100" width="336" height="15"/>
                                                         <autoresizingMask key="autoresizingMask"/>
                                                     </scroller>
-                                                    <scroller key="verticalScroller" hidden="YES" verticalHuggingPriority="750" controlSize="small" horizontal="NO" id="14154">
+                                                    <scroller key="verticalScroller" hidden="YES" wantsLayer="YES" verticalHuggingPriority="750" controlSize="small" horizontal="NO" id="14154">
                                                         <rect key="frame" x="184" y="1" width="11" height="42"/>
                                                         <autoresizingMask key="autoresizingMask"/>
                                                     </scroller>
@@ -4225,7 +4300,7 @@ Gw
                                                 <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                                                 <clipView key="contentView" id="cHT-ZM-bts">
                                                     <rect key="frame" x="0.0" y="0.0" width="837" height="668"/>
-                                                    <autoresizingMask key="autoresizingMask"/>
+                                                    <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                                                     <subviews>
                                                         <outlineView focusRingType="exterior" verticalHuggingPriority="750" allowsExpansionToolTips="YES" alternatingRowBackgroundColors="YES" emptySelection="NO" autosaveColumns="NO" headerView="13469" indentationPerLevel="16" autoresizesOutlineColumn="YES" outlineTableColumn="958" id="966" customClass="MyOutlineView">
                                                             <rect key="frame" x="0.0" y="0.0" width="2592" height="645"/>
@@ -4250,7 +4325,7 @@ Gw
                                                                     <tableColumnResizingMask key="resizingMask" userResizable="YES"/>
                                                                 </tableColumn>
                                                                 <tableColumn identifier="reportURL" editable="NO" width="100" minWidth="55" maxWidth="120" id="12364">
-                                                                    <tableHeaderCell key="headerCell" lineBreakMode="truncatingTail" borderStyle="border" alignment="left" title="Report">
+                                                                    <tableHeaderCell key="headerCell" lineBreakMode="truncatingTail" borderStyle="border" alignment="left" title="レポート">
                                                                         <font key="font" metaFont="smallSystem"/>
                                                                         <color key="textColor" name="headerTextColor" catalog="System" colorSpace="catalog"/>
                                                                         <color key="backgroundColor" white="0.33333298560000002" alpha="1" colorSpace="calibratedWhite"/>
@@ -4499,7 +4574,7 @@ Gw
                                                                     <tableColumnResizingMask key="resizingMask" userResizable="YES"/>
                                                                 </tableColumn>
                                                                 <tableColumn identifier="albumsNames" editable="NO" width="120" minWidth="40" maxWidth="200" id="13662">
-                                                                    <tableHeaderCell key="headerCell" lineBreakMode="truncatingTail" borderStyle="border" alignment="left" title="Albums">
+                                                                    <tableHeaderCell key="headerCell" lineBreakMode="truncatingTail" borderStyle="border" alignment="left" title="アルバム">
                                                                         <font key="font" metaFont="smallSystem"/>
                                                                         <color key="textColor" name="headerTextColor" catalog="System" colorSpace="catalog"/>
                                                                         <color key="backgroundColor" name="headerColor" catalog="System" colorSpace="catalog"/>
@@ -4588,11 +4663,11 @@ Gw
                                                         </outlineView>
                                                     </subviews>
                                                 </clipView>
-                                                <scroller key="horizontalScroller" verticalHuggingPriority="750" horizontal="YES" id="13468">
+                                                <scroller key="horizontalScroller" wantsLayer="YES" verticalHuggingPriority="750" horizontal="YES" id="13468">
                                                     <rect key="frame" x="0.0" y="652" width="837" height="16"/>
                                                     <autoresizingMask key="autoresizingMask"/>
                                                 </scroller>
-                                                <scroller key="verticalScroller" verticalHuggingPriority="750" horizontal="NO" id="13467">
+                                                <scroller key="verticalScroller" wantsLayer="YES" verticalHuggingPriority="750" horizontal="NO" id="13467">
                                                     <rect key="frame" x="821" y="23" width="16" height="645"/>
                                                     <autoresizingMask key="autoresizingMask"/>
                                                 </scroller>
@@ -4606,7 +4681,7 @@ Gw
                                                 <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                                                 <clipView key="contentView" drawsBackground="NO" id="vKi-LS-gLS">
                                                     <rect key="frame" x="0.0" y="0.0" width="205" height="668"/>
-                                                    <autoresizingMask key="autoresizingMask"/>
+                                                    <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                                                     <subviews>
                                                         <tableView focusRingType="none" verticalHuggingPriority="750" allowsExpansionToolTips="YES" columnAutoresizingStyle="firstColumnOnly" selectionHighlightStyle="sourceList" columnReordering="NO" multipleSelection="NO" emptySelection="NO" autosaveColumns="NO" rowHeight="29" headerView="14721" id="14724">
                                                             <rect key="frame" x="0.0" y="0.0" width="205" height="645"/>
@@ -4637,11 +4712,11 @@ Gw
                                                     </subviews>
                                                     <nil key="backgroundColor"/>
                                                 </clipView>
-                                                <scroller key="horizontalScroller" hidden="YES" verticalHuggingPriority="750" doubleValue="0.0051020408163265302" horizontal="YES" id="14722">
+                                                <scroller key="horizontalScroller" hidden="YES" wantsLayer="YES" verticalHuggingPriority="750" doubleValue="0.0051020408163265302" horizontal="YES" id="14722">
                                                     <rect key="frame" x="-100" y="-100" width="194" height="15"/>
                                                     <autoresizingMask key="autoresizingMask"/>
                                                 </scroller>
-                                                <scroller key="verticalScroller" hidden="YES" verticalHuggingPriority="750" horizontal="NO" id="14723">
+                                                <scroller key="verticalScroller" hidden="YES" wantsLayer="YES" verticalHuggingPriority="750" horizontal="NO" id="14723">
                                                     <rect key="frame" x="412" y="17" width="16" height="14"/>
                                                     <autoresizingMask key="autoresizingMask"/>
                                                 </scroller>
@@ -4692,7 +4767,7 @@ Gw
                                                                         <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                                                                         <clipView key="contentView" id="mpo-d1-Wrk">
                                                                             <rect key="frame" x="0.0" y="0.0" width="384" height="1"/>
-                                                                            <autoresizingMask key="autoresizingMask"/>
+                                                                            <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                                                                             <subviews>
                                                                                 <matrix verticalHuggingPriority="750" mode="list" allowsEmptySelection="NO" autosizesCells="NO" id="12411" customClass="BrowserMatrix">
                                                                                     <rect key="frame" x="0.0" y="-370" width="424" height="432"/>
@@ -4781,11 +4856,11 @@ Gw
                                                                             </subviews>
                                                                             <color key="backgroundColor" white="1" alpha="1" colorSpace="calibratedWhite"/>
                                                                         </clipView>
-                                                                        <scroller key="horizontalScroller" hidden="YES" verticalHuggingPriority="750" doubleValue="1" horizontal="YES" id="13471">
+                                                                        <scroller key="horizontalScroller" hidden="YES" wantsLayer="YES" verticalHuggingPriority="750" doubleValue="1" horizontal="YES" id="13471">
                                                                             <rect key="frame" x="-100" y="-100" width="470" height="15"/>
                                                                             <autoresizingMask key="autoresizingMask"/>
                                                                         </scroller>
-                                                                        <scroller key="verticalScroller" verticalHuggingPriority="750" horizontal="NO" id="13470">
+                                                                        <scroller key="verticalScroller" wantsLayer="YES" verticalHuggingPriority="750" horizontal="NO" id="13470">
                                                                             <rect key="frame" x="368" y="0.0" width="16" height="1"/>
                                                                             <autoresizingMask key="autoresizingMask"/>
                                                                         </scroller>
@@ -4905,69 +4980,6 @@ Gw
             <behavior key="behavior" changeContents="YES" doesNotDimImage="YES" lightByContents="YES"/>
             <font key="font" metaFont="miniSystem"/>
         </buttonCell>
-        <menuItem title="フォーマット" id="1474">
-            <menu key="submenu" title="フォーマット" id="1489">
-                <items>
-                    <menuItem title="ツールバーをカスタマイズ..." id="11219">
-                        <connections>
-                            <action selector="customizeViewerToolBar:" target="-1" id="11221"/>
-                        </connections>
-                    </menuItem>
-                    <menuItem title="全画面表示" keyEquivalent="f" id="11923">
-                        <connections>
-                            <action selector="fullScreenMenu:" target="-1" id="11924"/>
-                        </connections>
-                    </menuItem>
-                    <menuItem isSeparatorItem="YES" id="12234">
-                        <modifierMask key="keyEquivalentModifierMask" command="YES"/>
-                    </menuItem>
-                    <menuItem title="フォント" id="1482">
-                        <menu key="submenu" title="フォント" systemMenu="font" id="1493">
-                            <items>
-                                <menuItem title="フォントを表示" id="1483">
-                                    <modifierMask key="keyEquivalentModifierMask"/>
-                                    <connections>
-                                        <action selector="orderFrontFontPanel:" target="1528" id="1530"/>
-                                    </connections>
-                                </menuItem>
-                                <menuItem title="太字" tag="2" keyEquivalent="b" id="1501">
-                                    <connections>
-                                        <action selector="addFontTrait:" target="1528" id="1529"/>
-                                    </connections>
-                                </menuItem>
-                                <menuItem title="斜字" tag="1" id="1515">
-                                    <modifierMask key="keyEquivalentModifierMask"/>
-                                    <connections>
-                                        <action selector="addFontTrait:" target="1528" id="1527"/>
-                                    </connections>
-                                </menuItem>
-                                <menuItem isSeparatorItem="YES" id="1507">
-                                    <modifierMask key="keyEquivalentModifierMask" command="YES"/>
-                                </menuItem>
-                                <menuItem title="大きく" tag="3" keyEquivalent="+" id="1481">
-                                    <connections>
-                                        <action selector="modifyFont:" target="1528" id="1538"/>
-                                    </connections>
-                                </menuItem>
-                                <menuItem title="小さく" tag="4" keyEquivalent="-" id="1487">
-                                    <connections>
-                                        <action selector="modifyFont:" target="1528" id="1537"/>
-                                    </connections>
-                                </menuItem>
-                                <menuItem isSeparatorItem="YES" id="1472">
-                                    <modifierMask key="keyEquivalentModifierMask" command="YES"/>
-                                </menuItem>
-                                <menuItem title="色" keyEquivalent="C" id="1488">
-                                    <connections>
-                                        <action selector="orderFrontColorPanel:" target="-1" id="1520"/>
-                                    </connections>
-                                </menuItem>
-                            </items>
-                        </menu>
-                    </menuItem>
-                </items>
-            </menu>
-        </menuItem>
     </objects>
     <resources>
         <image name="Endoscopy" width="32" height="32"/>

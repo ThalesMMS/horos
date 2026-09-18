@@ -38,7 +38,7 @@ public:
  OFCondition writeDicomDir(int,int){if(scenario!=3)[@"new index" writeToFile:outputPath atomically:YES encoding:NSUTF8StringEncoding error:NULL];return OFCondition(scenario!=3);}
 };
 class HorosDicomDirIcons {public: OFCondition addSeriesIcons(const char*,const char*){return OFCondition(scenario!=5);}};
-class OFStandard {public:static void searchDirectoryRecursively(const char*,std::list<std::string>&files,void*,const char*){for(const char* file:{"IMAGE001","DICOMDIR","DICOMDIR.BAK",".DS_Store","SUB/._IMAGE001",".horos-zip-stale/archive.zip"})files.push_back(file);}};
+class OFStandard {public:static void searchDirectoryRecursively(const char*,std::list<std::string>&files,const OFString& pattern,const char*){(void)pattern;for(const char* file:{"IMAGE001","DICOMDIR","DICOMDIR.BAK",".DS_Store","SUB/._IMAGE001",".horos-zip-stale/archive.zip"})files.push_back(file);}};
 @interface DicomDir:NSObject
 + (BOOL)createDicomDirAtDir:(NSString*)path error:(NSError**)error;
 @end

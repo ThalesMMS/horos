@@ -996,8 +996,7 @@ static NSHost *currentHost = nil;
 	[defaultValues setObject: @"0" forKey: @"AutoPlayAnimation"];
 	[defaultValues setObject: @"1" forKey: @"KeepStudiesOfSamePatientTogether"];
 	[defaultValues setObject: @"1" forKey: @"KeepStudiesOfSamePatientTogetherAndGrouped"];
-	[defaultValues setObject: @"1" forKey: @"USEPAPYRUSDCMPIX4"];
-	[defaultValues setObject: @"2" forKey: @"TOOLKITPARSER4"];	// 0:DCM Framework 1:Papyrus 2:DCMTK
+	[defaultValues setObject: @"2" forKey: @"TOOLKITPARSER4"];	// DicomFile +setDefaults reads its presence as "defaults registered"; DCMTK is the only parser
     [defaultValues setObject: @"20" forKey: @"maximumNumberOfConcurrentDICOMAssociations"];
     [defaultValues setObject: @"10000" forKey: @"maximumNumberOfCFindObjects"];
     [defaultValues setObject: @"0" forKey: @"TryIMAGELevelDICOMRetrieveIfLocalImages"];
@@ -1053,7 +1052,6 @@ static NSHost *currentHost = nil;
 	[defaultValues setObject: @"0" forKey: @"COMMENTSAUTOFILL"];
 	[defaultValues setObject: @"http://list.dicom.dcm/DICOMNodes.plist" forKey: @"syncDICOMNodesURL"];
 	[defaultValues setObject: @"http://list.dicom.dcm/OsiriXDB.plist" forKey: @"syncOsiriXDBURL"];
-	[defaultValues setObject: @"1" forKey: @"BurnOsirixApplication"];
 	[defaultValues setObject: @"1" forKey: @"BurnHtml"];
 	[defaultValues setObject: @"0" forKey: @"BurnSupplementaryFolder"];
 	[defaultValues setObject: @"1" forKey: @"splineForROI"];
@@ -1076,7 +1074,7 @@ static NSHost *currentHost = nil;
 	[defaultValues setObject: @"14.0" forKey: @"FONTSIZE"];
 	[defaultValues setObject: @"2" forKey: @"REPORTSMODE"];
 	[defaultValues setObject: URL_HOROS_VIEWER@"/internet.dcm" forKey: @"LASTURL"];
-	[defaultValues setObject: @"0" forKey: @"MAPPERMODEVR"];
+	[defaultValues setObject: @"2" forKey: @"MAPPERMODEVR"];	// 0 cpu, 1 opengl, 2 metal
 	[defaultValues setObject: @"1" forKey: @"STARTCOUNT"];
 	[defaultValues setObject: @"1" forKey: @"editingLevel"];
 	[defaultValues setObject: @"1" forKey: @"publishDICOMBonjour"];

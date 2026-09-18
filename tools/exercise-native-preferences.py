@@ -11,11 +11,25 @@ Reports, from the running development build:
   can be compared;
 - whether the window declares any fullscreen presentation of its own.
 
+The Protocols pane's copy of HANGINGPROTOCOLS (#618), with the window open:
+
+- `protocols` shows the pane (its willSelect makes the copy);
+- `protocols-edit` edits the pane's copy the way the table can: it turns over the
+  Propagate flag of the first modality's Default protocol and adds a protocol to
+  that modality (the pane refuses, with an alert, a new name for Default), records
+  whether the stored value saw either, and shows Locations (the Protocols pane's
+  willUnselect saves);
+- `protocols-inspect` records the first modality's protocols, stored and in the
+  pane's copy, and the value types of the stored Default protocol;
+- `protocols-cycle` alternates Protocols and Locations 50 times.
+
+A step that changes panes only schedules the change on the main run loop.
+
 The window is opened through the host's own menu action and nothing modal is
 called from the debugger: a panel cannot be answered while the process is
 stopped.
 
-    python3 tools/exercise-native-preferences.py --pid N --step open|inspect|merge
+    python3 tools/exercise-native-preferences.py --pid N open|inspect|merge|protocols|protocols-edit|protocols-inspect|protocols-cycle
 """
 import argparse
 import json
@@ -26,7 +40,8 @@ import uuid
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--pid', type=int, required=True)
-parser.add_argument('step', choices=['open', 'inspect', 'merge'])
+parser.add_argument('step', choices=['open', 'inspect', 'merge', 'protocols', 'protocols-edit', 'protocols-inspect',
+                                     'protocols-cycle'])
 parser.add_argument('--label', default=None)
 parser.add_argument('--output', type=Path, default=Path('local-validation/issue-380-native'))
 args = parser.parse_args()
@@ -37,6 +52,40 @@ args.output.mkdir(parents=True, exist_ok=True)
 out_dir = args.output.resolve()
 report = out_dir / (args.label + '.json')
 staged = report.with_name(report.name + '.' + uuid.uuid4().hex + '.partial')
+
+# The Protocols pane (whether or not it is showing), its copy and the stored value.
+PROTOCOLS_STATE = r'''
+id pw618 = (id)[(Class)objc_getClass("PreferencesWindowController") sharedPreferencesWindowController];
+id list618 = (id)[(NSObject*)pw618 valueForKey:@"panesListView"];
+id pane618 = nil;
+for (long i618 = 0; i618 < (long)[list618 itemsCount]; i618++) {
+  id ctx618 = (id)[list618 contextForItemAtIndex:i618];
+  if ([(NSString*)[(NSObject*)ctx618 valueForKey:@"resourceName"] isEqualToString:@"OSIHangingPreferencePanePref"])
+    pane618 = (id)[(NSObject*)ctx618 valueForKey:@"pane"];
+}
+p380[@"currentPane"] = (NSString*)[(NSObject*)[(NSObject*)pw618 valueForKey:@"currentContext"] valueForKey:@"title"] ?: @"";
+p380[@"paneClass"] = pane618 ? (NSString*)[(NSObject*)[(NSObject*)pane618 class] description] : @"";
+NSDictionary *copy618 = pane618 ? (NSDictionary*)[(NSObject*)pane618 valueForKey:@"hangingProtocols"] : nil;
+NSDictionary *stored618 = (NSDictionary*)[[NSUserDefaults standardUserDefaults] objectForKey:@"HANGINGPROTOCOLS"];
+p380[@"copyIsStoredObject"] = @(copy618 != nil && copy618 == stored618);
+p380[@"copyEqualsStored"] = @((BOOL)[stored618 isEqual:copy618]);
+p380[@"storedModalities"] = @((long)[stored618 count]);
+p380[@"copyModalities"] = @((long)[copy618 count]);
+NSString *modality618 = (NSString*)[(NSArray*)[(NSArray*)[(copy618 ?: stored618) allKeys] sortedArrayUsingSelector:@selector(compare:)] firstObject];
+p380[@"modality"] = modality618 ?: @"";
+id first618 = modality618 ? (id)[(NSArray*)[copy618 objectForKey:modality618] firstObject] : nil;
+NSDictionary *storedFirst618 = modality618 ? (NSDictionary*)[(NSArray*)[stored618 objectForKey:modality618] firstObject] : nil;
+NSArray *copyList618 = modality618 ? (NSArray*)[copy618 objectForKey:modality618] : nil;
+NSArray *storedList618 = modality618 ? (NSArray*)[stored618 objectForKey:modality618] : nil;
+p380[@"copyNames"] = (NSArray*)[copyList618 valueForKey:@"Study Description"] ?: @[];
+p380[@"storedNames"] = (NSArray*)[storedList618 valueForKey:@"Study Description"] ?: @[];
+p380[@"copyPropagate"] = (id)[(NSDictionary*)first618 objectForKey:@"Propagate"] ?: @"";
+p380[@"storedPropagate"] = (id)[storedFirst618 objectForKey:@"Propagate"] ?: @"";
+NSMutableDictionary *types618 = [NSMutableDictionary dictionary];
+for (NSString *key618 in (NSArray*)[storedFirst618 allKeys])
+  (void)[types618 setObject:(NSString*)[(NSObject*)[(NSObject*)[storedFirst618 objectForKey:key618] classForCoder] description] forKey:key618];
+p380[@"storedFirstTypes"] = types618;
+'''
 
 steps = {
     'open': r'''
@@ -88,6 +137,34 @@ if ([servers380 count]) {
   p380[@"changedKeys"] = changed380;
   p380[@"editedKeys"] = (NSArray*)[(Class)objc_getClass("HorosDICOMwebNodeEditor") editedKeys];
 }
+''',
+    'protocols': r'''
+id pw618 = (id)[(Class)objc_getClass("PreferencesWindowController") sharedPreferencesWindowController];
+(void)[(NSObject*)pw618 performSelector:@selector(setCurrentContextWithResourceName:) withObject:@"OSIHangingPreferencePanePref" afterDelay:0.1];
+p380[@"scheduled"] = @YES;
+''',
+    'protocols-edit': PROTOCOLS_STATE + r'''
+if (first618 && [(NSString*)[(NSObject*)[(NSObject*)pane618 class] description] isEqualToString:@"OSIHangingPreferencePanePref"]) {
+  BOOL propagate618 = (BOOL)[(NSNumber*)[(NSDictionary*)first618 objectForKey:@"Propagate"] boolValue];
+  (void)[(NSMutableDictionary*)first618 setObject:@(!propagate618) forKey:@"Propagate"];
+  NSMutableDictionary *added618 = (NSMutableDictionary*)[NSMutableDictionary dictionaryWithDictionary:(NSDictionary*)first618];
+  (void)[added618 setObject:@"Added in the #618 check" forKey:@"Study Description"];
+  (void)[(NSMutableArray*)[copy618 objectForKey:modality618] addObject:added618];
+  NSDictionary *stored618b = (NSDictionary*)[[NSUserDefaults standardUserDefaults] objectForKey:@"HANGINGPROTOCOLS"];
+  p380[@"storedNamesAfterEdit"] = (NSArray*)[(NSArray*)[stored618b objectForKey:modality618] valueForKey:@"Study Description"] ?: @[];
+  p380[@"storedPropagateAfterEdit"] = (id)[(NSDictionary*)[(NSArray*)[stored618b objectForKey:modality618] objectAtIndex:0] objectForKey:@"Propagate"] ?: @"";
+  p380[@"copyNamesAfterEdit"] = (NSArray*)[(NSArray*)[copy618 objectForKey:modality618] valueForKey:@"Study Description"] ?: @[];
+  p380[@"copyPropagateAfterEdit"] = (id)[(NSDictionary*)first618 objectForKey:@"Propagate"] ?: @"";
+  (void)[(NSObject*)pw618 performSelector:@selector(setCurrentContextWithResourceName:) withObject:@"OSILocationsPreferencePanePref" afterDelay:0.1];
+  p380[@"scheduled"] = @YES;
+}
+''',
+    'protocols-inspect': PROTOCOLS_STATE,
+    'protocols-cycle': r'''
+id pw618 = (id)[(Class)objc_getClass("PreferencesWindowController") sharedPreferencesWindowController];
+for (long i618 = 0; i618 < 100; i618++)
+  (void)[(NSObject*)pw618 performSelector:@selector(setCurrentContextWithResourceName:) withObject:(i618 % 2 ? @"OSILocationsPreferencePanePref" : @"OSIHangingPreferencePanePref") afterDelay:0.1 + 0.05 * i618];
+p380[@"scheduled"] = @100;
 ''',
 }
 

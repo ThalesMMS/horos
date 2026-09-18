@@ -456,7 +456,11 @@ static NSData *HorosSendDatabaseRequest(NSData *request, NSString *address, NSIn
 	NSData* response = [self synchronousRequest:request urgent:YES];
 	if (!response.length) [NSException raise:NSObjectInaccessibleException format:@"%@", NSLocalizedString(@"Failed to connect to the remote host. Is database sharing activated on the distant computer?", nil)];
 	if (response.length != sizeof(int)) [NSException raise:NSInternalInconsistencyException format:@"%@", NSLocalizedString(@"Invalid response data from remote host.", nil)];
-	return NSSwapBigIntToHost(*((int*)response.bytes));
+	unsigned int size = NSSwapBigIntToHost(*((unsigned int*)response.bytes));
+	// A server that cannot describe its index in four bytes says so (#637).
+	if (size == HorosSharedDatabaseRequests.indexTooLargeForReply)
+		[NSException raise:NSObjectInaccessibleException format:@"%@", NSLocalizedString(@"The remote database index is 4 GB or larger and cannot be transferred by database sharing.", nil)];
+	return size;
 }
 
 @synthesize password;
@@ -910,6 +914,9 @@ enum RemoteDicomDatabaseStudiesAlbumAction { RemoteDicomDatabaseStudiesAlbumActi
 		[RemoteDicomDatabase _data:request appendStringUTF8:localPath];
 	
     NSMutableDictionary *context = [NSMutableDictionary dictionaryWithObject:localPaths forKey:@"expected"];
+    // The first attempt needs its protocol state as much as a retry does: without it the
+    // handler found no files remaining and refused every download (#644).
+    HorosResetRemoteDownload(context);
     @try {
         [self synchronousRequest:request urgent:YES dataHandlerTarget:self selector:@selector(_connection:handleData_fetchDataForImage:context:) context:context];
         return [[context objectForKey:@"remaining"] count] == 0 && [context objectForKey:@"state"] != nil;

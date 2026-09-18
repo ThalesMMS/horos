@@ -368,24 +368,50 @@ public final class VolumeMetalRenderer {
     let queue: MTLCommandQueue
     let pipeline: MTLComputePipelineState
     private let brickPipeline: MTLComputePipelineState
+    /// How uploads and renders reach the GPU (#623); the kernels and their results are the same on either.
+    public let backend: MetalComputeBackend
+    private let submitter: Metal4ComputeSubmitter?
+    /// The Metal 4 submission slots: made, in flight and idle; nil on Metal 3.
+    var submissionSlots: (made: Int, inFlight: Int, idle: Int)? { submitter?.slots }
     private var brickRanges: MTLBuffer?
     private var texture: MTLTexture?
+    /// On Metal 4, a residency set holding the installed volume and its bounds, used by every pass on them (#623).
+    private var volumeResidency: MTLResidencySet?
+    private var volumeResidentResources: Set<ObjectIdentifier> = []
     private var uploaded: ResliceVolume?
     private var outputBuffer: MTLBuffer?, scalarBuffer: MTLBuffer?
     public private(set) var volumeBytes = 0
+    // The transfer function on the GPU (#621), kept while its colours or opacities stay the same: a frame that
+    // moves only the camera, the window or the crop makes nothing. A change makes new objects rather than
+    // writing into ones a command buffer may still read. One of each is kept, so switching presets does not
+    // grow anything; release() drops them.
+    private var colourTable: (colour: Data, texture: MTLTexture)?
+    private var opacityTable: (opacity: [Float], values: MTLBuffer, prefix: MTLBuffer)?
+    /// CLUT textures and opacity buffers made so far.
+    public private(set) var colourTableUploads = 0, opacityTableUploads = 0
 
-    public init(device: MTLDevice, hardwareFiltering: Bool = true, emptySpaceSkipping: Bool = true) throws {
+    public init(device: MTLDevice, hardwareFiltering: Bool = true, emptySpaceSkipping: Bool = true,
+                backend: MetalComputeBackend = .metal3) throws {
+        let traceStart = MetalPerformanceTrace.now()
         self.device = device
         guard let queue = device.makeCommandQueue() else { throw ResliceFailure.device("Metal cannot create a command queue.") }
         self.queue = queue
-        let options = MTLCompileOptions()
-        options.preprocessorMacros = ["VOLUME_HARDWARE_FILTERING": NSNumber(value: hardwareFiltering && device.supports32BitFloatFiltering),
-                                      "VOLUME_EMPTY_SPACE_SKIP": NSNumber(value: emptySpaceSkipping)]
-        let library = try device.makeLibrary(source: Self.shader, options: options)
-        guard let function = library.makeFunction(name: "volumeRender") else { throw ResliceFailure.device("The volume kernel is missing.") }
-        pipeline = try device.makeComputePipelineState(function: function)
-        guard let brickFunction = library.makeFunction(name: "volumeBrickRanges") else { throw ResliceFailure.device("The volume bounds kernel is missing.") }
-        brickPipeline = try device.makeComputePipelineState(function: brickFunction)
+        self.backend = backend
+        submitter = backend == .metal4
+            ? try Metal4ComputeSubmitter.shared(for: device)
+            : nil
+        // Compiled once per device and option combination, shared with every other VR engine (#622). Hardware
+        // filtering enters the key as the device resolves it.
+        let (pipelines, compiled) = try MetalComputePipelineCache.pipelines(
+            device: device,
+            configuration: MetalComputePipelineCache.Configuration(
+                source: Self.shader,
+                macros: ["VOLUME_HARDWARE_FILTERING": hardwareFiltering && device.supports32BitFloatFiltering,
+                         "VOLUME_EMPTY_SPACE_SKIP": emptySpaceSkipping],
+                functions: ["volumeRender", "volumeBrickRanges"]))
+        pipeline = pipelines["volumeRender"]!
+        brickPipeline = pipelines["volumeBrickRanges"]!
+        MetalPerformanceTrace.record("vr.pipeline", startedAt: traceStart, extra: ["cold": compiled])
     }
 
     public var isReady: Bool { texture != nil }
@@ -396,24 +422,90 @@ public final class VolumeMetalRenderer {
     }
 
     public func upload(_ volume: ResliceVolume) throws {
+        let traceStart = MetalPerformanceTrace.now()
         let (texture, bytes) = try MPRMetalReslicer.makeTexture(device: device, volume: volume)
         let grid = SIMD3((volume.width + 7) / 8, (volume.height + 7) / 8, (volume.depth + 7) / 8)
-        guard let ranges = device.makeBuffer(length: grid.x * grid.y * grid.z * 8, options: .storageModePrivate),
-              let command = queue.makeCommandBuffer(), let encoder = command.makeComputeCommandEncoder()
+        guard let ranges = device.makeBuffer(length: grid.x * grid.y * grid.z * 8, options: .storageModePrivate)
+        else { throw ResliceFailure.memory("Metal refused the volume bounds.") }
+        if let submitter {
+            // Metal 4 (#623): the bounds pass is its own submission, finished before any render reads them. The
+            // volume and its bounds go into one residency set that every pass on them uses; residency is not
+            // requested at once, which made opening slower than on Metal 3.
+            let residency = try device.makeResidencySet(descriptor: MTLResidencySetDescriptor())
+            residency.addAllocation(texture); residency.addAllocation(ranges)
+            residency.commit()
+            let times: Metal4ComputeSubmitter.Times
+            do {
+                times = try submitter.dispatch(pipeline: brickPipeline, textures: [texture], buffers: [ranges], uniformsIndex: nil,
+                                               parameters: UnsafeRawBufferPointer(start: nil, count: 0),
+                                               size: MTLSize(width: grid.x, height: grid.y, depth: grid.z),
+                                               threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1), groups: true,
+                                               resident: residency, residentResources: [ObjectIdentifier(texture), ObjectIdentifier(ranges)])
+            } catch {
+                MetalPerformanceTrace.record("vr.upload.metal4", startedAt: traceStart, committedAt: nil, completedAt: nil,
+                                             gpuStartTime: 0, gpuEndTime: 0, failed: true, finishedAt: nil)
+                throw error
+            }
+            MetalPerformanceTrace.record("vr.upload.metal4", startedAt: traceStart, committedAt: times.committedAt,
+                                         completedAt: times.observedAt, gpuStartTime: times.gpuStartTime,
+                                         gpuEndTime: times.gpuEndTime, failed: false, finishedAt: times.observedAt,
+                                         extra: ["bytes": bytes])
+            brickRanges = ranges
+            self.texture = texture; uploaded = volume; volumeBytes = bytes
+            volumeResidency = residency
+            volumeResidentResources = [ObjectIdentifier(texture), ObjectIdentifier(ranges)]
+            return
+        }
+        guard let command = queue.makeCommandBuffer(), let encoder = command.makeComputeCommandEncoder()
         else { throw ResliceFailure.memory("Metal refused the volume bounds.") }
         encoder.setComputePipelineState(brickPipeline)
         encoder.setTexture(texture, index: 0); encoder.setBuffer(ranges, offset: 0, index: 0)
         encoder.dispatchThreadgroups(MTLSize(width: grid.x, height: grid.y, depth: grid.z), threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
-        encoder.endEncoding(); command.commit(); command.waitUntilCompleted()
+        encoder.endEncoding()
+        let committedAt = MetalPerformanceTrace.now()
+        command.commit(); command.waitUntilCompleted()
+        let completedAt = MetalPerformanceTrace.now()
+        MetalPerformanceTrace.record("vr.upload", startedAt: traceStart, committedAt: committedAt, completedAt: completedAt,
+                                     command: command, finishedAt: completedAt, extra: ["bytes": bytes])
         guard command.status == .completed else { throw command.error ?? ResliceFailure.device("The volume bounds failed.") }
         brickRanges = ranges
         self.texture = texture; uploaded = volume; volumeBytes = bytes
     }
 
     public func release() {
-        texture = nil; uploaded = nil; volumeBytes = 0
+        texture = nil; uploaded = nil; volumeBytes = 0; volumeResidency = nil; volumeResidentResources = []
         outputBuffer = nil; scalarBuffer = nil
         brickRanges = nil
+        colourTable = nil; opacityTable = nil
+    }
+
+    /// The CLUT texture of `colour`, made only when the colours differ from the kept one.
+    private func colourTexture(for colour: Data) throws -> MTLTexture {
+        if let kept = colourTable, kept.colour == colour { return kept.texture }
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: 256, height: 1, mipmapped: false)
+        descriptor.storageMode = .shared; descriptor.usage = .shaderRead
+        guard let texture = device.makeTexture(descriptor: descriptor) else { throw ResliceFailure.device("Metal refused the colour table.") }
+        colour.withUnsafeBytes { bytes in
+            texture.replace(region: MTLRegionMake2D(0, 0, 256, 1), mipmapLevel: 0, withBytes: bytes.baseAddress!, bytesPerRow: 1024)
+        }
+        colourTable = (colour, texture)
+        colourTableUploads += 1
+        return texture
+    }
+
+    /// The opacities and their running count of non-zero entries (the kernel's empty-space test), made only
+    /// when the opacities differ from the kept ones.
+    private func opacityBuffers(for opacity: [Float]) throws -> (values: MTLBuffer, prefix: MTLBuffer) {
+        if let kept = opacityTable, kept.opacity == opacity { return (kept.values, kept.prefix) }
+        var prefix: [UInt32] = [0]
+        prefix.reserveCapacity(opacity.count + 1)
+        for alpha in opacity { prefix.append(prefix.last! + (alpha > 0 ? 1 : 0)) }
+        guard let values = device.makeBuffer(bytes: opacity, length: 256 * 4, options: .storageModeShared),
+              let counts = device.makeBuffer(bytes: prefix, length: prefix.count * MemoryLayout<UInt32>.stride, options: .storageModeShared)
+        else { throw ResliceFailure.memory("Metal refused the opacity table.") }
+        opacityTable = (opacity, values, counts)
+        opacityTableUploads += 1
+        return (values, counts)
     }
 
     struct Params {
@@ -426,21 +518,17 @@ public final class VolumeMetalRenderer {
     }
 
     public func render(_ request: VolumeRenderRequest) throws -> VolumeRenderResult {
+        let traceStart = MetalPerformanceTrace.now()
         guard let texture, let uploaded, let brickRanges else { throw ResliceFailure.device("No volume is uploaded.") }
         let count = request.width * request.height
         if (outputBuffer?.length ?? 0) < count * 4 || (scalarBuffer?.length ?? 0) < count * 4 {
             outputBuffer = device.makeBuffer(length: count * 4, options: .storageModeShared)
             scalarBuffer = device.makeBuffer(length: count * 4, options: .storageModeShared)
         }
-        guard let output = outputBuffer, let scalar = scalarBuffer,
-              let opacity = device.makeBuffer(bytes: request.transfer.opacity, length: 256 * 4, options: .storageModeShared)
+        guard let output = outputBuffer, let scalar = scalarBuffer
         else { throw ResliceFailure.memory("Metal refused a \(VolumeAllocation.describe(byteCount: count * 8)) image.") }
-        let tableDescriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: 256, height: 1, mipmapped: false)
-        tableDescriptor.storageMode = .shared; tableDescriptor.usage = .shaderRead
-        guard let clut = device.makeTexture(descriptor: tableDescriptor) else { throw ResliceFailure.device("Metal refused the colour table.") }
-        request.transfer.colour.withUnsafeBytes { bytes in
-            clut.replace(region: MTLRegionMake2D(0, 0, 256, 1), mipmapLevel: 0, withBytes: bytes.baseAddress!, bytesPerRow: 1024)
-        }
+        let clut = try colourTexture(for: request.transfer.colour)
+        let opacity = try opacityBuffers(for: request.transfer.opacity)
         let camera = request.camera
         let aspect = Float(request.viewportSize.x) / Float(request.viewportSize.y)
         let halfHeight: Float = camera.parallel ? camera.parallelScale : tan(camera.viewAngle * Float.pi / 360)
@@ -461,29 +549,65 @@ public final class VolumeMetalRenderer {
             size: SIMD4(UInt32(request.width), UInt32(request.height), maxSteps, 0),
             viewport: SIMD4(UInt32(request.viewportSize.x), UInt32(request.viewportSize.y),
                             UInt32(request.viewportOrigin.x), UInt32(request.viewportOrigin.y)))
+        if let submitter {
+            // Metal 4 (#623): the slot's uniforms carry the parameters; the images are copied after the feedback.
+            let started = DispatchTime.now().uptimeNanoseconds
+            let times: Metal4ComputeSubmitter.Times
+            do {
+                times = try withUnsafeBytes(of: &params) { parameters in
+                    try submitter.dispatch(pipeline: pipeline, textures: [texture, clut],
+                                           buffers: [opacity.values, output, scalar, nil, brickRanges, opacity.prefix],
+                                           uniformsIndex: 3, parameters: parameters,
+                                           size: MTLSize(width: request.width, height: request.height, depth: 1),
+                                           threadsPerThreadgroup: MTLSize(width: 8, height: 8, depth: 1),
+                                           resident: volumeResidency, residentResources: volumeResidentResources)
+                }
+            } catch {
+                MetalPerformanceTrace.record("vr.render.metal4", startedAt: traceStart, committedAt: nil, completedAt: nil,
+                                             gpuStartTime: 0, gpuEndTime: 0, failed: true, finishedAt: nil)
+                throw error
+            }
+            let milliseconds = Double(DispatchTime.now().uptimeNanoseconds - started) / 1e6
+            let result = VolumeRenderResult(bgra: Data(bytes: output.contents(), count: count * 4),
+                                            scalar: Data(bytes: scalar.contents(), count: count * 4),
+                                            milliseconds: milliseconds)
+            MetalPerformanceTrace.record("vr.render.metal4", startedAt: traceStart, committedAt: times.committedAt,
+                                         completedAt: times.observedAt, gpuStartTime: times.gpuStartTime,
+                                         gpuEndTime: times.gpuEndTime, failed: false, finishedAt: MetalPerformanceTrace.now(),
+                                         extra: ["width": request.width, "height": request.height])
+            return result
+        }
         guard let command = queue.makeCommandBuffer(), let encoder = command.makeComputeCommandEncoder() else {
             throw ResliceFailure.device("Metal cannot encode the volume render.")
         }
         let started = DispatchTime.now().uptimeNanoseconds
         encoder.setComputePipelineState(pipeline)
         encoder.setTexture(texture, index: 0); encoder.setTexture(clut, index: 1)
-        encoder.setBuffer(opacity, offset: 0, index: 0); encoder.setBuffer(output, offset: 0, index: 1)
+        encoder.setBuffer(opacity.values, offset: 0, index: 0); encoder.setBuffer(output, offset: 0, index: 1)
         encoder.setBuffer(scalar, offset: 0, index: 2)
         encoder.setBytes(&params, length: MemoryLayout<Params>.stride, index: 3)
-        var prefix: [UInt32] = [0]
-        for alpha in request.transfer.opacity { prefix.append(prefix.last! + (alpha > 0 ? 1 : 0)) }
         encoder.setBuffer(brickRanges, offset: 0, index: 4)
-        encoder.setBytes(prefix, length: prefix.count * MemoryLayout<UInt32>.stride, index: 5)
+        encoder.setBuffer(opacity.prefix, offset: 0, index: 5)
         let w = 8, h = 8
         encoder.dispatchThreads(MTLSize(width: request.width, height: request.height, depth: 1),
                                 threadsPerThreadgroup: MTLSize(width: w, height: h, depth: 1))
         encoder.endEncoding()
+        let committedAt = MetalPerformanceTrace.now()
         command.commit(); command.waitUntilCompleted()
-        guard command.status == .completed else { throw command.error ?? ResliceFailure.device("The volume render failed.") }
+        let completedAt = MetalPerformanceTrace.now()
+        guard command.status == .completed else {
+            MetalPerformanceTrace.record("vr.render", startedAt: traceStart, committedAt: committedAt,
+                                         completedAt: completedAt, command: command)
+            throw command.error ?? ResliceFailure.device("The volume render failed.")
+        }
         let milliseconds = Double(DispatchTime.now().uptimeNanoseconds - started) / 1e6
-        return VolumeRenderResult(bgra: Data(bytes: output.contents(), count: count * 4),
-                                  scalar: Data(bytes: scalar.contents(), count: count * 4),
-                                  milliseconds: milliseconds)
+        let result = VolumeRenderResult(bgra: Data(bytes: output.contents(), count: count * 4),
+                                        scalar: Data(bytes: scalar.contents(), count: count * 4),
+                                        milliseconds: milliseconds)
+        MetalPerformanceTrace.record("vr.render", startedAt: traceStart, committedAt: committedAt, completedAt: completedAt,
+                                     command: command, finishedAt: MetalPerformanceTrace.now(),
+                                     extra: ["width": request.width, "height": request.height])
+        return result
     }
 }
 
@@ -492,19 +616,31 @@ public final class VolumeMetalRenderer {
 public final class VolumeRendererBridge: NSObject {
     private let engine: VolumeMetalRenderer
     @objc public private(set) var lastMilliseconds: Double = 0
+    // The host sends its opacity curve with every frame; the table is recomputed only when the points change,
+    // and the kept table lets the engine recognise its opacities without comparing them (#621).
+    private var opacityCurve: (points: [NSNumber], table: [Float])?
 
     private init(engine: VolumeMetalRenderer) { self.engine = engine; super.init() }
 
-    /// `[HorosVolumeRenderer makeAndReturnError:]` from Objective-C.
+    /// `[HorosVolumeRenderer makeAndReturnError:]` from Objective-C, on the backend the host asks for (#623).
     @objc public static func make() throws -> VolumeRendererBridge {
         guard let device = MTLCreateSystemDefaultDevice() else { throw ResliceFailure.device("No Metal device is available.").nsError }
-        do { return VolumeRendererBridge(engine: try VolumeMetalRenderer(device: device)) }
+        return try make(device: device, backend: MetalComputeBackend.host(device: device).backend)
+    }
+
+    public static func make(device: MTLDevice, backend: MetalComputeBackend) throws -> VolumeRendererBridge {
+        do { return VolumeRendererBridge(engine: try VolumeMetalRenderer(device: device, backend: backend)) }
         catch let failure as ResliceFailure { throw failure.nsError }
     }
 
+    /// "Metal 3" or "Metal 4".
+    @objc public var backendName: String { engine.backend.name }
+
     @objc public var isReady: Bool { engine.isReady }
     @objc public var volumeBytes: Int { engine.volumeBytes }
-    @objc public func releaseVolume() { engine.release() }
+    @objc public var colourTableUploads: Int { engine.colourTableUploads }
+    @objc public var opacityTableUploads: Int { engine.opacityTableUploads }
+    @objc public func releaseVolume() { engine.release(); opacityCurve = nil }
 
     @objc public func uploadVolume(_ voxels: NSData, width: Int, height: Int, depth: Int,
                                    spacingX: Double, spacingY: Double, spacingZ: Double) throws {
@@ -557,13 +693,20 @@ public final class VolumeRendererBridge: NSObject {
             let volumeCamera = try VolumeCamera(position: SIMD3(c[0], c[1], c[2]), focalPoint: SIMD3(c[3], c[4], c[5]),
                                                 viewUp: SIMD3(c[6], c[7], c[8]), parallel: c[9] != 0, parallelScale: c[10],
                                                 viewAngle: c[11], clippingRange: far < 0 ? nil : SIMD2(max(0, c[12]), far))
-            var points = [SIMD2<Float>]()
-            var index = 0
-            while index + 1 < opacityPoints.count {
-                points.append(SIMD2(opacityPoints[index].floatValue, opacityPoints[index + 1].floatValue)); index += 2
+            let table: [Float]
+            if let kept = opacityCurve, kept.points == opacityPoints {
+                table = kept.table
+            } else {
+                var points = [SIMD2<Float>]()
+                var index = 0
+                while index + 1 < opacityPoints.count {
+                    points.append(SIMD2(opacityPoints[index].floatValue, opacityPoints[index + 1].floatValue)); index += 2
+                }
+                table = VolumeTransferFunction.opacityTable(points: points)
+                opacityCurve = (opacityPoints, table)
             }
             let transfer = try VolumeTransferFunction(level: Float(level), width: Float(windowWidth), colour: clut as Data,
-                                                      opacity: VolumeTransferFunction.opacityTable(points: points))
+                                                      opacity: table)
             let s = shading.map { $0.floatValue }
             let volumeShading = VolumeShading(enabled: s[0] != 0, ambient: s[1], diffuse: s[2], specular: s[3], specularPower: s[4])
             let cropBox: (minimum: SIMD3<Float>, maximum: SIMD3<Float>)? = crop.isEmpty ? nil :

@@ -22,7 +22,6 @@ delegates = (
     'Horos/Sources/OrthogonalMPRViewer.m',
     'Horos/Sources/OrthogonalMPRPETCTViewer.m',
     'Horos/Sources/MPRController.m',
-    'Horos/Sources/MPR2DController.mm',
     'Horos/Sources/SRController.mm',
     'Horos/Sources/CPRController.m',
     'Horos/Sources/EndoscopyViewer.m',

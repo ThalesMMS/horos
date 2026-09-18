@@ -20502,6 +20502,7 @@ restart:
     }
     
     NSMutableArray *newDICOMPDFReports = [NSMutableArray array];
+    NSMutableArray *failedReports = [NSMutableArray array];
     for( DicomStudy *study in studies)
     {
         @try 
@@ -20517,14 +20518,22 @@ restart:
         {
             NSLog( @"***** exception in %s: %@", __PRETTY_FUNCTION__, e);
             [AppController printStackTrace: e];
+            [failedReports addObject: [NSString stringWithFormat: @"%@: %@", study.name ?: @"", e.reason ?: e.name]];
         }
-        
+    }
+    
+    // Once, with what the loop generated. Inside the loop it indexed the whole list again at every
+    // study: N(N+1)/2 additions, each one rereading a file already indexed (#654).
+    if (newDICOMPDFReports.count)
         [_database addFilesAtPaths: newDICOMPDFReports
                  postNotifications: YES
                          dicomOnly: YES
                rereadExistingItems: YES
                  generatedByOsiriX: YES];
-    }
+    
+    // A report that could not become a PDF is not silently left out (#649).
+    if (failedReports.count)
+        NSRunAlertPanel( NSLocalizedString(@"Report Error", nil), @"%@", nil, nil, nil, [failedReports componentsJoinedByString: @"\n"]);
     
     //    [checkBonjourUpToDateThreadLock unlock]; // TODO: merge
     [self performSelector: @selector(updateReportToolbarIcon:) withObject: nil afterDelay: 0.1];
@@ -20565,6 +20574,8 @@ restart:
         {
             NSLog( @"***** exception in %s: %@", __PRETTY_FUNCTION__, e);
             [AppController printStackTrace: e];
+            // No PDF was written: say so, rather than leave the user with nothing and no reason (#649).
+            NSRunAlertPanel( NSLocalizedString(@"Report Error", nil), @"%@", nil, nil, nil, e.reason ?: e.name);
         }
         
         //		[checkBonjourUpToDateThreadLock unlock]; // TODO: merge

@@ -4,6 +4,11 @@
 horosproject/horos#531 hangs on Xcode 10/11 SDKs from DrawRect recursion in the
 CPR views. #470 hangs with and without a resample prompt. Shared volume
 fixtures with #31/#221 name geometry; they are not this hang.
+
+The phase and the draw depth are per window. They were static once, and two
+Curved MPR windows then shared them: closing either left "closed" behind and
+every view of the window still on screen had its draw refused, so its panels
+went blank. That case is the last one below.
 """
 from pathlib import Path
 import subprocess
@@ -17,47 +22,48 @@ func expect(_ ok: Bool, _ message: String) {
     precondition(ok, message)
 }
 
-CPRRenderLifecycle.reset()
-expect(CPRRenderLifecycle.phase == "idle", "a new session starts idle")
+let lifecycle = CPRRenderLifecycle()
+lifecycle.reset()
+expect(lifecycle.phase == "idle", "a new session starts idle")
 
 // Open without resample (isotropic fixture) and with resample (user accepted).
-let native = CPRRenderLifecycle.beginOpening(resampled: false)
+let native = lifecycle.beginOpening(resampled: false)
 expect(native.accepted && native.phase == "opening-native",
        "native open is a distinct lifecycle: \(native.phase) \(native.diagnosis)")
-expect(CPRRenderLifecycle.markOpen().phase == "open", "native open reaches open")
+expect(lifecycle.markOpen().phase == "open", "native open reaches open")
 
-CPRRenderLifecycle.reset()
-let resampled = CPRRenderLifecycle.beginOpening(resampled: true)
+lifecycle.reset()
+let resampled = lifecycle.beginOpening(resampled: true)
 expect(resampled.accepted && resampled.phase == "opening-resampled",
        "resampled open is a distinct lifecycle: \(resampled.phase)")
-expect(CPRRenderLifecycle.markOpen().phase == "open",
+expect(lifecycle.markOpen().phase == "open",
        "resampled open also reaches open: the hang is not the prompt")
 
-let curve = CPRRenderLifecycle.markCurveReady()
+let curve = lifecycle.markCurveReady()
 expect(curve.accepted && curve.phase == "curve-ready",
        "a finished curve is still in a live window: \(curve.phase)")
 
 // Nested drawRect of the same view is the #531 hang. Skip it; do not recurse.
-let first = CPRRenderLifecycle.beginDraw(named: "mpr")
+let first = lifecycle.beginDraw(named: "mpr")
 expect(first.accepted && first.phase == "drawing",
        "first draw is accepted: \(first.diagnosis)")
-let nested = CPRRenderLifecycle.beginDraw(named: "mpr")
+let nested = lifecycle.beginDraw(named: "mpr")
 expect(!nested.accepted && nested.phase == "reentrant",
        "nested drawRect is named, not an infinite loop: \(nested.phase) \(nested.diagnosis)")
 expect(nested.diagnosis.lowercased().contains("drawrect"),
        "reentrant diagnosis must name drawRect: \(nested.diagnosis)")
-CPRRenderLifecycle.endDraw(named: "mpr")
-let after = CPRRenderLifecycle.beginDraw(named: "mpr")
+lifecycle.endDraw(named: "mpr")
+let after = lifecycle.beginDraw(named: "mpr")
 expect(after.accepted, "after endDraw the same view may draw again")
-CPRRenderLifecycle.endDraw(named: "mpr")
+lifecycle.endDraw(named: "mpr")
 
 // Sibling CPR views may draw together; that is not recursion of one view.
-expect(CPRRenderLifecycle.beginDraw(named: "straightened").accepted,
+expect(lifecycle.beginDraw(named: "straightened").accepted,
        "straightened may draw while mpr is idle")
-expect(CPRRenderLifecycle.beginDraw(named: "stretched").accepted,
+expect(lifecycle.beginDraw(named: "stretched").accepted,
        "stretched is a sibling, not a nested mpr draw")
-CPRRenderLifecycle.endDraw(named: "straightened")
-CPRRenderLifecycle.endDraw(named: "stretched")
+lifecycle.endDraw(named: "straightened")
+lifecycle.endDraw(named: "stretched")
 
 // Synchronous [view display] during drawRect is the hang on newer AppKit.
 expect(!CPRRenderLifecycle.shouldDisplaySynchronously(whileDrawing: true),
@@ -80,14 +86,43 @@ expect(CPRRenderLifecycle.diagnoseSpacingX(.infinity, spacingY: 1) == "not a num
        "non-finite spacing is not rewritten")
 
 // Close must refuse further drawing so teardown cannot re-enter drawRect.
-let closing = CPRRenderLifecycle.beginClosing()
+let closing = lifecycle.beginClosing()
 expect(closing.accepted && closing.phase == "closing", "close starts a named phase")
-let duringClose = CPRRenderLifecycle.beginDraw(named: "mpr")
+let duringClose = lifecycle.beginDraw(named: "mpr")
 expect(!duringClose.accepted && duringClose.phase == "closing",
        "draw during close is skipped: \(duringClose.phase) \(duringClose.diagnosis)")
-expect(CPRRenderLifecycle.markClosed().phase == "closed", "window reached closed")
-expect(!CPRRenderLifecycle.beginDraw(named: "mpr").accepted,
+expect(lifecycle.markClosed().phase == "closed", "window reached closed")
+expect(!lifecycle.beginDraw(named: "mpr").accepted,
        "a closed window does not re-enter drawRect")
+
+// Two Curved MPR windows. Closing one must not blank the other: the phase and
+// the draw depth belong to the window, not to the process.
+let windowA = CPRRenderLifecycle()
+let windowB = CPRRenderLifecycle()
+for window in [windowA, windowB] {
+    window.reset()
+    _ = window.beginOpening(resampled: false)
+    _ = window.markOpen()
+}
+_ = windowB.beginClosing()
+_ = windowB.markClosed()
+expect(windowB.phase == "closed", "the window that closed is closed")
+expect(windowA.phase == "open", "the window still on screen stays open: \(windowA.phase)")
+for name in ["mpr-1", "straightened", "transverse-0"] {
+    let draw = windowA.beginDraw(named: name)
+    expect(draw.accepted,
+           "\(name) of the open window still paints after the other closed: \(draw.diagnosis)")
+    windowA.endDraw(named: name)
+}
+
+// A draw in flight in one window is not recursion in the other.
+expect(windowA.beginDraw(named: "straightened").accepted, "window A draws")
+let windowC = CPRRenderLifecycle()
+_ = windowC.markOpen()
+expect(windowC.beginDraw(named: "straightened").accepted,
+       "the same view name in another window is not a nested draw")
+windowC.endDraw(named: "straightened")
+windowA.endDraw(named: "straightened")
 
 // Hang stack: nested -[CPRMPRDCMView drawRect:] is drawrect-recursion, not VTK.
 let stack = """
@@ -104,7 +139,7 @@ expect(CPRRenderLifecycle.classifyHangStack(stack) == "drawrect-recursion",
 expect(CPRRenderLifecycle.classifyHangStack("vtkFixedPointRayCastImage::GetZBufferValue") == "unclassified",
        "Z-buffer is #213, not this hang")
 
-print("PASS: resampled and native open; nested drawRect is named; NaN spacing is invalid; close skips draw")
+print("PASS: resampled and native open; nested drawRect is named; NaN spacing is invalid; close skips draw in its own window only")
 '''
 with tempfile.TemporaryDirectory(prefix='horos-cpr-render-lifecycle-') as d:
     p = Path(d)

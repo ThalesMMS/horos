@@ -65,12 +65,21 @@ enum PlanarBackend {
     func render(into target: MTLTexture) throws -> Double {
         switch self {
         case .metal3(let renderer):
+            let traceStart = MetalPerformanceTrace.now()
             guard let command = renderer.queue.makeCommandBuffer() else { throw PlanarMetalRenderer.failure() }
             try renderer.encode(into: target, command: command)
+            let committedAt = MetalPerformanceTrace.now()
             command.commit()
             command.waitUntilCompleted()
+            let completedAt = MetalPerformanceTrace.now()
+            MetalPerformanceTrace.record("planar.metal3.render", startedAt: traceStart, committedAt: committedAt,
+                                         completedAt: completedAt, command: command, finishedAt: completedAt,
+                                         extra: ["width": target.width, "height": target.height])
             guard command.status == .completed else { throw command.error ?? PlanarMetalRenderer.failure() }
-            return max(0, command.gpuEndTime - command.gpuStartTime) * 1000
+            // A command buffer without timestamps is not a zero-millisecond draw:
+            // -1 is what the host already reads as "not measured" (#619).
+            let gpu = command.gpuEndTime - command.gpuStartTime
+            return command.gpuStartTime > 0 && gpu >= 0 ? gpu * 1000 : -1
         case .metal4(let renderer):
             try renderer.render(into: target)
             return renderer.lastGPUMilliseconds

@@ -138,6 +138,9 @@ static char enabledKey, reslicerKey, uploadedKey, reasonKey, millisecondsKey;
     else if (self.blendingView) reason = @"Fusion keeps the original renderer.";
     else if (pix.isRGB) reason = @"RGB planes keep the original renderer.";
     HorosMPRReslicer *reslicer = reason ? nil : [controller horosMPRReslicerForCurrentVolume:&reason];
+    // The host's share of a Metal plane, for the trace (#619): the geometry and
+    // arguments before the reslice, and the copy after it.
+    double preparedFrom = [HorosMetalPerformanceTrace now];
     if (reslicer && ![vrView prepareMPRGeometryWidth:width height:height]) {
         reslicer = nil;
         reason = @"The current camera or crop keeps the original renderer.";
@@ -155,21 +158,21 @@ static char enabledKey, reslicerKey, uploadedKey, reasonKey, millisecondsKey;
         double dz = first.sliceInterval != 0 ? fabs(first.sliceInterval) : fabs(first.sliceThickness);
         double step = MIN(first.pixelSpacingX > 0 ? first.pixelSpacingX : 1, MIN(first.pixelSpacingY > 0 ? first.pixelSpacingY : 1, dz));
         NSError *error = nil;
-        NSData *plane = [reslicer resliceWithOrigin:origin orientation:orientation spacing:spacing
-                                               width:*width height:*height thickness:[vrView getClippingRangeThicknessInMm] sampleStep:step
-                                          projection:controller.clippingRangeMode background:[controller horosMPRBackground] error:&error];
-        if (plane.length && plane.length == (NSUInteger)(*width * *height * sizeof(float))) {
-            float *image = malloc(plane.length);
-            if (!image) {
-                reason = @"The reconstructed plane could not be allocated.";
-            } else {
-                memcpy(image, plane.bytes, plane.length);
-                objc_setAssociatedObject(controller, &millisecondsKey, @(reslicer.lastMilliseconds), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-                objc_setAssociatedObject(controller, &reasonKey, nil, OBJC_ASSOCIATION_COPY_NONATOMIC);
-                [self horosSetPlanarFallbackReason:nil];
-                return image;
-            }
+        [HorosMetalPerformanceTrace recordHostOperation:@"mpr.host_prepare" startedAt:preparedFrom];
+        // The view owns the image it is handed; the engine copies the plane into it, once (#620).
+        float *image = *width > 0 && *height > 0 ? malloc((size_t)*width * (size_t)*height * sizeof(float)) : NULL;
+        if (!image) {
+            reason = @"The reconstructed plane could not be allocated.";
+        } else if ([reslicer resliceWithOrigin:origin orientation:orientation spacing:spacing
+                                         width:*width height:*height thickness:[vrView getClippingRangeThicknessInMm] sampleStep:step
+                                    projection:controller.clippingRangeMode background:[controller horosMPRBackground]
+                                          into:image error:&error]) {
+            objc_setAssociatedObject(controller, &millisecondsKey, @(reslicer.lastMilliseconds), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            objc_setAssociatedObject(controller, &reasonKey, nil, OBJC_ASSOCIATION_COPY_NONATOMIC);
+            [self horosSetPlanarFallbackReason:nil];
+            return image;
         } else {
+            free(image);
             reason = error.localizedDescription ?: @"The reslice produced no plane.";
         }
     }

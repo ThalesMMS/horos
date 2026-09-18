@@ -74,7 +74,7 @@ import Foundation
         precondition(HorosPlatformPolicy.trackedSigningTeamIsAllowed(""))
         precondition(HorosPlatformPolicy.trackedSigningTeamIsAllowed("$(HOROS_DEVELOPMENT_TEAM)"))
         precondition(!HorosPlatformPolicy.trackedSigningTeamIsAllowed("TPT6TVH8UY"))
-        precondition(HorosPlatformPolicy.ystarrevSigningTeamThatMustNotBeCopied == "TPT6TVH8UY")
+        precondition(HorosPlatformPolicy.donorSigningTeamThatMustNotBeCopied == "TPT6TVH8UY")
 
         print("PASS: product minimum 26.0 is encodable by this SDK, an older SDK cannot encode it, a 26.0 package never reaches an older Mac, and the bundle needs no Swift runtime of its own")
     }

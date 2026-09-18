@@ -1209,15 +1209,14 @@ static bool HorosRenderMetalVolume(void *context, vtkHorosFixedPointVolumeRayCas
     if( [[NSUserDefaults standardUserDefaults] integerForKey: @"VRAMAmount"] != vramMB)
     {
         if( vramMB >= 2000 && [AppController hasMacOSXLion])
-        {
             [[NSUserDefaults standardUserDefaults] setInteger: 1 forKey: @"VRDefaultViewSize"];     // full screen
-            [[NSUserDefaults standardUserDefaults] setInteger: 1 forKey: @"MAPPERMODEVR"];          // gpu
-        }
         else
-        {
             [[NSUserDefaults standardUserDefaults] setInteger: 0 forKey: @"VRDefaultViewSize"];     // square
-            [[NSUserDefaults standardUserDefaults] setInteger: 0 forKey: @"MAPPERMODEVR"];          // cpu
-        }
+
+        // The board decides the view size, not the engine. Metal is the default on
+        // every board: it carries the ray cast mapper, so a frame it declines renders
+        // on the CPU exactly as engine 0 would.
+        [[NSUserDefaults standardUserDefaults] setInteger: 2 forKey: @"MAPPERMODEVR"];              // metal
         
         [[NSUserDefaults standardUserDefaults] setInteger: vramMB forKey: @"VRAMAmount"];
         
@@ -1395,6 +1394,7 @@ static bool HorosRenderMetalVolume(void *context, vtkHorosFixedPointVolumeRayCas
     switch( engineID)
     {
         case 0:		// RAY CAST
+        case 2:         // Metal, which renders the blended volume with the ray cast mapper
             if( blendingVolumeMapper == nil)
             {
                 blendingVolumeMapper = vtkHorosFixedPointVolumeRayCastMapper::New();

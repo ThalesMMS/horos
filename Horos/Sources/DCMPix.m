@@ -87,6 +87,18 @@
 #ifndef DECOMPRESS_APP
 #include "nifti1.h"
 #include "nifti1_io.h"
+#include <sys/stat.h>
+
+// Whether the data file of a NIfTI image read by nifti_image_read holds every
+// voxel its header describes, from where the header says they start (#631).
+static BOOL HorosNIfTIHoldsItsVoxels(const nifti_image *image)
+{
+    struct stat status;
+    if( image->iname == NULL || stat( image->iname, &status) != 0)
+        return NO;
+    unsigned long long offset = image->iname_offset > 0 ? (unsigned long long) image->iname_offset : 0;
+    return (unsigned long long) status.st_size >= offset + (unsigned long long) image->nvox * (unsigned long long) image->nbyper;
+}
 #endif
 
 #include <Accelerate/Accelerate.h>
@@ -106,8 +118,7 @@
 #define PREVIEWSIZE 68
 #endif
 
-/* From PapyTypeDef3.h
- Definition of the photometric interpretation */
+/* Photometric interpretation codes used by the YBR conversion routines. */
 enum EPhoto_Interpret    {MONOCHROME1, MONOCHROME2, PALETTE, RGB, HSV, ARGB, CMYK,
     YBR_FULL, YBR_FULL_422, YBR_PARTIAL_422, YBR_RCT, YBR_ICT, YUV_RCT, UNKNOWN_COLOR};
 
@@ -116,14 +127,12 @@ BOOL gUseShutter = NO;
 BOOL gDisplayDICOMOverlays = YES;
 BOOL gUseVOILUT = NO;
 BOOL gUseJPEGColorSpace = NO;
-BOOL gUSEPAPYRUSDCMPIX = NO;
 int gSUVAcquisitionTimeField = 0;
 NSMutableDictionary *gCUSTOM_IMAGE_ANNOTATIONS = nil;
 BOOL	runOsiriXInProtectedMode = NO;
 BOOL	quicktimeRunning = NO;
 NSLock	*quicktimeThreadLock = nil;
 
-static NSMutableDictionary *cachedPapyGroups = nil;
 static NSMutableDictionary *cachedDCMTKFileFormat = nil;
 static NSMutableDictionary *cachedDCMFrameworkFiles = nil;
 static NSMutableArray *nonLinearWLWWThreads = nil;
@@ -143,16 +152,10 @@ typedef struct NSPointInt NSPointInt;
 
 NSString* filenameWithDate( NSString *inputfile);
 
+// Serialises the parsed-file cache (cachedDCMFrameworkFiles) and the annotations;
+// allocated by AppController. The name is kept: it is an exported symbol.
 extern NSRecursiveLock *PapyrusLock;
 //extern short Altivec;
-
-void PapyrusLockFunction( int lock)
-{
-    if( lock)
-        [PapyrusLock lock];
-    else
-        [PapyrusLock unlock];
-}
 
 void ConvertFloatToNative (float *theFloat)
 {
@@ -1494,7 +1497,6 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
         gDisplayDICOMOverlays = [[NSUserDefaults standardUserDefaults] boolForKey:@"DisplayDICOMOverlays"];
         gUseVOILUT = [[NSUserDefaults standardUserDefaults] boolForKey:@"UseVOILUT"];
         
-        gUSEPAPYRUSDCMPIX = NO; //[[NSUserDefaults standardUserDefaults] boolForKey:@"USEPAPYRUSDCMPIX4"];
         gUseJPEGColorSpace = [[NSUserDefaults standardUserDefaults] boolForKey:@"UseJPEGColorSpace"];
         gSUVAcquisitionTimeField = (int)[[NSUserDefaults standardUserDefaults] integerForKey:@"SUVAcquisitionTimeField"];
         
@@ -1507,16 +1509,7 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
             [gCUSTOM_IMAGE_ANNOTATIONS addEntriesFromDictionary: [[NSUserDefaults standardUserDefaults] dictionaryForKey:@"CUSTOM_IMAGE_ANNOTATIONS"]];
         }
         
-#ifdef OSIRIX_LIGHT
-        gUSEPAPYRUSDCMPIX = NO;
-#endif
-        
-#if __LP64__
-        gUSEPAPYRUSDCMPIX = NO;
-#endif
-        
 #ifdef STATIC_DICOM_LIB
-        gUSEPAPYRUSDCMPIX = NO;
         gUseShutter = NO;
         gDisplayDICOMOverlays = NO;
         gUseJPEGColorSpace = NO;
@@ -3589,9 +3582,6 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
 {
     @synchronized( [DCMPix class])
     {
-        if( cachedPapyGroups == nil)
-            cachedPapyGroups = [NSMutableDictionary new];
-        
         if( cachedDCMFrameworkFiles == nil)
             cachedDCMFrameworkFiles = [NSMutableDictionary new];
         
@@ -3637,9 +3627,6 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
     
     @synchronized( [DCMPix class])
     {
-        if( cachedPapyGroups == nil)
-            cachedPapyGroups = [NSMutableDictionary new];
-        
         if( cachedDCMFrameworkFiles == nil)
             cachedDCMFrameworkFiles = [NSMutableDictionary new];
         
@@ -7557,27 +7544,7 @@ static double horosNumberInArray( NSArray *values, NSUInteger index, NSString *n
     [PapyrusLock unlock];
 }
 
-- (void) clearCachedPapyGroups
-{
-    [PapyrusLock lock];
-    
-    @try
-    {
-        NSMutableDictionary *cachedGroupsForThisFile = [cachedPapyGroups valueForKey:self.srcFile];
-        if( cachedGroupsForThisFile && retainedCacheGroup == cachedGroupsForThisFile)
-        {
-            [cachedGroupsForThisFile setValue: [NSNumber numberWithInt: [[cachedGroupsForThisFile objectForKey: @"count"] intValue]-1] forKey: @"count"];
-            retainedCacheGroup = nil;
-        }
-    }
-    @catch (NSException * e)
-    {
-        N2LogExceptionWithStackTrace(e);
-    }
-    
-    [PapyrusLock unlock];
-}
-
+// Declared in the plugin SDK. Papyrus is gone: nothing in Horos calls this.
 - (BOOL) loadDICOMPapyrus
 {
     return NO;
@@ -7753,55 +7720,12 @@ static _Atomic(unsigned long long) horosDecodedFrameCount = 0;
             
             @try
             {
-                if( gUSEPAPYRUSDCMPIX)
-                {
-                    success = [self loadDICOMPapyrus]; // always fail
-                    
-#ifdef OSIRIX_VIEWER
-#ifndef OSIRIX_LIGHT
-                    if( success == NO)
-                    {
-                        // It failed with Papyrus : potential crash with DCMFramework with a corrupted file
-                        // Only do it, if it failed: writing a file takes time... and slow down reading performances
-                        
-                        NSString *recoveryPath = [[[[BrowserController currentBrowser] database] baseDirPath] stringByAppendingPathComponent:@"ThumbnailPath"];
-                        
-                        [[NSFileManager defaultManager] removeItemAtPath: recoveryPath error: nil];
-                        
-                        @try
-                        {
-                            [URIRepresentationAbsoluteString writeToFile: recoveryPath atomically: YES encoding: NSASCIIStringEncoding  error: nil];
-                            
-                            //only try again if it's strict DICOM
-                            if (success == NO && [DCMObject isDICOM:[NSData dataWithContentsOfFile:self.srcFile]])
-                            {
-                                success = [self loadDICOMDCMFramework];
-                            }
-                            
-                            [[NSFileManager defaultManager] removeItemAtPath: recoveryPath error: nil];
-                        }
-                        @catch (NSException * e)
-                        {
-                            NSLog( @"***** exception in %s: %@", __PRETTY_FUNCTION__, e);
-                        }
-                    }
-#endif
-#endif
-                }
 #ifndef OSIRIX_LIGHT  // @@@ Also Decompress ?
-                else
-                {
-                    success = [self loadDICOMDCMFramework];
-                    
-                    if (success == NO &&
-                        [DCMObject isDICOM:[NSData dataWithContentsOfFile:self.srcFile]]) {
-                        success = [self loadDICOMPapyrus];
-                    }
-                }
+                // The Papyrus route (a flag that was always NO, and a fallback to a
+                // reader that always failed, re-reading the whole file to decide to
+                // call it) is gone (#630).
+                success = [self loadDICOMDCMFramework];
 #endif
-                
-                if( numberOfFrames <= 1)
-                    [self clearCachedPapyGroups];
             }
             
             @catch ( NSException *e)
@@ -7915,19 +7839,42 @@ static _Atomic(unsigned long long) horosDecodedFrameCount = 0;
                     // NIfTI support developed by Zack Mahdavi at the Center for Neurological Imaging, a division of Harvard Medical School
                     // For more information: http://cni.bwh.harvard.edu/
                     // For questions or suggestions regarding NIfTI integration in OsiriX, please contact zmahdavi@bwh.harvard.edu
-                    long			totSize;
                     struct nifti_1_header  *NIfTI;
                     nifti_image *nifti_imagedata;
-                    NSData			*fileData;
-                    BOOL			swapByteOrder = NO;
                     
                     NIfTI = (nifti_1_header *) nifti_read_header([self.srcFile UTF8String], nil, 0);
                     
+                    // nifti_read_header answers NULL for a file it cannot read, and
+                    // nifti_image_read for one whose voxels are not all there - a
+                    // .nii cut short, a pair whose .img is. Both were read through,
+                    // and opening such a file crashed the viewer. Left with no
+                    // fImage, the frame is shown empty and says it could not be read.
+                    BOOL isNIfTI = NIfTI != NULL &&
+                                   (NIfTI->magic[0] == 'n') &&
+                                   (NIfTI->magic[1] == 'i' || NIfTI->magic[1] == '+') &&
+                                   (NIfTI->magic[2] == '1') &&
+                                   (NIfTI->magic[3] == '\0');
+                    
+                    // The header and where the voxels are; this frame's voxels are read below (#643)
+                    nifti_imagedata = isNIfTI ? nifti_image_read([self.srcFile UTF8String], 0) : NULL;
+                    
+                    // And nifti_image_read does not refuse voxels that stop short: its
+                    // short read comes back as success, the missing voxels left zero
+                    // (nifti_read_buffer answers (size_t)-1, which nifti_image_load
+                    // takes for a full read) - in 1.43 as in 2.1.0. Such a volume is
+                    // not shown as the image.
+                    if( nifti_imagedata && HorosNIfTIHoldsItsVoxels( nifti_imagedata) == NO)
+                    {
+                        nifti_image_free( nifti_imagedata);
+                        nifti_imagedata = NULL;
+                    }
+                    
+                    if( isNIfTI && nifti_imagedata == NULL)
+                    {
+                        NSLog( @"---- NIfTI: the image data of %@ cannot be read", [self.srcFile lastPathComponent]);
+                    }
                     // Verify that this file should be treated as a NIfTI file.  If magic is not set to anything, we must assume it is analyze.
-                    if( (NIfTI->magic[0] == 'n')                           &&
-                       (NIfTI->magic[1] == 'i' || NIfTI->magic[1] == '+')   &&
-                       (NIfTI->magic[2] == '1')                           &&
-                       (NIfTI->magic[3] == '\0'))
+                    else if( isNIfTI)
                     {
                         width = NIfTI->dim[ 1];
                         height = NIfTI->dim[ 2];
@@ -7936,208 +7883,77 @@ static _Atomic(unsigned long long) horosDecodedFrameCount = 0;
                         pixelSpacingY = NIfTI->pixdim[ 2];
                         sliceThickness = sliceInterval = NIfTI->pixdim[ 3];
                         
-                        totSize = height * width * 2;
-                        //NSLog(@"totSize:  %d", totSize);
-                        oImage = malloc( totSize);
-                        
                         // Transformation matrix
                         short qform_code = NIfTI->qform_code;
                         short sform_code = NIfTI->sform_code;
                         
-                        // Read img file or read nii file after vox_offset
-                        nifti_imagedata = nifti_image_read([self.srcFile UTF8String], 1);
+                        // This frame's slice of the first volume, as nifti1_io reads it: after vox_offset in
+                        // a .nii or from the .img of a pair, in the host's byte order, every datatype turned
+                        // into floats. The .img of a pair was read here as it is on disk, so a big-endian
+                        // pair came out with its bytes swapped; int32 went through a short; uint16, uint32
+                        // and RGB left the image unwritten; and each frame loaded the whole volume and kept
+                        // it (#643).
+                        int slice[ 8] = { 0, -1, -1, (int) frameNo, 0, 0, 0, 0};
+                        void *voxels = NULL;
+                        long voxelCount = (long) height * width;
+                        int readBytes = nifti_read_collapsed_image( nifti_imagedata, slice, &voxels);
+                        short datatype = NIfTI->datatype;
                         
-                        if( (NIfTI->magic[0] == 'n')    &&
-                           (NIfTI->magic[1] == 'i')	&&
-                           (NIfTI->magic[2] == '1')    &&
-                           (NIfTI->magic[3] == '\0'))
+                        if( readBytes < 0 || voxels == NULL || readBytes < voxelCount * nifti_imagedata->nbyper)
                         {
-                            // This is a "two file" nifti file.  Image file is separated from header.
-                            fileData = [[NSData alloc] initWithContentsOfFile: [[self.srcFile stringByDeletingPathExtension] stringByAppendingPathExtension:@"img"]];
+                            NSLog( @"---- NIfTI: frame %ld of %@ cannot be read", (long) frameNo, [self.srcFile lastPathComponent]);
+                        }
+                        else if( datatype == DT_RGB24)
+                        {
+                            // Four bytes a pixel, alpha first, as the other readers keep colour.
+                            unsigned char *argb = fExternalOwnedImage ? (unsigned char*) fExternalOwnedImage : malloc( voxelCount * 4 + 100);
+                            if( argb)
+                            {
+                                unsigned char *rgb = voxels;
+                                for( long i = 0; i < voxelCount; i++)
+                                {
+                                    argb[ 4*i] = 0;
+                                    argb[ 4*i+1] = rgb[ 3*i];
+                                    argb[ 4*i+2] = rgb[ 3*i+1];
+                                    argb[ 4*i+3] = rgb[ 3*i+2];
+                                }
+                                isRGB = YES;
+                                fImage = (float*) argb;
+                            }
+                            else N2LogStackTrace( @"*** Not enough memory - malloc failed");
                         }
                         else
                         {
-                            // Header and image file are together.
-                            fileData = [[NSData alloc] initWithBytesNoCopy:nifti_imagedata->data length:(nifti_imagedata->nvox * nifti_imagedata->nbyper)];
-                        }
-                        
-                        // This "datatype" portion is taken from the analyze code.
-                        short datatype = NIfTI->datatype;
-                        
-                        switch( datatype)
-                        {
-                            case 2:
+                            float *values = fExternalOwnedImage ? fExternalOwnedImage : malloc( voxelCount * sizeof(float) + 100);
+                            BOOL supported = YES;
+                            if( values)
                             {
-                                unsigned char *bufPtr;
-                                short *ptr;
-                                long loop;
-                                
-                                bufPtr = (unsigned char*) [fileData bytes]+ frameNo*(height * width);
-                                ptr = oImage;
-                                
-                                loop = height * width;
-                                while( loop-- > 0)
+                                switch( datatype)
                                 {
-                                    *ptr++ = *bufPtr++;
+                                    case DT_UINT8:   { uint8_t  *v = voxels; for( long i = 0; i < voxelCount; i++) values[ i] = v[ i]; } break;
+                                    case DT_INT8:    { int8_t   *v = voxels; for( long i = 0; i < voxelCount; i++) values[ i] = v[ i]; } break;
+                                    case DT_INT16:   { int16_t  *v = voxels; for( long i = 0; i < voxelCount; i++) values[ i] = v[ i]; } break;
+                                    case DT_UINT16:  { uint16_t *v = voxels; for( long i = 0; i < voxelCount; i++) values[ i] = v[ i]; } break;
+                                    case DT_INT32:   { int32_t  *v = voxels; for( long i = 0; i < voxelCount; i++) values[ i] = v[ i]; } break;
+                                    case DT_UINT32:  { uint32_t *v = voxels; for( long i = 0; i < voxelCount; i++) values[ i] = v[ i]; } break;
+                                    case DT_INT64:   { int64_t  *v = voxels; for( long i = 0; i < voxelCount; i++) values[ i] = v[ i]; } break;
+                                    case DT_UINT64:  { uint64_t *v = voxels; for( long i = 0; i < voxelCount; i++) values[ i] = v[ i]; } break;
+                                    case DT_FLOAT32: memcpy( values, voxels, voxelCount * sizeof(float)); break;
+                                    case DT_FLOAT64: { double   *v = voxels; for( long i = 0; i < voxelCount; i++) values[ i] = v[ i]; } break;
+                                    default: supported = NO; break;
                                 }
-                                //NSLog(@"Loop is done for frame number %i \n", (int) frameNo);
-                            }
-                                break;
-                                
-                            case 4:
-                                memcpy( oImage, [fileData bytes] + frameNo*(height * width * 2), height * width * 2);
-                                if( swapByteOrder)
-                                {
-                                    long loop;
-                                    short *ptr = oImage;
-                                    
-                                    loop = height * width;
-                                    while( loop-- > 0)
-                                    {
-                                        *ptr = Endian16_Swap( *ptr);
-                                        ptr++;
-                                    }
-                                }
-                                break;
-                                
-                            case 8:
-                            {
-                                unsigned int *bufPtr;
-                                short *ptr;
-                                long loop;
-                                
-                                bufPtr = (unsigned int*) [fileData bytes];
-                                bufPtr += frameNo * (height * width);
-                                ptr    = oImage;
-                                
-                                loop = height * width;
-                                while( loop-- > 0)
-                                {
-                                    
-                                    if( swapByteOrder)  *ptr++ = Endian32_Swap( *bufPtr++);
-                                    else *ptr++ = *bufPtr++;
-                                }
-                            }
-                                break;
-                                
-                            case 16:
-                                if( fExternalOwnedImage)
-                                    fImage = fExternalOwnedImage;
+                                if( supported)
+                                    fImage = values;
                                 else
-                                    fImage = malloc( (width+1) * (height+1) * sizeof(float) + 100);
-                                
-                                if( [fileData length] < height * width * sizeof(float))
-                                    NSLog( @"****** [fileData length] < height * width * sizeof(float)");
-                                
-                                if( fImage)
                                 {
-                                    for(long i = 0; i < height;i++)
-                                        memcpy( fImage + i * width, [fileData bytes]+ frameNo * (height * width)*sizeof(float) + i*width*sizeof(float), width * sizeof(float));
+                                    NSLog( @"---- NIfTI: %@ holds datatype %d, which is not shown", [self.srcFile lastPathComponent], (int) datatype);
+                                    if( values != fExternalOwnedImage)
+                                        free( values);
                                 }
-                                else N2LogStackTrace( @"*** Not enough memory - malloc failed");
-                                
-                                free(oImage);
-                                oImage = nil;
-                                break;
-                                
-                            case 64: // double
-                                if( fExternalOwnedImage)
-                                    fImage = fExternalOwnedImage;
-                                else
-                                    fImage = malloc( (width+1) * (height+1) * sizeof(float) + 100);
-                                
-                                if( [fileData length] < height * width * sizeof(float))
-                                    NSLog( @"****** [fileData length] < height * width * sizeof(float)");
-                                
-                                if( fImage)
-                                {
-                                    double *bufPtr = (double*) [fileData bytes];
-                                    bufPtr += frameNo * (height * width);
-                                    float *ptr = fImage;
-                                    
-                                    long loop = height * width;
-                                    while( loop-- > 0)
-                                    {
-                                        if( swapByteOrder)  *ptr++ = Endian64_Swap( *bufPtr++);
-                                        else *ptr++ = *bufPtr++;
-                                        
-                                    }
-                                }
-                                else N2LogStackTrace( @"*** Not enough memory - malloc failed");
-                                
-                                free(oImage);
-                                oImage = nil;
-                                break;
-                                
-                            case 128: //128 - RGB24
-                                NSLog(@"unsupported... please send me this file");
-                                break;
-                                
-                            case 256: //256 - int8
-                            {
-                                char *bufPtr;
-                                short *ptr;
-                                long loop;
-                                
-                                bufPtr = (char*) [fileData bytes]+ frameNo*(height * width);
-                                ptr = oImage;
-                                
-                                loop = height * width;
-                                while( loop-- > 0)
-                                {
-                                    *ptr++ = *bufPtr++;
-                                }
-                            }
-                                break;
-                                
-                            case 512: //512 - uint16
-                                NSLog(@"unsupported... please send me this file");
-                                break;
-                                
-                            case 768: //768 - uint32
-                                NSLog(@"unsupported... please send me this file");
-                                break;
-                                
-                            case 1792: //1792 - complex128
-                                NSLog(@"unsupported... please send me this file");
-                                break;
-                        }
-                        
-                        [fileData release];
-                        
-                        // CONVERSION TO FLOAT
-                        
-                        if( oImage != nil && datatype != 16 && datatype != 64)
-                        {
-                            vImage_Buffer src16, dstf;
-                            
-                            dstf.height = src16.height = height;
-                            dstf.width = src16.width = width;
-                            src16.rowBytes = width*2;
-                            dstf.rowBytes = width*sizeof(float);
-                            
-                            src16.data = oImage;
-                            
-                            if( fExternalOwnedImage)
-                            {
-                                fImage = fExternalOwnedImage;
-                            }
-                            else
-                            {
-                                fImage = malloc(width*height*sizeof(float) + 100);
-                            }
-                            
-                            dstf.data = fImage;
-                            
-                            if( dstf.data)
-                            {
-                                vImageConvert_16SToF( &src16, &dstf, 0, 1, 0);
                             }
                             else N2LogStackTrace( @"*** Not enough memory - malloc failed");
-                            
-                            free(oImage);
-                            oImage = nil;
                         }
+                        free( voxels);
                         
                         // Set up origins for nifti file.
                         //   - This portion tells OsiriX which view is active for the image.  This allows OsiriX to determine whether the
@@ -8394,6 +8210,18 @@ static _Atomic(unsigned long long) horosDecodedFrameCount = 0;
                                 short datatype = Analyze->dime.datatype;
                                 if( swapByteOrder) datatype = Endian16_Swap( datatype);
                                 
+                                // Every case below reads this frame from the .img without
+                                // looking at its length, so one cut short was read past its
+                                // end. A frame that is not all there is not read at all.
+                                long bytesPerVoxel = datatype == 2 ? 1 : datatype == 4 ? 2 : (datatype == 8 || datatype == 16) ? 4 : 0;
+                                if( bytesPerVoxel && [fileData length] < (unsigned long) ((frameNo + 1) * height * width * bytesPerVoxel))
+                                {
+                                    NSLog( @"---- Analyze: %@ is shorter than frame %ld needs", [self.srcFile lastPathComponent], (long) frameNo);
+                                    datatype = 0;
+                                    free( oImage);
+                                    oImage = nil;
+                                }
+                                
                                 switch( datatype)
                                 {
                                     case 2:
@@ -8484,7 +8312,7 @@ static _Atomic(unsigned long long) horosDecodedFrameCount = 0;
                                 
                                 // CONVERSION TO FLOAT
                                 
-                                if( datatype != 16)
+                                if( oImage != nil && datatype != 16)
                                 {
                                     vImage_Buffer src16, dstf;
                                     
@@ -8519,6 +8347,8 @@ static _Atomic(unsigned long long) horosDecodedFrameCount = 0;
                     
                     free( NIfTI);
                     NIfTI = nil;
+                    if( nifti_imagedata)
+                        nifti_image_free( nifti_imagedata);
                 }
 #endif
                 else if( [extension isEqualToString:@"jpg"] ||
@@ -11207,7 +11037,6 @@ static _Atomic(unsigned long long) horosDecodedFrameCount = 0;
             [self reloadAnnotations];
         
         [self clearCachedDCMFrameworkFiles];
-        [self clearCachedPapyGroups];
         
         [loadedFileRevision release];
         loadedFileRevision = nil;
@@ -11324,7 +11153,6 @@ static _Atomic(unsigned long long) horosDecodedFrameCount = 0;
     
     if(LUT12baseAddr) free(LUT12baseAddr);
     
-    [self clearCachedPapyGroups];
     [self clearCachedDCMFrameworkFiles];
     
     [cachedFileKey release];

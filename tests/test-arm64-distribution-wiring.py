@@ -52,7 +52,7 @@ check('Apple Silicon only' in config or 'arm64-only' in config.lower() or 'Apple
 check('MACOSX_DEPLOYMENT_TARGET = 26.0' in config,
       'deployment target must match the macOS 26 minimum owned by #369')
 check('DEVELOPMENT_TEAM = TPT6TVH8UY' not in config,
-      'do not copy ystarrev DEVELOPMENT_TEAM')
+      'do not copy the donor DEVELOPMENT_TEAM')
 
 check('@objc(HorosArchitectureAudit)' in swift, 'Swift auditor must stay @objc')
 check('pluginDiagnosisAtPath:' in swift, 'plugins are diagnosed by path')

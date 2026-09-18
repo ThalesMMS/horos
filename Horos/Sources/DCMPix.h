@@ -213,7 +213,7 @@ extern "C"
     BOOL				full32bitPipeline;
     BOOL				needToCompute8bitRepresentation;
     
-    /** Papyrus Loading variables */
+    /** Image metadata and palette lookup tables */
     
     NSString			*modalityString;
     unsigned short		clutEntryR, clutEntryG, clutEntryB;
@@ -651,9 +651,7 @@ extern "C"
 - (BOOL)loadDICOMDCMFramework;
 #endif
 
-/** Load the DICOM image using Papyrus.
- * There should be no reason to call this. The class will call it when needed.
- */
+/** Papyrus is no longer part of Horos: always returns NO. Kept for plugins. */
 - (BOOL) loadDICOMPapyrus;
 
 /** Reset the Annotations */
@@ -745,7 +743,7 @@ extern "C"
 /** Returns flag for protected mode */
 + (BOOL) isRunOsiriXInProtectedModeActivated;
 
-/** Clears the papyrus group cache */
+/** Releases this image's share of the parsed-file cache */
 - (void) clearCachedDCMFrameworkFiles;
 
 + (void) purgeCachedDictionaries;

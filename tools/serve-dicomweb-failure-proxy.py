@@ -9,6 +9,8 @@ import http.client
 import http.server
 import time
 from pathlib import Path
+# Run as tools/serve-dicomweb-failure-proxy.py: this folder is already on the path.
+from local_http import ThreadingLocalHTTPServer
 
 
 def main():
@@ -63,7 +65,7 @@ def main():
             finally:
                 upstream.close()
 
-    server = http.server.ThreadingHTTPServer(('127.0.0.1', args.port), Proxy)
+    server = ThreadingLocalHTTPServer(('127.0.0.1', args.port), Proxy)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

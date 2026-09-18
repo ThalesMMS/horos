@@ -17,7 +17,8 @@ payload, and a response ended by closing the connection. What it checks:
 * cancellation stops a transfer in progress;
 * a large payload moves in bounded chunks;
 * commands are classified: reads may be sent again, mutations may not, and a
-  mutation that failed says what the operator has to do.
+  mutation that failed says what the operator has to do - also inside the
+  authorization envelope of a protected database (#644).
 """
 from pathlib import Path
 import subprocess
@@ -216,6 +217,22 @@ case "classification":
         expect(SharedDatabaseCommand.actionRequired(for: request(mutation))?.isEmpty == false, "\(mutation) tells the operator what to do")
     }
     expect(!SharedDatabaseCommand.isRetryable(request("XXXXX")), "an unknown command is not replayed")
+    // A protected database wraps every request in an AUTHR envelope; what is classified is the command inside (#644).
+    for read in ["DBSIZ", "DATAB", "MFILE", "DICOM"] {
+        let wrapped = SharedDatabaseAuthorization.authenticatedRequest(request(read), password: "synthetic")!
+        expect(SharedDatabaseCommand.command(in: wrapped) == read, "the command of an authenticated \(read) is \(read)")
+        expect(SharedDatabaseCommand.isRetryable(wrapped), "an authenticated \(read) is a read and may be sent again")
+    }
+    for mutation in ["SETVA", "NEWMS", "DCMSE"] {
+        let wrapped = SharedDatabaseAuthorization.authenticatedRequest(request(mutation), password: "synthetic")!
+        expect(!SharedDatabaseCommand.isRetryable(wrapped), "an authenticated \(mutation) must not be replayed")
+        expect(SharedDatabaseCommand.actionRequired(for: wrapped)?.isEmpty == false, "an authenticated \(mutation) tells the operator what to do")
+    }
+    var truncated = SharedDatabaseAuthorization.authenticatedRequest(request("DICOM"), password: "synthetic")!
+    truncated.removeLast(3)
+    expect(!SharedDatabaseCommand.isRetryable(truncated), "an envelope without a whole command inside is not replayed")
+    let sliced = (Data([0, 0]) + SharedDatabaseAuthorization.authenticatedRequest(request("DICOM"), password: "synthetic")!).dropFirst(2)
+    expect(SharedDatabaseCommand.isRetryable(sliced), "an envelope read from a slice is classified the same")
     expect(SharedDatabaseCommand.mutatingCommands.isDisjoint(with: SharedDatabaseCommand.idempotentCommands),
            "a command is either a read or a mutation, never both")
 
@@ -233,7 +250,8 @@ if not failures:
         server = Path(tmp) / 'server.py'
         server.write_text(SERVER)
         binary = Path(tmp) / 'driver'
-        build = subprocess.run(['xcrun', 'swiftc', '-O', str(source), str(driver), '-o', str(binary)], capture_output=True, text=True)
+        build = subprocess.run(['xcrun', 'swiftc', '-O', str(source), str(root / 'Horos/Sources/SharedDatabaseAuthorization.swift'),
+                                str(driver), '-o', str(binary)], capture_output=True, text=True)
         if build.returncode != 0:
             failures.append('driver did not compile:\n' + build.stderr[-3000:])
         else:

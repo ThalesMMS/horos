@@ -2,9 +2,14 @@
 """Database sharing names the port and errno when bind on 8780 fails.
 
 #389 already reports the DICOM listener, XML-RPC and the web portal through
-ListenBindFailure. The Bonjour database share is a fourth N2ConnectionListener
-on 8780; a failed bind used to log only 'Warning: unable to share Horos
-database'. This issue is #392, not a reopen of #389.
+ListenBindFailure. The Bonjour database share is a fourth listener on 8780; a
+failed bind used to log only 'Warning: unable to share Horos database'. This
+issue is #392, not a reopen of #389.
+
+Since #615 the share listens with HorosDatabaseServer (Network.framework), which
+reports ready or failed asynchronously: the report is made where it says so,
+in -databaseServer:didFailWithPOSIXError:description:, with the POSIX error the
+listener failed with.
 """
 from pathlib import Path
 import errno
@@ -79,31 +84,33 @@ def second_bind_errno(port):
 toggle = method(publisher, '- (void)toggleSharing:(BOOL)activate')
 if not toggle:
     failures.append('BonjourPublisher is missing toggleSharing:')
+failed = method(publisher, '- (void)databaseServer:(HorosDatabaseServer*)server didFailWithPOSIXError:(int)posixError')
+started = method(publisher, '- (void)databaseServerDidStart:(HorosDatabaseServer*)server')
+if not failed or not started:
+    failures.append('BonjourPublisher does not handle the listener becoming ready or failing')
 
 # Failure path: same AppController funnel as the other three listeners.
-if 'reportListenBindFailure' not in toggle:
-    failures.append('toggleSharing: does not report a bind failure through AppController')
-if 'lastBindErrno' not in toggle:
-    failures.append('toggleSharing: does not pass N2ConnectionListener lastBindErrno')
-if '8780' not in toggle or 'port:8780' not in toggle.replace(' ', ''):
-    failures.append('toggleSharing: does not name port 8780 on bind failure')
-if 'unable to share Horos database' in toggle:
-    failures.append('toggleSharing: still logs the vague Warning without service/port/errno')
-if SERVICE not in toggle and 'databaseSharingService' not in toggle:
-    failures.append('toggleSharing: does not name the database sharing service')
+if 'reportListenBindFailure' not in failed:
+    failures.append('a failed listener is not reported through AppController')
+if 'errnoCode:posixError' not in failed.replace(' ', ''):
+    failures.append('the report does not pass the POSIX error the listener failed with')
+if 'port:8780' not in failed.replace(' ', ''):
+    failures.append('the report does not name port 8780')
+if SERVICE not in failed and 'databaseSharingService' not in failed:
+    failures.append('the report does not name the database sharing service')
+for source, label in ((toggle, 'toggleSharing:'), (failed, 'the failure handler')):
+    if 'unable to share Horos database"' in source:
+        failures.append(label + ' still logs the vague Warning without service/port/errno')
 
 # Success stays a single shared-on-port line; no false bind alert.
-if 'Horos database shared on port' not in toggle:
+if 'Horos database shared on port' not in started:
     failures.append('successful sharing dropped its port log')
-success = ''
-if 'if (_listener)' in toggle:
-    success = toggle[toggle.find('if (_listener)'):toggle.find('else')]
-if 'reportListenBindFailure' in success:
-    failures.append('the sharing success path reports a bind failure')
+if 'reportListenBindFailure' in started or 'reportListenBindFailure' in toggle:
+    failures.append('the sharing start or success path reports a bind failure')
 
 # Once, without blocking the thread that asked to share.
-if 'waitUntilDone:YES' in toggle or 'NSRunAlertPanel' in toggle or 'runModal' in toggle:
-    failures.append('toggleSharing: still blocks on a modal bind-failure alert')
+if any(blocking in source for source in (toggle, failed) for blocking in ('waitUntilDone:YES', 'NSRunAlertPanel', 'runModal')):
+    failures.append('the bind failure still blocks on a modal alert')
 if 'reportListenBindFailureForService' not in app or 'consumeUserNotice' not in app:
     failures.append('AppController no longer gates the user notice to once per service/port')
 if 'presentUserNotice' not in app:
@@ -111,7 +118,7 @@ if 'presentUserNotice' not in app:
 
 # #259 stays on its own front.
 if 'AsyncSocket lastBindErrno' in publisher:
-    failures.append('BonjourPublisher started reading AsyncSocket; it binds through N2ConnectionListener')
+    failures.append('BonjourPublisher started reading AsyncSocket; it binds through HorosDatabaseServer')
 
 helper_text = helper.read_text() if helper.is_file() else ''
 if 'databaseSharingService' not in helper_text:

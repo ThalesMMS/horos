@@ -44,21 +44,24 @@ if 'OpenSSL-LICENSE.txt' not in licenses:
 if (root / 'Binaries/Splash/OpenSSL-LICENSE.txt').read_bytes() != (root / 'OpenSSL/upstream/LICENSE.txt').read_bytes():
     fail('the bundled OpenSSL license differs from the pinned upstream text')
 
-for name in ('Horos Project', 'OsiriX', 'Yves Starreveld', 'ystarrev/horos',
-             'Grok', 'AGPLv3', 'Horos Cloud', 'DCMTK', 'ITK', 'VTK'):
+for name in ('Horos Project', 'OsiriX', 'Yves Starreveld',
+             'Horos Cloud', 'DCMTK', 'ITK', 'VTK', 'OpenJPEG', 'CharLS'):
     if name not in licenses:
         fail('licenses.html is missing ' + name)
+for text, label in ((licenses, 'licenses.html'), (about, 'about.html')):
+    if 'Grok' in text:
+        fail(label + ' still credits Grok, which nothing links since #617')
 
 if 'DICOMweb' not in notice:
     fail('NOTICE dropped the DICOMweb preservation note')
-if 'docs/license-attribution.md' not in readme:
-    fail('README.md does not point at the attribution document')
+if 'Yves Starreveld' not in readme:
+    fail('README.md no longer credits the donor author')
 if 'L368' not in docs:
     fail('docs/license-attribution.md is missing catalog ID L368')
 if 'test-license-attribution.py' not in docs:
     fail('docs/license-attribution.md does not point at the tests for #367/#385')
 if 'Yves Starreveld' not in xcconfig:
-    fail('HUMAN_READABLE_COPYRIGHT no longer credits ystarrev')
+    fail('HUMAN_READABLE_COPYRIGHT no longer credits the donor author')
 if 'L368' not in catalog:
     fail('host localization catalog contract does not point at L368')
 

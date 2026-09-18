@@ -2,8 +2,11 @@
 """Exercise the production Swift client with controlled URLSession responses."""
 from pathlib import Path
 import subprocess, tempfile, ssl, threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler
 root = Path(__file__).resolve().parents[1]
+import sys
+sys.path.insert(0, str(root / 'tools'))
+from local_http import ThreadingLocalHTTPServer  # a fixture binds without the DNS (#647)
 code = r'''
 import Foundation
 final class FeedProtocol: URLProtocol {
@@ -98,7 +101,7 @@ with tempfile.TemporaryDirectory(prefix='horos-update-tls-') as directory:
             self.wfile.write(b'not reached with an untrusted certificate')
         def log_message(self, *args):
             pass
-    server = HTTPServer(('127.0.0.1', 0), Handler)
+    server = ThreadingLocalHTTPServer(('127.0.0.1', 0), Handler)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(str(p/'cert.pem'), str(p/'key.pem'))
     server.socket = context.wrap_socket(server.socket, server_side=True)

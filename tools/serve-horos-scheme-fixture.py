@@ -2,9 +2,11 @@
 """Loopback page for the native #299 acceptance; contains synthetic identifiers only."""
 import argparse
 import html
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler
 import json
 from urllib.parse import urlencode
+# Run as tools/serve-horos-scheme-fixture.py: this folder is already on the path.
+from local_http import LocalHTTPServer
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--port', type=int, default=0)
@@ -43,6 +45,6 @@ location.href = ''' + json.dumps(url) + '; }, 1500);</script>'
         pass
 
 
-server = HTTPServer(('127.0.0.1', args.port), Handler)
+server = LocalHTTPServer(('127.0.0.1', args.port), Handler)
 print(f'http://127.0.0.1:{server.server_port}/', flush=True)
 server.serve_forever()

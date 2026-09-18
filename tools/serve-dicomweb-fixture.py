@@ -16,13 +16,15 @@ import json
 import re
 import signal
 import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 import numpy
 from pydicom.dataset import Dataset, FileMetaDataset
 from pydicom.uid import CTImageStorage, ExplicitVRLittleEndian, generate_uid
+# Run as tools/serve-dicomweb-fixture.py: this folder is already on the path.
+from local_http import ThreadingLocalHTTPServer
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('fixture', type=Path, help='empty directory for the generated study')
@@ -198,7 +200,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
 
-server = ThreadingHTTPServer(('127.0.0.1', args.port), Handler)
+server = ThreadingLocalHTTPServer(('127.0.0.1', args.port), Handler)
 record = args.evidence / 'dicomweb-fixture.json'
 
 

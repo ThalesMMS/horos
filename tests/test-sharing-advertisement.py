@@ -5,8 +5,8 @@ Since #606 the publication itself is `HorosBonjourAdvertisement`
 (`DNSServiceRegister`); the legacy `NSNetService` object stays for the
 deprecated accessor its callers still read. Both are modelled here, and the
 advertisement must follow the listener exactly: none while sharing is off, the
-live port when it comes up, stopped and released when it goes, and the new port
-after a change. The legacy object is deliberately **not** published any more:
+live port when it comes up, stopped and released when it goes, the new port
+after a change, and the new name after a rename (#615). The legacy object is deliberately **not** published any more:
 two registrations of the same name and port from one process make the daemon
 rename one of them. It stays only so the deprecated accessor keeps its type.
 """
@@ -26,8 +26,9 @@ code=r'''
 @interface NSUserDefaults(Probe)
 + (NSString*)bonjourSharingName;
 @end
+static NSString *sharingName=@"synthetic sharing";
 @implementation NSUserDefaults(Probe)
-+ (NSString*)bonjourSharingName{return @"synthetic sharing";}
++ (NSString*)bonjourSharingName{return sharingName;}
 @end
 @interface AppController:NSObject
 + (NSString*)UID;
@@ -42,6 +43,7 @@ code=r'''
 @end
 @interface FakeService:NSObject
 @property NSInteger port;
+@property(copy) NSString *name;
 @property(assign) id delegate;
 @property BOOL published;
 - (id)initWithDomain:(id)d type:(id)t name:(id)n port:(NSInteger)p;
@@ -50,7 +52,7 @@ code=r'''
 - (void)publish;- (void)stop;
 @end
 @implementation FakeService
-- (id)initWithDomain:(id)d type:(id)t name:(id)n port:(NSInteger)p{self=[super init];self.port=p;return self;}
+- (id)initWithDomain:(id)d type:(id)t name:(id)n port:(NSInteger)p{self=[super init];self.port=p;self.name=n;return self;}
 + (NSData*)dataFromTXTRecordDictionary:(id)d{return [NSData data];}
 - (BOOL)setTXTRecordData:(id)d{return YES;}
 - (void)publish{self.published=YES;}
@@ -58,6 +60,7 @@ code=r'''
 @end
 @interface FakeAdvertisement:NSObject
 @property NSInteger port;
+@property(copy) NSString *name;
 @property BOOL isPublished;
 @property(retain) NSDictionary *txtRecord;
 - (id)initWithName:(id)n type:(id)t port:(NSInteger)p;
@@ -65,7 +68,7 @@ code=r'''
 - (void)stop;
 @end
 @implementation FakeAdvertisement
-- (id)initWithName:(id)n type:(id)t port:(NSInteger)p{self=[super init];self.port=p;return self;}
+- (id)initWithName:(id)n type:(id)t port:(NSInteger)p{self=[super init];self.port=p;self.name=n;return self;}
 - (void)publishWithTXTRecord:(NSDictionary*)txt{self.isPublished=YES;self.txtRecord=txt;}
 - (void)stop{self.isPublished=NO;}
 @end
@@ -101,7 +104,11 @@ int main(){@autoreleasepool{
  [p netService:p->_bonjour didNotPublish:@{}];NSCAssert(p->_bonjour==nil,@"failure clears service");
  [p updateBonjour];NSCAssert(p->_bonjour.port==8781,@"recovery rebuilds the legacy service on the live endpoint");
  [old release];NSCAssert(p->_advertisement.port==8781 && p->_advertisement.isPublished,@"recovery republishes the advertisement");
- puts("ok: disabled startup, real port, disable, changed port, stale failure and recovery, for service and advertisement");
+ FakeAdvertisement *named=[p->_advertisement retain];sharingName=@"renamed sharing";[p updateBonjour];
+ NSCAssert(!named.isPublished,@"a rename stops the advertisement under the old name");
+ NSCAssert([p->_advertisement.name isEqualToString:@"renamed sharing"] && p->_advertisement.isPublished && p->_advertisement.port==8781,@"a rename publishes the new name on the same port");
+ [named release];
+ puts("ok: disabled startup, real port, disable, changed port, stale failure and recovery, and rename, for service and advertisement");
 }}
 '''.replace('ACTUAL_METHODS','\n'.join(method(s) for s in ('- (void)updateBonjour {','- (void)netService:(NSNetService*)sender didNotPublish:')))
 with tempfile.TemporaryDirectory(prefix='horos-sharing-') as t:

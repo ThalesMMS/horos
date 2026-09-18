@@ -4,7 +4,7 @@ import Foundation
 ///
 /// Moving parsing onto DCMTK does not authorize removing `DCM.framework`,
 /// `PluginFilter`, or the class, selector and header names plugins already compile
-/// against. ystarrev's plugin-system deletion is out of scope. Legacy and 2011
+/// against. The donor fork's plugin-system deletion is out of scope. Legacy and 2011
 /// keyword spellings (`PatientsName` / `PatientName`) must resolve to the same
 /// tag. A valid DICOM file whose decoder is missing is kept, not deleted or
 /// silently rewritten as a different object. Original Specific Character Set
@@ -12,7 +12,7 @@ import Foundation
 @objc(HorosDCMFacade)
 public final class HorosDCMFacade: NSObject {
     @objc public static let requiredFrameworkName = "DCM.framework"
-    @objc public static let ystarrevPluginCleanupTestThatMustNotBeCopied = "test_plugin_cleanup.py"
+    @objc public static let donorPluginCleanupTestThatMustNotBeCopied = "test_plugin_cleanup.py"
     @objc public static let requiredPluginTypes = [
         "PluginFilter", "DCMPix", "DCMView", "ROI", "ViewerController",
     ]

@@ -53,8 +53,6 @@
 #import "ThickSlabController.h"
 #import "BrowserController.h"
 #import "AppController.h"
-#import "MPR2DController.h"
-#import "MPR2DView.h"
 #import "OrthogonalMPRController.h"
 #import "OrthogonalMPRView.h"
 #import "OrthogonalMPRPETCTView.h"

@@ -1,8 +1,22 @@
 #!/usr/bin/env python3
-"""Inventory completeness follows imported identities, never transport/frame counts."""
+"""Inventory completeness follows imported identities, never transport/frame counts.
+
+A retrieve's inventory is judged once what it received is in the index (#646):
+received files are indexed by the importer's timer after the transfer returns,
+and judged at once a retrieve that brought every instance was recorded as
+incomplete. Modelled here with an index that catches up in steps; the move waits
+before its final refresh, and warns about received instances the index never took.
+"""
 import subprocess,tempfile
 from pathlib import Path
 root=Path(__file__).resolve().parents[1]
+node=(root/'Horos/Sources/DCMTKQueryNode.mm').read_text()
+final=node[node.index('    @finally {\n        if (localRetrieve && _retrieveInventory) {'):]
+final=final[:final.index('[DCMTKQueryNode performSelectorOnMainThread:@selector(errorMessage:)')]
+assert 'waitForReceivedImportsRefreshing:' in final, 'the move judges its inventory without waiting for the received instances to be indexed'
+assert final.index('waitForReceivedImportsRefreshing:') < final.index('[_retrieveInventory finish];'), 'the wait comes after the inventory is finished'
+assert 'if (!NSThread.isMainThread)' in final, 'the wait may block the main thread, whose run loop drives the importer'
+assert '|| !receivedIndexed' in final, 'received instances the index never took do not raise the warning'
 driver=r'''
 import Foundation
 import CoreData
@@ -56,7 +70,49 @@ autoreleasepool {
  released=temporary;temporary.finish()
 }
 assert(released==nil) // old studies do not retain all their UIDs globally forever
-print("ok: exact UID reconciliation, duplicate/rejection history, pending import, unknown inventory and concurrent store events")
+// #646: every missing instance received, the index catching up in three steps 0.3 s apart.
+let delayedRows=(1...30).map { ["uid":"7.2.\($0)","series":"7.3"] }
+let delayed=RetrieveInventory.begin(study:"7.1",series:"",endpoint:"PACS",database:directory,instances:delayedRows,confirmed:true)
+let index=NSLock()
+var indexed=Set((1...30).filter { $0 % 2 == 1 }.map { "7.2.\($0)" })
+let refresh: () -> Void = { index.lock(); let uids=Array(indexed); index.unlock(); delayed.updateImportedUIDs(uids) }
+refresh()
+for i in stride(from:2,through:30,by:2) {
+ NotificationCenter.default.post(name:Notification.Name("HorosDICOMStoreCompleted"),object:nil,userInfo:["uid":"7.2.\(i)","study":"7.1","series":"7.3","status":0])
+}
+refresh()
+// Judged at once, the retrieve is incomplete although nothing is missing from the transfer.
+assert(!delayed.isComplete && delayed.importedCount==15 && delayed.receivedAwaitingImportCount==15 && !delayed.needsAttention)
+Thread { for step in 0..<3 { Thread.sleep(forTimeInterval:0.3); index.lock(); for i in stride(from:2,through:30,by:2) where (i/2)%3==step { indexed.insert("7.2.\(i)") }; index.unlock() } }.start()
+var started=Date()
+assert(delayed.waitForReceivedImports(refreshing:refresh,patience:2,cancelled:{ false }))
+var waited=Date().timeIntervalSince(started)
+assert(waited>=0.8 && waited<2.5, "waited \(waited) s for an index that took 0.9 s")
+assert(delayed.isComplete && delayed.importedCount==30 && delayed.receivedAwaitingImportCount==0 && !delayed.needsAttention)
+delayed.finish()
+// Really incomplete: one instance never sent. Nothing received is left to wait for, and it still needs attention.
+let omitted=RetrieveInventory.begin(study:"8.1",series:"",endpoint:"PACS",database:directory,instances:delayedRows,confirmed:true)
+omitted.updateImportedUIDs([])
+for i in 1...29 { omitted.record(uid:"7.2.\(i)",status:0) }
+omitted.updateImportedUIDs((1...29).map { "7.2.\($0)" })
+started=Date()
+assert(omitted.waitForReceivedImports(refreshing:{},patience:2,cancelled:{ false }))
+assert(Date().timeIntervalSince(started)<0.5 && !omitted.isComplete && omitted.needsAttention && omitted.missingUIDs==["7.2.30"])
+omitted.finish()
+// Received but never indexed: the wait gives up after its patience, and says so.
+let rejected=RetrieveInventory.begin(study:"9.1",series:"",endpoint:"PACS",database:directory,instances:delayedRows,confirmed:true)
+rejected.updateImportedUIDs([])
+for i in 1...30 { rejected.record(uid:"7.2.\(i)",status:0) }
+rejected.updateImportedUIDs((1...28).map { "7.2.\($0)" })
+started=Date()
+assert(!rejected.waitForReceivedImports(refreshing:{},patience:0.5,cancelled:{ false }))
+waited=Date().timeIntervalSince(started)
+assert(waited>=0.5 && waited<1.5 && rejected.receivedAwaitingImportCount==2, "gave up after \(waited) s")
+// Cancelled: no wait at all.
+started=Date()
+assert(!rejected.waitForReceivedImports(refreshing:{},patience:5,cancelled:{ true }) && Date().timeIntervalSince(started)<0.5)
+rejected.finish()
+print("ok: exact UID reconciliation, duplicate/rejection history, pending import, unknown inventory, concurrent store events and the wait for received instances to be indexed")
 '''
 with tempfile.TemporaryDirectory(prefix='horos-inventory-') as d:
  p=Path(d);(p/'main.swift').write_text(driver)

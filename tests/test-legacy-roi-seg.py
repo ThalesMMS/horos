@@ -32,7 +32,7 @@ if 'HorosLegacyROISeg.swift in Sources' not in pbx:
 if 'HorosLegacyROISeg' in database:
     failures.append('legacy ROI→SEG must not be wired as the incoming-folder indexer')
 if (root / 'Scripts/test_plugin_cleanup.py').exists() or (root / 'tests/test_plugin_cleanup.py').exists():
-    failures.append('ystarrev test_plugin_cleanup.py was copied; plugin removal is out of scope')
+    failures.append('the donor test_plugin_cleanup.py was copied; plugin removal is out of scope')
 
 archive_src = archive.read_text(encoding='utf-8') if archive.is_file() else ''
 for field in ('sopInstanceUID', 'seriesInstanceUID', 'frameOfReferenceUID', 'frame'):

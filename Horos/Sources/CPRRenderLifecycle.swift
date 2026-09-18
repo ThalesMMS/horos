@@ -16,19 +16,25 @@ public final class CPRRenderDecision: NSObject {
 
 /// CPR window lifecycle and drawRect reentrancy. Nested draw of the same view
 /// is the hang on newer AppKit SDKs; invalid spacing is named, not rewritten.
+///
+/// The phase and the draw depth belong to one CPR window. They were static
+/// once: a second Curved MPR window then shared them, and closing either one
+/// left `closed` behind, so every view of the window still on screen had its
+/// draw refused and its panels went blank. `CPRController` owns one instance
+/// and hands it to its views.
 @objc(HorosCPRRenderLifecycle)
 public final class CPRRenderLifecycle: NSObject {
-    private static let lock = NSLock()
-    private static var sessionPhase = "idle"
-    private static var drawDepth: [String: Int] = [:]
+    private let lock = NSLock()
+    private var sessionPhase = "idle"
+    private var drawDepth: [String: Int] = [:]
 
-    @objc public static var phase: String {
+    @objc public var phase: String {
         lock.lock()
         defer { lock.unlock() }
         return sessionPhase
     }
 
-    @objc public static func reset() {
+    @objc public func reset() {
         lock.lock()
         sessionPhase = "idle"
         drawDepth = [:]
@@ -36,7 +42,7 @@ public final class CPRRenderLifecycle: NSObject {
     }
 
     @objc(beginOpeningResampled:)
-    public static func beginOpening(resampled: Bool) -> CPRRenderDecision {
+    public func beginOpening(resampled: Bool) -> CPRRenderDecision {
         lock.lock()
         defer { lock.unlock() }
         sessionPhase = resampled ? "opening-resampled" : "opening-native"
@@ -44,28 +50,28 @@ public final class CPRRenderLifecycle: NSObject {
                                   diagnosis: resampled ? "resample accepted" : "no resample")
     }
 
-    @objc public static func markOpen() -> CPRRenderDecision {
+    @objc public func markOpen() -> CPRRenderDecision {
         lock.lock()
         defer { lock.unlock() }
         sessionPhase = "open"
         return CPRRenderDecision(accepted: true, phase: sessionPhase, diagnosis: "window open")
     }
 
-    @objc public static func markCurveReady() -> CPRRenderDecision {
+    @objc public func markCurveReady() -> CPRRenderDecision {
         lock.lock()
         defer { lock.unlock() }
         sessionPhase = "curve-ready"
         return CPRRenderDecision(accepted: true, phase: sessionPhase, diagnosis: "curve concluded")
     }
 
-    @objc public static func beginClosing() -> CPRRenderDecision {
+    @objc public func beginClosing() -> CPRRenderDecision {
         lock.lock()
         defer { lock.unlock() }
         sessionPhase = "closing"
         return CPRRenderDecision(accepted: true, phase: sessionPhase, diagnosis: "window closing")
     }
 
-    @objc public static func markClosed() -> CPRRenderDecision {
+    @objc public func markClosed() -> CPRRenderDecision {
         lock.lock()
         defer { lock.unlock() }
         sessionPhase = "closed"
@@ -74,7 +80,7 @@ public final class CPRRenderLifecycle: NSObject {
     }
 
     @objc(beginDrawNamed:)
-    public static func beginDraw(named name: String) -> CPRRenderDecision {
+    public func beginDraw(named name: String) -> CPRRenderDecision {
         lock.lock()
         defer { lock.unlock() }
         if sessionPhase == "closing" || sessionPhase == "closed" {
@@ -91,7 +97,7 @@ public final class CPRRenderLifecycle: NSObject {
     }
 
     @objc(endDrawNamed:)
-    public static func endDraw(named name: String) {
+    public func endDraw(named name: String) {
         lock.lock()
         defer { lock.unlock() }
         let depth = drawDepth[name, default: 0]
