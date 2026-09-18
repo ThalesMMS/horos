@@ -9837,43 +9837,29 @@ static _Atomic(unsigned long long) horosDecodedFrameCount = 0;
 -(float*) multiplyImages :(float*) input :(float*) subfImage
 {
     long	i = height * width;
-    float   *result = malloc( height * width * sizeof(float));
     
     if( subPixOffset.x == 0 && subPixOffset.y == 0)
     {
+        float   *result = malloc( height * width * sizeof(float));
 #if __ppc__ || __ppc64__
         if( Altivec) vmultiply( (vector float *)input, (vector float *)subfImage, (vector float *)result, i);
         else
 #endif
             vmultiplyNoAltivec(input, subfImage, result, i);
+        return result;
     }
-    else
-    {
-        long	x, y;
-        long	offsetX = subPixOffset.x, offsetY = -subPixOffset.y;
-        long	startheight, subheight, startwidth, subwidth;
-        float   *tempIn, *tempOut, *tempResult;
-        
-        if( offsetY > 0)
-        { startheight = offsetY;   subheight = height;}
-        else { startheight = 0; subheight = height + offsetY;}
-        
-        if( offsetX > 0)
-        { startwidth = offsetX;   subwidth = width;}
-        else { startwidth = 0; subwidth = width + offsetX;}
-        
-        for( y = startheight; y < subheight; y++)
-        {
-            tempResult = result + y*width;
-            tempIn = input + y*width;
-            tempOut = subfImage + (y-offsetY)*width - offsetX;
-            x = subwidth - startwidth;
-            while( x-->0)
-            {
-                *tempResult++ = *tempIn++ * *tempOut++;
-            }
-        }
-    }
+    
+    // The shifted image lies under pixel (x, y) at (x - dx, y + dy), as
+    // subtractImages:: reads the mask; where it has no pixel the product is
+    // zero, instead of memory nothing had written (#675).
+    long	dx = lround( subPixOffset.x), dy = lround( subPixOffset.y);
+    long	firstColumn = MAX( 0, dx), lastColumn = MIN( width, width + dx);
+    long	firstRow = MAX( 0, -dy), lastRow = MIN( height, height - dy);
+    float   *result = calloc( i, sizeof(float));
+    
+    for( long y = firstRow; y < lastRow && firstColumn < lastColumn; y++)
+        vDSP_vmul( input + y * width + firstColumn, 1, subfImage + (y + dy) * width + (firstColumn - dx), 1, result + y * width + firstColumn, 1, lastColumn - firstColumn);
+    
     return result;
 }
 
@@ -9900,10 +9886,10 @@ static _Atomic(unsigned long long) horosDecodedFrameCount = 0;
 -(float*) arithmeticSubtractImages :(float*) input :(float*) subfImage absolute:(BOOL) abs
 {
     long	i = height * width;
-    float   *result = malloc( height * width * sizeof(float));
     
     if( subPixOffset.x == 0 && subPixOffset.y == 0)
     {
+        float   *result = malloc( height * width * sizeof(float));
 #if __ppc__ || __ppc64__
         if( Altivec)
         {
@@ -9920,50 +9906,26 @@ static _Atomic(unsigned long long) horosDecodedFrameCount = 0;
             else
                 vsubtractNoAltivec(input, subfImage, result, i);
         }
+        return result;
     }
-    else
+    
+    // The shifted image lies under pixel (x, y) at (x - dx, y + dy), as
+    // subtractImages:: reads the mask; where it has no pixel the difference is
+    // zero, instead of memory nothing had written (#675).
+    long	dx = lround( subPixOffset.x), dy = lround( subPixOffset.y);
+    long	firstColumn = MAX( 0, dx), lastColumn = MIN( width, width + dx);
+    long	firstRow = MAX( 0, -dy), lastRow = MIN( height, height - dy);
+    float   *result = calloc( i, sizeof(float));
+    
+    for( long y = firstRow; y < lastRow && firstColumn < lastColumn; y++)
     {
-        long	offsetX = subPixOffset.x, offsetY = -subPixOffset.y;
-        long	startheight, subheight, startwidth, subwidth;
-        float   *tempIn, *tempOut, *tempResult;
+        float *difference = result + y * width + firstColumn;
         
-        if( offsetY > 0)
-        { startheight = offsetY;   subheight = height;}
-        else { startheight = 0; subheight = height + offsetY;}
-        
-        if( offsetX > 0)
-        { startwidth = offsetX;   subwidth = width;}
-        else { startwidth = 0; subwidth = width + offsetX;}
-        
+        vDSP_vsub( subfImage + (y + dy) * width + (firstColumn - dx), 1, input + y * width + firstColumn, 1, difference, 1, lastColumn - firstColumn);	// input - shifted
         if( abs)
-        {
-            for( long y = startheight; y < subheight; y++)
-            {
-                tempResult = result + y*width;
-                tempIn = input + y*width;
-                tempOut = subfImage + (y-offsetY)*width - offsetX;
-                long x = subwidth - startwidth;
-                while ( x-- > 0)
-                {
-                    *tempResult++ = fabsf(*tempIn++ - *tempOut++);
-                }
-            }
-        }
-        else
-        {
-            for( long y = startheight; y < subheight; y++)
-            {
-                tempResult = result + y*width;
-                tempIn = input + y*width;
-                tempOut = subfImage + (y-offsetY)*width - offsetX;
-                long x = subwidth - startwidth;
-                while ( x-- > 0)
-                {
-                    *tempResult++ = *tempIn++ - *tempOut++;
-                }
-            }
-        }
+            vDSP_vabs( difference, 1, difference, 1, lastColumn - firstColumn);
     }
+    
     return result;
 }
 
@@ -10025,21 +9987,28 @@ static _Atomic(unsigned long long) horosDecodedFrameCount = 0;
 
 -(float*) subtractImages:(float*)input :(float*)subfImage
 {
-    long	firstPixel = subPixOffset.y * width - subPixOffset.x;			
-    long	firstPixelAbs = labs((int)subPixOffset.y * width) + labs((int)subPixOffset.x);
-    float	*firstSourcePixel = subfImage + (firstPixelAbs + firstPixel)/2;
-    long	i = height * width;	
+    long	i = height * width;
     float	*result = malloc( i * sizeof(float));
     
     if (result == nil) return input;
     
-    float	*firstResultPixel = result + (firstPixelAbs - firstPixel)/2;
-    long	lengthToBeCopied = i - firstPixelAbs;
+    // The mask registered by the pixel shift lies under frame pixel (x, y) at
+    // (x - dx, y + dy), as the other image arithmetic reads it, row by row so
+    // that a horizontal shift does not wrap into the next row. Where the
+    // shifted mask has no pixel the difference is zero: those pixels used to
+    // keep memory nothing had written (#669).
+    long	dx = lround( subPixOffset.x), dy = lround( subPixOffset.y);
+    long	firstColumn = MAX( 0, dx), lastColumn = MIN( width, width + dx);
+    long	firstRow = MAX( 0, -dy), lastRow = MIN( height, height - dy);
     
-    //preparing mask: the following command registers it in function of the pixel shift, and multiplies it by % 
-    vDSP_vsmul (firstSourcePixel,1,&subtractedfPercent,firstResultPixel,1,lengthToBeCopied);//result= % mask	
-    
-    vDSP_vsub (result,1,input,1,result,1,lengthToBeCopied);				//mask - frame
+    vDSP_vclr( result, 1, i);
+    for( long y = firstRow; y < lastRow && firstColumn < lastColumn; y++)
+    {
+        float *difference = result + y * width + firstColumn;
+        
+        vDSP_vsmul( subfImage + (y + dy) * width + (firstColumn - dx), 1, &subtractedfPercent, difference, 1, lastColumn - firstColumn);	// % mask
+        vDSP_vsub( difference, 1, input + y * width + firstColumn, 1, difference, 1, lastColumn - firstColumn);								// frame - % mask
+    }
     
     float ratio = fabs(subMinMax.y-subMinMax.x);						//Max difference in subtraction without pixel shift
     if( ratio == 0) ratio = 1;
@@ -10642,8 +10611,12 @@ static _Atomic(unsigned long long) horosDecodedFrameCount = 0;
                         
                         for( int i = 0; i < numberOfThreadsForCompute; i++)
                         {
-                            start = i * (int) (height / numberOfThreadsForCompute);
-                            end = (i+1) * (int) (height / numberOfThreadsForCompute);
+                            // Every row belongs to one thread. Rounding the share down
+                            // first left the last height % threads rows as they were:
+                            // 8 rows of a 128-row PET on ten cores never took the new
+                            // window or table (#657).
+                            start = (int) ((i * height) / numberOfThreadsForCompute);
+                            end = (int) (((i+1) * height) / numberOfThreadsForCompute);
                             
                             NSMutableDictionary *d = [nonLinearWLWWThreads objectAtIndex: i];
                             

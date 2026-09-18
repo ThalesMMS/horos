@@ -204,7 +204,10 @@ public final class MPRMetalReslicer {
             counted += 1;
         }
         float result = p.extent.w;
-        if (counted > 0) result = (projection == 3) ? accumulated / float(counted) : accumulated;
+        // A mean multiplies by the reciprocal, as the host's slab does
+        // (vDSP_vsmul by 1.0f / count). Under fast math this compiles as the
+        // division did; under safe math it is the host's arithmetic exactly.
+        if (counted > 0) result = (projection == 3) ? accumulated * (1.0f / float(counted)) : accumulated;
         output[gid.y * p.size.x + gid.x] = result;
     }
     """#
@@ -240,7 +243,10 @@ public final class MPRMetalReslicer {
     private var outputGeneration = 0
     private var outputAllocationCount = 0
 
-    public init(device: MTLDevice, backend: MetalComputeBackend = .metal3) throws {
+    /// `safeMath` compiles the kernel with IEEE arithmetic, for a caller that
+    /// must equal a CPU reduction bit for bit (the planar thick slab, #659);
+    /// the MPR keeps fast math.
+    public init(device: MTLDevice, backend: MetalComputeBackend = .metal3, safeMath: Bool = false) throws {
         let traceStart = MetalPerformanceTrace.now()
         self.device = device
         guard let queue = device.makeCommandQueue() else { throw ResliceFailure.device("Metal cannot create a command queue.") }
@@ -251,7 +257,8 @@ public final class MPRMetalReslicer {
             : nil
         // Compiled once per device and shared with every other MPR engine (#622).
         let (pipelines, compiled) = try MetalComputePipelineCache.pipelines(
-            device: device, configuration: MetalComputePipelineCache.Configuration(source: Self.shader, functions: ["reslice"]))
+            device: device, configuration: MetalComputePipelineCache.Configuration(
+                source: Self.shader, functions: ["reslice"], safeMath: safeMath))
         pipeline = pipelines["reslice"]!
         MetalPerformanceTrace.record("mpr.pipeline", startedAt: traceStart, extra: ["cold": compiled])
     }

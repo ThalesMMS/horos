@@ -25,9 +25,11 @@ import argparse
 import hashlib
 import json
 import os
+import plistlib
 import shutil
 import stat
 import subprocess
+import time
 import sys
 import tempfile
 import unicodedata
@@ -115,23 +117,49 @@ def make_folder(folder: Path, name: str):
     return path
 
 
+def devices(image: Path):
+    """The disk devices the system still has for this image, mounted or not."""
+    info = plistlib.loads(subprocess.run(["hdiutil", "info", "-plist"], capture_output=True, check=True).stdout)
+    wanted = os.path.realpath(image)
+    return [entity["dev-entry"] for entry in info.get("images", [])
+            if os.path.realpath(entry.get("image-path", "")) == wanted
+            for entity in entry.get("system-entities", []) if "dev-entry" in entity]
+
+
+def detach(image: Path):
+    """Detach a disposable image until the system no longer has it. Right after
+    a write the volume can still be held (hdiutil exits 16, resource busy), and
+    a busy detach can unmount the volume yet leave its disk attached: wait and
+    try again on the disk itself, then force."""
+    for attempt in range(10):
+        attached = devices(image)
+        if not attached:
+            return True
+        subprocess.run(["hdiutil", "detach", "-quiet", min(attached, key=len)], capture_output=True)
+        time.sleep(0.5)
+    for device in devices(image):
+        subprocess.run(["hdiutil", "detach", "-quiet", "-force", device], capture_output=True)
+    return not devices(image)
+
+
 def attach(label, readonly_with=None):
     image = scratch / f"{label}.dmg"
     mount = scratch / f"mnt-{label}"
     mount.mkdir()
     subprocess.run(["hdiutil", "create", "-quiet", "-size", "64m", "-fs", "APFS", "-volname", f"HorosTrash{label}",
                     "-type", "UDIF", str(image)], check=True)
+    # Registered before anything can fail, so that the cleanup detaches it.
+    images.append(image)
     if readonly_with:
         subprocess.run(["hdiutil", "attach", "-quiet", "-nobrowse", "-mountpoint", str(mount), str(image)], check=True)
         for name, data in readonly_with.items():
             (mount / name).write_bytes(data)
-        subprocess.run(["hdiutil", "detach", "-quiet", str(mount)], check=True)
+        assert detach(image), f"the {label} image could not be detached after writing it"
         mount.mkdir(exist_ok=True)
         subprocess.run(["hdiutil", "attach", "-quiet", "-readonly", "-nobrowse", "-mountpoint", str(mount), str(image)],
                        check=True)
     else:
         subprocess.run(["hdiutil", "attach", "-quiet", "-nobrowse", "-mountpoint", str(mount), str(image)], check=True)
-    images.append(mount)
     return mount
 
 
@@ -244,8 +272,8 @@ finally:
         # Created by this test under a random name and checked by content above.
         if leftover.name.startswith("horos-trash-test-") and leftover.is_file():
             leftover.unlink()
-    for mount in images:
-        subprocess.run(["hdiutil", "detach", "-quiet", "-force", str(mount)], check=False)
+    for image in images:
+        detach(image)
     shutil.rmtree(scratch, ignore_errors=True)
 
 if failures:

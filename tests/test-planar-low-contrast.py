@@ -122,7 +122,10 @@ with tempfile.TemporaryDirectory(prefix='a111-',dir=results) as directory:
         assert source.count(correct)==1, 'update negative control after shader changes'
         renderer_source=work/'ColorFirstMutant.swift'
         renderer_source.write_text(source.replace(correct,wrong))
-    subprocess.run(['xcrun','swiftc','-O','-parse-as-library',str(ROOT/'Horos/Sources/VolumeAllocation.swift'),
+    subprocess.run(['xcrun','swiftc','-O','-parse-as-library',
+                    *[str(ROOT/'Horos/Sources'/name) for name in ['VolumeAllocation.swift','VolumeSession.swift',
+                      'MPRMetalReslicer.swift','MetalPerformanceTrace.swift','MetalComputePipelineCache.swift',
+                      'Metal4ComputeSubmitter.swift']],
                     str(renderer_source),str(ROOT/'tools/measure-planar-low-contrast.swift'),
                     '-o',str(work/'probe')],check=True)
     subprocess.run([str(work/'probe'),str(work)],check=True,timeout=90)

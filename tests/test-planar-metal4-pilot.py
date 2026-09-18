@@ -26,7 +26,8 @@ import tempfile
 
 root = Path(__file__).resolve().parents[1]
 sources = ['VolumeAllocation.swift', 'VolumeSession.swift', 'PlanarComparison.swift',
-           'PlanarMetalRenderer.swift', 'PlanarMetal4Renderer.swift', 'MetalPerformanceTrace.swift']
+           'PlanarMetalRenderer.swift', 'PlanarMetal4Renderer.swift', 'MetalPerformanceTrace.swift',
+           'MPRMetalReslicer.swift', 'MetalComputePipelineCache.swift', 'Metal4ComputeSubmitter.swift']
 project = (root / 'Horos.xcodeproj/project.pbxproj').read_text()
 failures = []
 if project.count('PlanarMetal4Renderer.swift in Sources') < 1:
@@ -48,7 +49,7 @@ import Metal
 
 func expect(_ ok: Bool, _ reason: String) { if !ok { print("FAIL: " + reason); exit(1) } }
 
-func makeFrame(width: Int, height: Int, colour: Bool, nearest: Bool, scale: Int) throws -> PlanarFrame {
+func makeFrame(width: Int, height: Int, colour: Bool, nearest: Bool, scale: Int, table: Bool = false) throws -> PlanarFrame {
     var pixels = Data()
     if colour {
         var bytes = [UInt8]()
@@ -62,14 +63,20 @@ func makeFrame(width: Int, height: Int, colour: Bool, nearest: Bool, scale: Int)
     }
     var clut = [UInt8]()
     for index in 0..<256 { clut += index < 128 ? [0, 0, 255, 255] : [255, 255, 0, 255] }
-    let snapshot: NSDictionary = [
+    let snapshot: NSMutableDictionary = [
         "width": width, "height": height, "pixels": pixels, "clut": Data(clut),
-        "frameIdentity": "pilot-\(width)x\(height)-\(colour)-\(nearest)-\(scale)",
+        "frameIdentity": "pilot-\(width)x\(height)-\(colour)-\(nearest)-\(scale)-\(table)",
         "screenToPixel": [0.0, 0.0, Double(width), 0.0, 0.0, Double(height)],
         "viewSize": [64.0, 40.0],
         "level": colour ? 127.5 : 40.0, "widthWindow": colour ? 255.0 : 400.0,
         "isColor": colour, "nearest": nearest, "background": false, "softwareScale": scale,
     ]
+    if table {
+        // An opacity table (#657): the table pass runs before either backend samples.
+        let curve = (0..<4096).map { Float(log10(1 + Double($0) / 4095 * 9)) }
+        snapshot["transferFunction"] = curve.withUnsafeBytes { Data($0) }
+        snapshot["transferLevel"] = 40.0; snapshot["transferWidth"] = 400.0; snapshot["transferInverted"] = scale == 2
+    }
     return try PlanarFrame(snapshot)
 }
 
@@ -84,9 +91,11 @@ func makeFrame(width: Int, height: Int, colour: Bool, nearest: Bool, scale: Int)
 
         // 1. Identical pixels on every case the host actually produces.
         var cases = 0
-        for (colour, nearest, scale) in [(false, false, 1), (false, true, 1), (true, false, 1),
-                                         (true, true, 1), (false, false, 2), (false, false, 3)] {
-            let frame = try makeFrame(width: 32, height: 20, colour: colour, nearest: nearest, scale: scale)
+        for (colour, nearest, scale, table) in [(false, false, 1, false), (false, true, 1, false), (true, false, 1, false),
+                                                (true, true, 1, false), (false, false, 2, false), (false, false, 3, false),
+                                                (false, false, 1, true), (false, true, 1, true), (false, false, 2, true),
+                                                (true, true, 1, true)] {
+            let frame = try makeFrame(width: 32, height: 20, colour: colour, nearest: nearest, scale: scale, table: table)
             let legacy = try PlanarMetalRenderer(device: device)
             let pilot = try PlanarMetal4Renderer(device: device)
             try legacy.update(frame)
@@ -94,7 +103,7 @@ func makeFrame(width: Int, height: Int, colour: Bool, nearest: Bool, scale: Int)
             let a = try legacy.renderBGRA(width: 64, height: 40)
             let b = try pilot.renderBGRA(width: 64, height: 40)
             expect(a.count == b.count, "different output sizes for colour=\(colour) scale=\(scale)")
-            expect(a == b, "the pilot drew different pixels for colour=\(colour) nearest=\(nearest) scale=\(scale)")
+            expect(a == b, "the pilot drew different pixels for colour=\(colour) nearest=\(nearest) scale=\(scale) table=\(table)")
             cases += 1
         }
 

@@ -81,8 +81,9 @@ void vtkHorosFixedPointVolumeRayCastMapper::DisplayRenderedImage( vtkRenderer *r
 }
 
 
-bool vtkHorosFixedPointVolumeRayCastMapper::PrepareMPRGeometry(vtkRenderer *ren, vtkVolume *vol)
+bool vtkHorosFixedPointVolumeRayCastMapper::PrepareMPRGeometry(vtkRenderer *ren, vtkVolume *vol, bool acceptClippingPlanes)
 {
+    this->LastGeometryRefusal = GeometryNoInput;
     vtkImageData *input = this->GetInput();
     if (!input || !ren || !vol)
         return false;
@@ -92,6 +93,7 @@ bool vtkHorosFixedPointVolumeRayCastMapper::PrepareMPRGeometry(vtkRenderer *ren,
     this->ImageSampleDistance = this->MinimumImageSampleDistance;
     int width, height;
     ren->GetTiledSize(&width, &height);
+    this->LastGeometryRefusal = GeometryNoViewport;
     if (width <= 0 || height <= 0 || this->ImageSampleDistance <= 0)
         return false;
     this->RayCastImage->SetImageSampleDistance(this->ImageSampleDistance);
@@ -105,8 +107,9 @@ bool vtkHorosFixedPointVolumeRayCastMapper::PrepareMPRGeometry(vtkRenderer *ren,
     input->GetSpacing(spacing);
     input->GetExtent(extent);
     // restoreCamera installs six planes even for the uncropped volume.
-    // Accept those, but use the CPU if any plane cuts into the voxel centres.
-    for (int planeIndex = 0; planeIndex < this->GetNumberOfClippingPlanes(); ++planeIndex)
+    // Accept those, but use the CPU if any plane cuts into the voxel centres,
+    // unless the caller clips its rays against the planes as VTK does (#664).
+    for (int planeIndex = 0; !acceptClippingPlanes && planeIndex < this->GetNumberOfClippingPlanes(); ++planeIndex)
     {
         double plane[4];
         this->GetClippingPlaneInDataCoords(vol->GetMatrix(), planeIndex, plane);
@@ -117,7 +120,10 @@ bool vtkHorosFixedPointVolumeRayCastMapper::PrepareMPRGeometry(vtkRenderer *ren,
                 distance += plane[axis] * (origin[axis] + spacing[axis] *
                     extent[2 * axis + ((corner >> axis) & 1)]);
             if (distance < -1e-4)
+            {
+                this->LastGeometryRefusal = GeometryClippingPlane;
                 return false;
+            }
         }
     }
     this->ComputeMatrices(origin, spacing, extent, ren, vol);
@@ -125,7 +131,18 @@ bool vtkHorosFixedPointVolumeRayCastMapper::PrepareMPRGeometry(vtkRenderer *ren,
     this->UpdateCroppingRegions();
     // Keep row bounds allocated so switching back to the CPU remains valid.
     // No transfer tables, gradients, ray casting, or texture presentation here.
-    return this->ComputeRowBounds(ren, 1, 1, extent) != 0;
+    // No row bounds: an abort request, or a volume outside the frustum - which
+    // VTK's own bounds, seeded at the image edges, never report (#664).
+    if (this->ComputeRowBounds(ren, 1, 1, extent) == 0)
+    {
+        this->LastGeometryRefusal = GeometryNoRows;
+        return false;
+    }
+    // The voxel-space matrices and clipping planes each ray is cast with, as
+    // the CPU render sets them up just before casting (#664).
+    this->InitializeRayInfo(vol);
+    this->LastGeometryRefusal = GeometryAccepted;
+    return true;
 }
 
 void vtkHorosFixedPointVolumeRayCastMapper::Render( vtkRenderer *ren, vtkVolume *vol )

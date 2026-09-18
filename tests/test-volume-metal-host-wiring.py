@@ -31,14 +31,16 @@ project = (root / 'Horos.xcodeproj/project.pbxproj').read_text()
 
 for needed in ('aCamera->GetPosition(position)', 'aCamera->GetParallelProjection()', 'aCamera->GetParallelScale() / factor',
                'position[i] / factor', 'clippingRangeThickness / factor', 'table[i][0] * 255', 'NSPointFromString(point)', 'pt.x - 1000',
-               'volumeProperty->GetShade()', 'croppingBox->GetEnabled()', 'bounds[2 * axis] / factor'):
+               'volumeProperty->GetShade()', 'GetVoxelClippingPlanes(&voxelPlanes)'):
     assert needed in bridge, 'snapshot must read: ' + needed
-for reason in ('RGB volumes keep the original renderer', 'Fusion keeps the original renderer', 'The 16-bit CLUT keeps the original renderer'):
+for reason in ('RGB volumes keep the original renderer', 'The 16-bit CLUT keeps the original renderer'):
     assert reason in bridge, 'missing refusal: ' + reason
+# A fused series ray-casts in Metal too, with its own renderer (#671).
+assert 'Fusion keeps the original renderer' not in bridge, 'fusion is still refused'
+assert 'objc_getAssociatedObject(self, uploadedSlot) != volume || !renderer.isReady' in bridge, 'one upload per volume buffer'
 for forbidden in ('valueForKey', 'managedObjectContext', 'DicomImage', 'DicomSeries', 'DicomDatabase', 'sourceFile', 'BrowserController'):
     assert forbidden not in bridge, 'the bridge must not reach ' + forbidden
 assert 'volumeData[curMovieIndex]' in bridge and 'pixList[curMovieIndex]' in bridge, 'the volume comes from the controller\'s own buffers'
-assert 'objc_getAssociatedObject(self, &uploadedKey) != volume || !renderer.isReady' in bridge, 'one upload per volume buffer'
 assert 'NSWindowWillCloseNotification' in bridge and 'releaseVolume' in bridge, 'closing the window must free the GPU volume'
 assert 'Compare in Metal (3D)' in bridge and 'openVolumeMetalComparison:' in bridge
 assert '- (NSMenu *)menuForEvent:(NSEvent *)event' in bridge, 'the comparison is reached from the view\'s contextual menu'

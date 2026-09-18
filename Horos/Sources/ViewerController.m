@@ -7440,7 +7440,7 @@ static ViewerController *draggedController = nil;
             {
                 //shutterRect inside frame?
                 if (shutterRect.origin.x < 0) { shutterRect.size.width += shutterRect.origin.x; shutterRect.origin.x = 0;}
-                if (shutterRect.origin.y < 0) { shutterRect.size.height += shutterRect.origin.y; shutterRect.origin.x = 0;}
+                if (shutterRect.origin.y < 0) { shutterRect.size.height += shutterRect.origin.y; shutterRect.origin.y = 0;}
                 if (shutterRect.origin.x + shutterRect.size.width > p.pwidth) shutterRect.size.width = p.pwidth - shutterRect.origin.x;
                 if (shutterRect.origin.y + shutterRect.size.height > p.pheight) shutterRect.size.height = p.pheight - shutterRect.origin.y;
                 

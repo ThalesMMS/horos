@@ -9269,10 +9269,14 @@ static NSInteger HorosMovieIndexForScroll(NSInteger current, NSInteger count, do
                 glBlendEquation(GL_FUNC_ADD);
                 glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
                 
-                if( blendingTextureName)
-                    [blendingView drawRectIn:drawingFrameRect :blendingTextureName :offset :blendingTextureX :blendingTextureY :blendingTextureWidth :blendingTextureHeight];
-                else
-                    NSLog( @"blendingTextureName == nil");
+                // With Metal the fused series is drawn with the image, in this order (#658).
+                if( planarDrawn == NO)
+                {
+                    if( blendingTextureName)
+                        [blendingView drawRectIn:drawingFrameRect :blendingTextureName :offset :blendingTextureX :blendingTextureY :blendingTextureWidth :blendingTextureHeight];
+                    else
+                        NSLog( @"blendingTextureName == nil");
+                }
                 
                 glDisable( GL_BLEND);
             }

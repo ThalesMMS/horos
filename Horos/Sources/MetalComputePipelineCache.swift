@@ -23,9 +23,13 @@ public final class MetalComputePipelineCache {
         public let source: String
         public let macros: [String: Bool]
         public let functions: [String]
+        /// IEEE arithmetic instead of fast math: no reassociation, no
+        /// approximate division. For a consumer whose result has to equal a
+        /// CPU loop bit for bit, as the planar thick slab does (#659).
+        public let safeMath: Bool
 
-        public init(source: String, macros: [String: Bool] = [:], functions: [String]) {
-            self.source = source; self.macros = macros; self.functions = functions
+        public init(source: String, macros: [String: Bool] = [:], functions: [String], safeMath: Bool = false) {
+            self.source = source; self.macros = macros; self.functions = functions; self.safeMath = safeMath
         }
     }
 
@@ -62,9 +66,12 @@ public final class MetalComputePipelineCache {
         }
         lock.withLock { attemptCount += 1 }
         var options: MTLCompileOptions?
-        if !configuration.macros.isEmpty {
+        if !configuration.macros.isEmpty || configuration.safeMath {
             options = MTLCompileOptions()
-            options?.preprocessorMacros = configuration.macros.mapValues { NSNumber(value: $0) }
+            if !configuration.macros.isEmpty {
+                options?.preprocessorMacros = configuration.macros.mapValues { NSNumber(value: $0) }
+            }
+            if configuration.safeMath { options?.mathMode = .safe }
         }
         let library = try device.makeLibrary(source: configuration.source, options: options)
         var made = [String: MTLComputePipelineState]()

@@ -131,7 +131,8 @@ with tempfile.TemporaryDirectory(prefix='horos-planar-host-') as temporary:
     # PlanarMetal4Renderer is the backend the host may be asked for (#609);
     # it compiles here so the selection and its fallback are exercised, not stubbed.
     sources = ['VolumeAllocation.swift', 'VolumeSession.swift', 'PlanarMetalRenderer.swift',
-               'PlanarMetal4Renderer.swift', 'MetalPerformanceTrace.swift']
+               'PlanarMetal4Renderer.swift', 'MetalPerformanceTrace.swift', 'MPRMetalReslicer.swift',
+               'MetalComputePipelineCache.swift', 'Metal4ComputeSubmitter.swift']
     command = ['xcrun', 'swiftc', '-Onone', '-parse-as-library', '-suppress-warnings',
                *[str(root/'Horos/Sources'/name) for name in sources], str(args.host_source), str(work/'Check.swift'), '-o', str(work/'check')]
     subprocess.run(command, check=True)

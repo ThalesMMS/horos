@@ -27,7 +27,12 @@ import simd
 ///   step as `1 − (1 − α)^step`; compositing is front to back, stopping at
 ///   α ≥ 0.99;
 /// - projections output the reduced scalar and colour it through the same
-///   window and CLUT, so a MIP compares numerically with the CPU slab.
+///   window and CLUT, so a MIP compares numerically with the CPU slab;
+/// - a projection asked to sample as the host's VTK ray caster does (#659)
+///   spans only the voxel centres, `[0, dim − 1]`, and places its samples
+///   every step from the near plane, the first one past the entry: VTK starts
+///   each ray on the near plane, clips it to its cropping bounds and takes
+///   `1 + ⌊distance / step⌋` steps to the first sample.
 public enum VolumeRenderingMode: Int {
     case composite = 0, maximum = 1, minimum = 2, mean = 3
 }
@@ -125,11 +130,20 @@ public struct VolumeRenderRequest {
     /// Value written where a projection ray finds no sample; the host passes
     /// its volume minimum so the picture matches VTK's own outside value.
     public let scalarBackground: Float
+    /// A projection sampled as the host's VTK ray caster samples it: voxel-centre
+    /// box, samples anchored on the camera's near plane (#659). Composite ignores it.
+    public let anchoredProjection: Bool
+    /// Up to six clipping planes in voxel index coordinates, (a, b, c, d) keeping
+    /// a·v + d ≥ 0: the host's crop box, which need not be axis-aligned (#664).
+    /// Each ray is clipped against them as VTK's ray caster clips it.
+    public let clippingPlanes: [SIMD4<Float>]
+    public static let maximumClippingPlanes = 6
 
     public init(camera: VolumeCamera, transfer: VolumeTransferFunction, mode: VolumeRenderingMode, shading: VolumeShading,
                 crop: (minimum: SIMD3<Float>, maximum: SIMD3<Float>)?, width: Int, height: Int, sampleStep: Float,
                 background: SIMD3<Float> = SIMD3(0, 0, 0), scalarBackground: Float? = nil,
-                viewportSize: SIMD2<Int>? = nil, viewportOrigin: SIMD2<Int> = .zero) throws {
+                viewportSize: SIMD2<Int>? = nil, viewportOrigin: SIMD2<Int> = .zero,
+                anchoredProjection: Bool = false, clippingPlanes: [SIMD4<Float>] = []) throws {
         guard width > 0, height > 0, width <= 8192, height <= 8192 else { throw ResliceFailure.geometry("The image has no extent.") }
         guard sampleStep.isFinite, sampleStep > 0 else { throw ResliceFailure.geometry("The sample step must be positive.") }
         let viewport = viewportSize ?? SIMD2(width, height)
@@ -138,10 +152,15 @@ public struct VolumeRenderRequest {
               viewportOrigin.x <= viewport.x - width, viewportOrigin.y <= viewport.y - height
         else { throw ResliceFailure.geometry("The image region is outside the viewport.") }
         if let crop { guard (0..<3).allSatisfy({ crop.maximum[$0] > crop.minimum[$0] }) else { throw ResliceFailure.geometry("The crop box is empty.") } }
+        guard clippingPlanes.count <= Self.maximumClippingPlanes,
+              clippingPlanes.allSatisfy({ plane in (0..<4).allSatisfy { plane[$0].isFinite } && simd_length(SIMD3(plane.x, plane.y, plane.z)) > 0 })
+        else { throw ResliceFailure.geometry("The crop planes are not usable.") }
         self.camera = camera; self.transfer = transfer; self.mode = mode; self.shading = shading; self.crop = crop
         self.width = width; self.height = height; self.sampleStep = sampleStep; self.background = background
         self.scalarBackground = scalarBackground ?? (transfer.level - transfer.width * 0.5)
         self.viewportSize = viewport; self.viewportOrigin = viewportOrigin
+        self.anchoredProjection = anchoredProjection
+        self.clippingPlanes = clippingPlanes
     }
 }
 
@@ -172,9 +191,11 @@ public final class VolumeMetalRenderer {
         float4 shading;      // ambient, diffuse, specular, specularPower
         float4 cropMin;      // xyz, w: crop enabled
         float4 cropMax;      // xyz
-        float4 background;   // rgb, w: unused
-        uint4 size;          // width, height, maxSteps, 0
+        float4 background;   // rgb, w: scalar written where a projection finds no sample
+        uint4 size;          // width, height, maxSteps, anchored projection (#659)
         uint4 viewport;      // full size and top-left origin of the output region
+        float4 planes[6];    // crop planes in voxel index space, a·v + d ≥ 0 kept (#664)
+        uint4 clipping;      // x: how many planes
     };
     static bool intersectBox(float3 origin, float3 direction, float3 lo, float3 hi, thread float &tNear, thread float &tFar) {
         // A direction component of zero would make (face - origin) * inf a NaN
@@ -257,7 +278,12 @@ public final class VolumeMetalRenderer {
         float3 vo = (p.worldToVoxel * float4(origin, 1.0)).xyz;
         float3 vd = (p.worldToVoxel * float4(direction, 0.0)).xyz;
         float tEntry, tExit;
-        bool hit = intersectBox(vo, vd, float3(-0.5), dims - 0.5, tEntry, tExit);
+        uint mode = uint(p.window.z);
+        // VTK's fixed-point ray caster, when asked for a projection: the box of
+        // voxel centres, and samples anchored on the near plane (#659).
+        bool anchored = p.size.w != 0 && mode != 0;
+        bool hit = intersectBox(vo, vd, anchored ? float3(0.0) : float3(-0.5), anchored ? dims - 1.0 : dims - 0.5,
+                                tEntry, tExit);
         if (hit && p.cropMin.w != 0.0) {
             // The crop box is axis-aligned in voxel index space, as the host's
             // cropping widget is; it need not be axis-aligned in the world.
@@ -266,12 +292,23 @@ public final class VolumeMetalRenderer {
             tEntry = max(tEntry, cEntry); tExit = min(tExit, cExit);
             hit = hit && tExit >= tEntry;
         }
+        // The crop's planes (#664), as VTK's ray caster applies them: the ray's
+        // segment starts where it enters a plane's kept side and ends where it
+        // leaves it, and is empty when it lies wholly outside a plane.
+        for (uint i = 0; hit && i < p.clipping.x; ++i) {
+            float4 plane = p.planes[i];
+            float facing = dot(plane.xyz, vd), offset = dot(plane.xyz, vo) + plane.w;
+            if (facing == 0.0) { hit = offset >= 0.0; continue; }
+            float t = -offset / facing;
+            if (facing > 0.0) tEntry = max(tEntry, t); else tExit = min(tExit, t);
+            hit = tExit >= tEntry;
+        }
         // Clipping range: distances along the viewing direction from the eye.
         float along = dot(direction, p.forward.xyz);
         float eyeOffset = dot(origin - p.eye.xyz, p.forward.xyz);
         float tNear = (p.clip.x - eyeOffset) / along, tFar = (p.clip.y - eyeOffset) / along;
         float tStart = max(max(tEntry, tNear), 0.0), tEnd = min(tExit, tFar);
-        uint mode = uint(p.window.z);
+        if (anchored) tStart = tNear + (floor((max(tEntry, tNear) - tNear) / p.clip.w) + 1.0) * p.clip.w;
         float4 acc = float4(0.0);
         float reduced = 0.0; uint counted = 0;
         float minimum = p.window.x - p.window.y * 0.5;
@@ -287,21 +324,33 @@ public final class VolumeMetalRenderer {
                 if (t > tEnd + slack) break;
                 float3 world = origin + direction * t;
                 float3 v = (p.worldToVoxel * float4(world, 1.0)).xyz;
+                // VTK stores a position as round(v * 32767) and reads it back
+                // with a 15-bit shift: its samples sit at v * 32767 / 32768.
+                if (anchored) v *= 32767.0 / 32768.0;
                 #if VOLUME_EMPTY_SPACE_SKIP
-                if (mode == 0) {
+                if (mode == 0 || ((mode == 1 || mode == 2) && counted > 0)) {
                     uint3 grid = (uint3(dims) + 7) / 8;
                     int3 brick = clamp(int3(floor(v / 8.0)), int3(0), int3(grid) - 1);
                     float2 values = brickRanges[(brick.z * grid.y + brick.y) * grid.x + brick.x];
-                    uint lo = uint(clamp((values.x - minimum) / p.window.y, 0.0, 1.0) * 255.0 + 0.5);
-                    uint hi = uint(clamp((values.y - minimum) / p.window.y, 0.0, 1.0) * 255.0 + 0.5);
-                    if (opacityPrefix[hi + 1] == opacityPrefix[lo]) {
+                    bool unchanged;
+                    if (mode == 0) {
+                        uint lo = uint(clamp((values.x - minimum) / p.window.y, 0.0, 1.0) * 255.0 + 0.5);
+                        uint hi = uint(clamp((values.y - minimum) / p.window.y, 0.0, 1.0) * 255.0 + 0.5);
+                        unchanged = opacityPrefix[hi + 1] == opacityPrefix[lo];
+                    } else {
+                        // A brick that cannot raise the maximum, or lower the
+                        // minimum, changes nothing: VTK's MIP leaps such cells
+                        // too (#659). The mean counts every sample.
+                        unchanged = mode == 1 ? values.y <= reduced : values.x >= reduced;
+                    }
+                    if (unchanged) {
+                        // Keep the original ray's sampling phase and stop before the boundary.
                         float exitDistance = INFINITY;
                         for (int axis = 0; axis < 3; ++axis) {
                             if (fabs(vd[axis]) < 1e-12) continue;
                             float face = float((brick[axis] + (vd[axis] > 0 ? 1 : 0)) * 8);
                             exitDistance = min(exitDistance, max(0.0, (face - v[axis]) / vd[axis]));
                         }
-                        // Keep the original ray's sampling phase and stop before the boundary.
                         uint advance = uint(min(float(steps - s), max(1.0, floor(exitDistance / step))));
                         s += advance - 1;
                         continue;
@@ -309,8 +358,11 @@ public final class VolumeMetalRenderer {
                 }
                 #endif
                 bool inside;
-                // Quantitative projections retain explicit float interpolation.
-                float scalar = sampleVolume(volume, v, inside, mode == 0);
+                // Quantitative projections retain explicit float interpolation;
+                // a projection sampled as VTK's ray caster takes the hardware
+                // filter, whose fixed-point weights stand where VTK's 15-bit
+                // ones do (#659).
+                float scalar = sampleVolume(volume, v, inside, mode == 0 || anchored);
                 if (!inside) continue;
                 if (mode == 0) {
                     float w = clamp((scalar - minimum) / p.window.y, 0.0, 1.0);
@@ -515,6 +567,8 @@ public final class VolumeMetalRenderer {
         var cropMin: SIMD4<Float>, cropMax: SIMD4<Float>, background: SIMD4<Float>
         var size: SIMD4<UInt32>
         var viewport: SIMD4<UInt32>
+        var planes: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)
+        var clipping: SIMD4<UInt32>
     }
 
     public func render(_ request: VolumeRenderRequest) throws -> VolumeRenderResult {
@@ -546,9 +600,14 @@ public final class VolumeMetalRenderer {
             cropMin: SIMD4(request.crop?.minimum ?? SIMD3(0, 0, 0), request.crop == nil ? 0 : 1),
             cropMax: SIMD4(request.crop?.maximum ?? SIMD3(0, 0, 0), 0),
             background: SIMD4(request.background, request.scalarBackground),
-            size: SIMD4(UInt32(request.width), UInt32(request.height), maxSteps, 0),
+            size: SIMD4(UInt32(request.width), UInt32(request.height), maxSteps, request.anchoredProjection ? 1 : 0),
             viewport: SIMD4(UInt32(request.viewportSize.x), UInt32(request.viewportSize.y),
-                            UInt32(request.viewportOrigin.x), UInt32(request.viewportOrigin.y)))
+                            UInt32(request.viewportOrigin.x), UInt32(request.viewportOrigin.y)),
+            planes: (.zero, .zero, .zero, .zero, .zero, .zero),
+            clipping: SIMD4(UInt32(request.clippingPlanes.count), 0, 0, 0))
+        withUnsafeMutableBytes(of: &params.planes) { raw in
+            for (index, plane) in request.clippingPlanes.enumerated() { raw.storeBytes(of: plane, toByteOffset: index * 16, as: SIMD4<Float>.self) }
+        }
         if let submitter {
             // Metal 4 (#623): the slot's uniforms carry the parameters; the images are copied after the feedback.
             let started = DispatchTime.now().uptimeNanoseconds
@@ -662,6 +721,60 @@ public final class VolumeRendererBridge: NSObject {
         } catch let failure as ResliceFailure { throw failure.nsError }
     }
 
+    /// The picture VTK's ray caster makes of a projection (#659), from the
+    /// reduced scalars: `VTKKWRCHelper_LookupColorMax` writes the colour of the
+    /// value premultiplied by the scalar opacity at that value, both in 15 bits,
+    /// and outside composite blending VTK does not correct that opacity for the
+    /// step. The functions are the host's: the colour is `BuildFunctionFromTable`
+    /// over the window with 255 entries (entries 0...254 of the CLUT, linear
+    /// between them), the opacity is the curve's points over the window, linear
+    /// between them, with (0, 0) before a curve that starts later and (256, 1)
+    /// after one that ends earlier, both clamped outside. A ray with no sample
+    /// (`background`) stays at zero, as VTK leaves it. Four UInt16 per pixel,
+    /// premultiplied RGBA, in the scalars' order.
+    /// How many crop planes a render takes (#664).
+    @objc public static let maximumClippingPlanes = VolumeRenderRequest.maximumClippingPlanes
+
+    @objc public static func projectionPicture(scalar: NSData, level: Double, width windowWidth: Double, clut: NSData,
+                                               opacityPoints: [NSNumber], background: Double) -> NSData {
+        var curve = [SIMD2<Double>]()
+        var index = 0
+        while index + 1 < opacityPoints.count {
+            curve.append(SIMD2(opacityPoints[index].doubleValue, opacityPoints[index + 1].doubleValue)); index += 2
+        }
+        curve = curve.filter { $0.x.isFinite && $0.y.isFinite }.sorted { $0.x < $1.x }
+        if curve.first.map({ $0.x != 0 }) ?? true { curve.insert(SIMD2(0, 0), at: 0) }
+        if curve.last!.x != 256 { curve.append(SIMD2(256, 1)) }
+        func opacity(_ x: Double) -> Double {
+            if x <= curve[0].x { return curve[0].y }
+            for (previous, next) in zip(curve, curve.dropFirst()) where x <= next.x {
+                let span = next.x - previous.x
+                return span > 0 ? previous.y + (next.y - previous.y) * (x - previous.x) / span : next.y
+            }
+            return curve.last!.y
+        }
+        let colours = [UInt8](clut as Data)
+        let values = [Float](unsafeUninitializedCapacity: scalar.length / 4) { buffer, count in
+            count = scalar.length / 4
+            _ = scalar.getBytes(buffer.baseAddress!, length: count * 4)
+        }
+        let start = level - windowWidth / 2
+        var picture = [UInt16](repeating: 0, count: values.count * 4)
+        guard colours.count == 1024, windowWidth > 0 else { return Data() as NSData }
+        for (pixel, value) in values.enumerated() where Double(value) != background && value.isFinite {
+            let fraction = min(1, max(0, (Double(value) - start) / windowWidth))
+            let alpha = UInt32(min(1, max(0, opacity(fraction * 256))) * 32767 + 0.5)
+            let position = fraction * 254, lower = Int(position), upper = min(254, lower + 1), weight = position - Double(lower)
+            for channel in 0..<3 {
+                let colour = (Double(colours[4 * lower + channel]) * (1 - weight) + Double(colours[4 * upper + channel]) * weight) / 255
+                let fixed = UInt32(colour * 32767 + 0.5)
+                picture[4 * pixel + channel] = UInt16((fixed * alpha + 0x7fff) >> 15)
+            }
+            picture[4 * pixel + 3] = UInt16(alpha)
+        }
+        return picture.withUnsafeBytes { Data($0) } as NSData
+    }
+
     @objc public func memoryRequirementForWidth(_ width: Int, height: Int, depth: Int) throws -> NSNumber {
         do { return NSNumber(value: try engine.memoryRequirement(width: width, height: height, depth: depth)) }
         catch let failure as ResliceFailure { throw failure.nsError }
@@ -671,22 +784,29 @@ public final class VolumeRendererBridge: NSObject {
     /// parallel(1), parallelScale(1), viewAngle(1); a negative `far` means no
     /// clipping range. `opacityPoints` are the host's x/y pairs (x in 0…256).
     /// `crop` is minX, minY, minZ, maxX, maxY, maxZ in voxel index units, or empty.
+    /// `anchoredProjection` samples a projection as the host's VTK ray caster
+    /// does (#659); composite ignores it. `clippingPlanes` are four numbers per
+    /// plane in voxel index coordinates, a·v + d ≥ 0 kept, at most six (#664).
     @objc public func render(camera: [NSNumber], near: Double, far: Double, level: Double, width windowWidth: Double, clut: NSData,
-                             opacityPoints: [NSNumber], mode: Int, shading: [NSNumber], crop: [NSNumber], width: Int, height: Int,
-                             sampleStep: Double, scalarBackground: Double, imageRegion: [NSNumber] = [], scalarOut: NSMutableData?) throws -> NSData {
-        guard camera.count == 12, shading.count == 5, crop.isEmpty || crop.count == 6,
+                             opacityPoints: [NSNumber], mode: Int, shading: [NSNumber], crop: [NSNumber],
+                             clippingPlanes: [NSNumber] = [], width: Int, height: Int,
+                             sampleStep: Double, scalarBackground: Double, anchoredProjection: Bool = false,
+                             imageRegion: [NSNumber] = [], scalarOut: NSMutableData?) throws -> NSData {
+        guard camera.count == 12, shading.count == 5, crop.isEmpty || crop.count == 6, clippingPlanes.count % 4 == 0,
               imageRegion.isEmpty || imageRegion.count == 4, let renderingMode = VolumeRenderingMode(rawValue: mode) else {
             throw ResliceFailure.geometry("The render description is incomplete.").nsError
         }
         return try renderFull(camera: camera + [NSNumber(value: near), NSNumber(value: far)], level: level, windowWidth: windowWidth,
                               clut: clut, opacityPoints: opacityPoints, renderingMode: renderingMode, shading: shading, crop: crop,
                               width: width, height: height, sampleStep: sampleStep, scalarBackground: Float(scalarBackground),
+                              anchoredProjection: anchoredProjection, clippingPlanes: clippingPlanes,
                               imageRegion: imageRegion, scalarOut: scalarOut)
     }
 
     private func renderFull(camera: [NSNumber], level: Double, windowWidth: Double, clut: NSData, opacityPoints: [NSNumber],
                             renderingMode: VolumeRenderingMode, shading: [NSNumber], crop: [NSNumber], width: Int, height: Int,
-                            sampleStep: Double, scalarBackground: Float, imageRegion: [NSNumber], scalarOut: NSMutableData?) throws -> NSData {
+                            sampleStep: Double, scalarBackground: Float, anchoredProjection: Bool = false,
+                            clippingPlanes: [NSNumber] = [], imageRegion: [NSNumber], scalarOut: NSMutableData?) throws -> NSData {
         let c = camera.map { $0.floatValue }
         do {
             let far = c.count > 13 ? c[13] : -1
@@ -715,7 +835,10 @@ public final class VolumeRendererBridge: NSObject {
                                                   crop: cropBox, width: width, height: height, sampleStep: Float(sampleStep),
                                                   scalarBackground: scalarBackground.isFinite ? scalarBackground : nil,
                                                   viewportSize: imageRegion.isEmpty ? nil : SIMD2(imageRegion[0].intValue, imageRegion[1].intValue),
-                                                  viewportOrigin: imageRegion.isEmpty ? .zero : SIMD2(imageRegion[2].intValue, imageRegion[3].intValue))
+                                                  viewportOrigin: imageRegion.isEmpty ? .zero : SIMD2(imageRegion[2].intValue, imageRegion[3].intValue),
+                                                  anchoredProjection: anchoredProjection,
+                                                  clippingPlanes: stride(from: 0, to: clippingPlanes.count, by: 4).map { index in
+                                                      SIMD4((0..<4).map { clippingPlanes[index + $0].floatValue }) })
             let result = try engine.render(request)
             lastMilliseconds = result.milliseconds
             if let scalarOut { scalarOut.setData(result.scalar) }

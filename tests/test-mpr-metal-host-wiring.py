@@ -7,8 +7,9 @@ or forgets a catalog string fails here rather than in the application:
 - `MPRDCMView` asks the bridge before CPU rendering and uses the same DCMPix
   update for either image; native pixel/geometry checks cover the result;
 - the bridge refuses, with a reason, every mode the engine does not
-  represent (volume rendering, fusion, RGB, a reversed stack) and never
-  touches Core Data, the catalogue or the DICOM files;
+  represent (volume rendering, RGB, a reversed stack) and never touches Core
+  Data, the catalogue or the DICOM files; a fusion is resliced with the plane
+  (#658, `tests/test-mpr-metal-fusion.py`);
 - the option defaults on, its menu item exists, and the notice the
   planar path shows when Metal is paused is reused unchanged;
 - every new user-visible string is in the Italian and Spanish catalogs;
@@ -39,7 +40,7 @@ assert body.index('if( blendingView)') > hook, 'the hook belongs to the primary 
 assert '#import "MPRHostBridge.h"' in view
 
 # The bridge's refusals and what it may not touch.
-for reason in ('Fusion keeps the original renderer', 'RGB planes keep the original renderer',
+for reason in ('RGB planes keep the original renderer',
                'Volume rendering keeps the original renderer', 'A reversed stack keeps the original renderer',
                'RGB volumes keep the original renderer'):
     assert reason in bridge, 'missing refusal: ' + reason
@@ -51,7 +52,10 @@ assert 'Original renderer (Metal paused)' in dcmview, 'the paused-renderer notic
 assert 'into:image error:&error]' in bridge and 'free(image);' in bridge, \
     'return an owned image for the common DCMPix update, filled by the engine and freed when the reslice fails'
 assert 'plane.bytes' not in bridge, 'the plane is copied once, into the image, not through an intermediate NSData (#620)'
-assert '[vrView prepareMPRGeometryWidth:width height:height]' in bridge
+assert '[vrView horosMPRGeometryRefusalWidth:width height:height]' in bridge, \
+    'the plane asks the view why its geometry is refused, one reason per cause (#664)'
+assert '[HorosMetalPerformanceTrace recordRefusal:@"mpr.refusal" reason:reason]' in bridge, \
+    'every plane the original renderer draws leaves its reason in the trace (#664)'
 assert '[vrView getOrigin:position windowCentered:YES sliceMiddle:YES]' in bridge
 assert 'mprVoxelToWorldTransform' in bridge and 'voxelToWorld:transform' in bridge
 assert 'uploadVolume:slices width:first.pwidth height:first.pheight depth:pix.count' in bridge

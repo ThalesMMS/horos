@@ -36,6 +36,7 @@ import os
 /// `planar.metal4.render`, and the host's own share: `mpr.host_prepare`,
 /// `vr.host_snapshot`, `vr.host_convert`. Since #620 the MPR plane is copied once,
 /// into the host's image, within `mpr.reslice`'s readback; there is no `mpr.host_copy`.
+/// Since #664 a refused frame leaves `vr.refusal` or `mpr.refusal` with its `reason`.
 @objc(HorosMetalPerformanceTrace)
 public final class MetalPerformanceTrace: NSObject {
     @objc public static let enabled = UserDefaults.standard.bool(forKey: "HorosMetalPerformanceTrace")
@@ -122,6 +123,16 @@ public final class MetalPerformanceTrace: NSObject {
     public static func recordHost(_ operation: String, startedAt: Double) {
         guard enabled, startedAt.isFinite else { return }
         record(operation, startedAt: startedAt)
+    }
+
+    /// A frame the original renderer drew because the Metal path refused it (#664):
+    /// `operation` names the surface (`vr.refusal`, `mpr.refusal`) and `reason` is
+    /// the host's fixed fallback text, so a trace counts how often each refusal
+    /// happens against the frames Metal drew (`vr.render`, `mpr.reslice`).
+    @objc(recordRefusal:reason:)
+    public static func recordRefusal(_ operation: String, reason: String) {
+        guard enabled else { return }
+        record(operation, startedAt: CACurrentMediaTime(), extra: ["reason": reason])
     }
 
     /// Every sample kept, oldest first, and how many older ones the buffer dropped.

@@ -2130,7 +2130,8 @@ static void  updateRight(vtkObject*, unsigned long eid, void* clientdata, void *
             destPtr = destFixedPtr = (unsigned char*) malloc( (*w+1) * (*h+1) * 4 * sizeof( unsigned char));
             if( destFixedPtr)
             {
-                unsigned short *iptr = im + 3 + 4*(*h-1)*fullSize[0];
+                // Each pixel's own R, G and B, as in VRView.mm (#672).
+                unsigned short *iptr = im + 4*(*h-1)*fullSize[0];
                 vImage_Buffer src, dst;
                 
                 int j = *h, rowBytes = 4*fullSize[0];
@@ -2140,13 +2141,11 @@ static void  updateRight(vtkObject*, unsigned long eid, void* clientdata, void *
                     int i = *w;
                     while( i-- > 0)
                     {
-                        *destPtr = 255;
-                        destPtr++;
-                        iptrTemp++;
-                        
-                        *destPtr++ = *iptrTemp++ >> 7;
-                        *destPtr++ = *iptrTemp++ >> 7;
-                        *destPtr++ = *iptrTemp++ >> 7;
+                        *destPtr++ = 255;
+                        *destPtr++ = iptrTemp[ 0] >> 7;
+                        *destPtr++ = iptrTemp[ 1] >> 7;
+                        *destPtr++ = iptrTemp[ 2] >> 7;
+                        iptrTemp += 4;
                     }
                     
                     iptr -= rowBytes;

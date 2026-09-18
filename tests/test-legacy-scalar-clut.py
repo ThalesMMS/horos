@@ -226,7 +226,9 @@ with tempfile.TemporaryDirectory(prefix='horos-scalar-clut-') as directory:
     (work/'Check.swift').write_text(driver)
     subprocess.run(['xcrun','clang','-O0','-c',str(work/'Host.c'),'-o',str(work/'Host.o')],check=True)
     subprocess.run(['xcrun','swiftc','-Onone','-parse-as-library','-suppress-warnings',
-                    str(root/'Horos/Sources/VolumeAllocation.swift'),str(root/'Horos/Sources/PlanarMetalRenderer.swift'),
+                    *[str(root/'Horos/Sources'/name) for name in ['VolumeAllocation.swift','VolumeSession.swift',
+                      'MPRMetalReslicer.swift','MetalPerformanceTrace.swift','MetalComputePipelineCache.swift',
+                      'Metal4ComputeSubmitter.swift','PlanarMetalRenderer.swift']],
                     str(args.legacy_source),str(work/'Host.o'),'-import-objc-header',str(work/'Host.h'),
                     str(work/'Check.swift'),'-o',str(work/'check')],check=True)
     raise SystemExit(subprocess.run([str(work/'check')],timeout=40).returncode)

@@ -93,6 +93,14 @@ final class PlanarMetal4Renderer: NSObject {
             descriptor.rasterSampleCount = key.sampleCount
             descriptor.colorAttachments[0].pixelFormat = MTLPixelFormat(rawValue: key.colorFormat) ?? .bgra8Unorm
             descriptor.colorAttachments[0].blendingState = key.blending ? .enabled : .disabled
+            if key.blending {
+                // The host's fusion blend (#658): GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA
+                // on every channel, alpha included.
+                let attachment = descriptor.colorAttachments[0]!
+                attachment.rgbBlendOperation = .add; attachment.alphaBlendOperation = .add
+                attachment.sourceRGBBlendFactor = .sourceAlpha; attachment.destinationRGBBlendFactor = .oneMinusSourceAlpha
+                attachment.sourceAlphaBlendFactor = .sourceAlpha; attachment.destinationAlphaBlendFactor = .oneMinusSourceAlpha
+            }
             // A compilation that throws leaves the cache as it was.
             let state = try compiler.makeRenderPipelineState(descriptor: descriptor)
             cacheLock.lock()
@@ -106,17 +114,23 @@ final class PlanarMetal4Renderer: NSObject {
     /// One in-flight submission's own resources. Nothing here is touched again
     /// until its commit feedback says the GPU is done with it.
     private final class Slot {
+        /// One layer's four parameter vectors.
+        static let layerBytes = 4 * MemoryLayout<SIMD4<Float>>.stride
+
         let allocator: MTL4CommandAllocator
+        /// The image's parameters, then the fused series'.
         let uniforms: MTLBuffer
         let argumentTable: MTL4ArgumentTable
+        /// The fused series' bindings (#658), a table of their own so the
+        /// image's draw keeps what it was encoded with.
+        let fusionTable: MTL4ArgumentTable
         let residency: MTLResidencySet
         var inFlight = false
         var retained: [MTLResource] = []
 
         init(device: MTLDevice) throws {
             guard let allocator = device.makeCommandAllocator(),
-                  let uniforms = device.makeBuffer(length: 4 * MemoryLayout<SIMD4<Float>>.stride,
-                                                   options: .storageModeShared) else {
+                  let uniforms = device.makeBuffer(length: 2 * Self.layerBytes, options: .storageModeShared) else {
                 throw PlanarMetalRenderer.failure()
             }
             self.allocator = allocator
@@ -126,6 +140,7 @@ final class PlanarMetal4Renderer: NSObject {
             table.maxTextureBindCount = 2
             table.initializeBindings = true
             argumentTable = try device.makeArgumentTable(descriptor: table)
+            fusionTable = try device.makeArgumentTable(descriptor: table)
             let descriptor = MTLResidencySetDescriptor()
             descriptor.initialCapacity = 4
             residency = try device.makeResidencySet(descriptor: descriptor)
@@ -150,10 +165,10 @@ final class PlanarMetal4Renderer: NSObject {
     private let commandBuffer: MTL4CommandBuffer
     private let cache: PipelineCache
     private let pipeline: MTLRenderPipelineState
+    private let fusionPipeline: MTLRenderPipelineState
     private var slots: [Slot]
-    private(set) var image: MTLTexture?
-    private var clut: MTLTexture?
-    private var frame: PlanarFrame?
+    private var textures: PlanarTextures?
+    var image: MTLTexture? { textures?.image }
 
     /// A request that arrived while every slot was busy, kept as the newest one
     /// only. The queue never grows, so the UI is never asked to wait for it.
@@ -190,6 +205,9 @@ final class PlanarMetal4Renderer: NSObject {
         pipeline = try cache.pipeline(for: PipelineCache.Key(
             vertexFunction: "planarVertex", fragmentFunction: "planarFragment",
             colorFormat: MTLPixelFormat.bgra8Unorm.rawValue, sampleCount: 1, blending: false))
+        fusionPipeline = try cache.pipeline(for: PipelineCache.Key(
+            vertexFunction: "planarVertex", fragmentFunction: "planarFusionFragment",
+            colorFormat: MTLPixelFormat.bgra8Unorm.rawValue, sampleCount: 1, blending: true))
         slots = try (0..<Self.slotCount).map { _ in try Slot(device: device) }
         super.init()
     }
@@ -202,38 +220,17 @@ final class PlanarMetal4Renderer: NSObject {
     }
 
     func update(_ next: PlanarFrame) throws {
-        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: next.window.z == 0 ? .r32Float : .rgba8Unorm,
-            width: next.width * next.softwareScale, height: next.height * next.softwareScale, mipmapped: false)
-        descriptor.storageMode = .shared
-        descriptor.usage = .shaderRead
-        let tableDescriptor = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: .rgba8Unorm, width: 256, height: 1, mipmapped: false)
-        tableDescriptor.storageMode = .shared
-        tableDescriptor.usage = .shaderRead
-        guard let image = device.makeTexture(descriptor: descriptor),
-              let table = device.makeTexture(descriptor: tableDescriptor) else { throw PlanarMetalRenderer.failure() }
-        let pixels = try next.texturePixels()
-        pixels.withUnsafeBytes { bytes in
-            image.replace(region: MTLRegionMake2D(0, 0, image.width, image.height), mipmapLevel: 0,
-                          withBytes: bytes.baseAddress!, bytesPerRow: image.width * 4)
-        }
-        next.clut.withUnsafeBytes { bytes in
-            table.replace(region: MTLRegionMake2D(0, 0, 256, 1), mipmapLevel: 0,
-                          withBytes: bytes.baseAddress!, bytesPerRow: 1024)
-        }
-        // A texture an in-flight submission is sampling is never overwritten:
-        // each update allocates its own, and the old one stays alive in the
-        // slot that retains it until the GPU reports completion.
-        self.image = image
-        clut = table
-        frame = next
+        // The same upload as the backend in use, opacity-table pass and fused
+        // series included: the pilot changes how a frame is submitted, not
+        // what it samples. A texture an in-flight submission is sampling is
+        // never overwritten: a changed layer gets new ones, and the old ones
+        // stay alive in the slot that retains them until the GPU reports
+        // completion.
+        textures = try PlanarTextures(next, reusing: textures, device: device)
     }
 
     func clear() {
-        image = nil
-        clut = nil
-        frame = nil
+        textures = nil
         coalesced = nil
     }
 
@@ -255,7 +252,7 @@ final class PlanarMetal4Renderer: NSObject {
         let traceStart = MetalPerformanceTrace.now()
         lock.lock()
         defer { lock.unlock() }
-        guard let frame, let image, let clut else { throw PlanarMetalRenderer.failure() }
+        guard let textures else { throw PlanarMetalRenderer.failure() }
         guard let slot = slots.first(where: { !$0.inFlight }) else {
             guard coalescing else { return false }
             _coalescedCount += 1
@@ -278,7 +275,8 @@ final class PlanarMetal4Renderer: NSObject {
 
         // Residency and retention for exactly what this submission reads and
         // writes; released only by its own feedback handler.
-        slot.retained = [image, clut, target]
+        slot.retained = [textures.image, textures.clut, target]
+        if let fused = textures.fused { slot.retained += [fused.image, fused.clut] }
         for resource in slot.retained { slot.residency.addAllocation(resource) }
         slot.residency.commit()
         commandBuffer.useResidencySet(slot.residency)
@@ -289,21 +287,32 @@ final class PlanarMetal4Renderer: NSObject {
             throw PlanarMetalRenderer.failure()
         }
 
-        let parameters = [frame.mapping, frame.geometry, frame.window,
-                          SIMD4<Float>(Float(target.width), Float(target.height),
-                                       frame.background, Float(frame.softwareScale))]
+        let parameters = PlanarMetalRenderer.parameters(for: textures.frame, width: target.width, height: target.height)
         parameters.withUnsafeBytes { bytes in
             slot.uniforms.contents().copyMemory(from: bytes.baseAddress!, byteCount: bytes.count)
         }
         slot.argumentTable.setAddress(slot.uniforms.gpuAddress, index: 0)
         // Both texture slots are set on every draw, so a monochrome frame can
         // never sample what a colour frame left behind, or the other way round.
-        slot.argumentTable.setTexture(image.gpuResourceID, index: 0)
-        slot.argumentTable.setTexture(clut.gpuResourceID, index: 1)
+        slot.argumentTable.setTexture(textures.image.gpuResourceID, index: 0)
+        slot.argumentTable.setTexture(textures.clut.gpuResourceID, index: 1)
 
         encoder.setRenderPipelineState(pipeline)
         encoder.setArgumentTable(slot.argumentTable, stages: .fragment)
         encoder.drawPrimitives(primitiveType: .triangle, vertexStart: 0, vertexCount: 3)
+        // The fused series over the image, in the host's order (#658).
+        if let fused = textures.fused, let layer = textures.frame.fusion.first {
+            let fusedParameters = PlanarMetalRenderer.parameters(for: layer, width: target.width, height: target.height)
+            fusedParameters.withUnsafeBytes { bytes in
+                (slot.uniforms.contents() + Slot.layerBytes).copyMemory(from: bytes.baseAddress!, byteCount: bytes.count)
+            }
+            slot.fusionTable.setAddress(slot.uniforms.gpuAddress + UInt64(Slot.layerBytes), index: 0)
+            slot.fusionTable.setTexture(fused.image.gpuResourceID, index: 0)
+            slot.fusionTable.setTexture(fused.clut.gpuResourceID, index: 1)
+            encoder.setRenderPipelineState(fusionPipeline)
+            encoder.setArgumentTable(slot.fusionTable, stages: .fragment)
+            encoder.drawPrimitives(primitiveType: .triangle, vertexStart: 0, vertexCount: 3)
+        }
         encoder.endEncoding()
         commandBuffer.endCommandBuffer()
 

@@ -14,6 +14,11 @@ compositing, and compares. Tolerances are fixed here, before any comparison:
 - composite colour: mean channel error ≤ 1/255 and at most 1 % of the bytes
   beyond 3/255 (8-bit rounding, the pow() of the opacity correction and the
   same boundary samples);
+- a projection sampled as the host's VTK ray caster samples it (#659): the box
+  of voxel centres, samples every step from the near plane with the first one
+  past the entry, positions scaled by 32767/32768 as VTK's fixed point reads
+  them back; interpolated by hand it keeps the 1e-3 of an axis, through the
+  hardware filter (fixed-point weights, as VTK's are) the relative tolerance;
 - A215: with the clipping range placed on slice centres, MIP/MinIP/mean along
   each volume axis equal the independent per-slice reduction of the same
   nine-slice phantom the CPU reference test uses, to 1e-3;
@@ -132,7 +137,9 @@ def oracle(case, volume):
     step = case['sampleStep']; mode = case['mode']
     crop = case.get('crop'); clip = case.get('clippingRange')
     shading = case['shading']
-    lo = [-0.5] * 3; hi = [dims[a] - 0.5 for a in range(3)]
+    anchored = case.get('anchored') and mode != 0
+    lo = [0.0] * 3 if anchored else [-0.5] * 3
+    hi = [dims[a] - 1.0 for a in range(3)] if anchored else [dims[a] - 0.5 for a in range(3)]
     extent = math.sqrt(sum((dims[a] * spacing[a]) ** 2 for a in range(3)))
     focal_distance = math.sqrt(sum((cam['focal'][a] - cam['position'][a]) ** 2 for a in range(3)))
     near, far = (clip if clip else (0.0, focal_distance + extent * 2))
@@ -153,11 +160,35 @@ def oracle(case, volume):
                 hit = (max(hit[0], c[0]), min(hit[1], c[1])) if c else None
                 if hit and hit[1] < hit[0]:
                     hit = None
+            if hit and case.get('planes'):
+                # #664: VTK's ClipRayAgainstClippingPlanes, in the ray's own
+                # parameter: the entry moves to where the ray enters a plane's
+                # kept side (a·v + d >= 0), the exit to where it leaves it, and a
+                # ray parallel to a plane is kept whole or dropped whole.
+                entry, leave = hit
+                for a, b, c, d in case['planes']:
+                    facing = a * vd[0] + b * vd[1] + c * vd[2]
+                    offset = a * vo[0] + b * vo[1] + c * vo[2] + d
+                    if facing == 0:
+                        if offset < 0:
+                            entry, leave = 1.0, 0.0
+                        continue
+                    t = -offset / facing
+                    if facing > 0:
+                        entry = max(entry, t)
+                    else:
+                        leave = min(leave, t)
+                hit = (entry, leave) if leave >= entry else None
             along = dot(direction, forward); eye_offset = dot([origin[a] - cam['position'][a] for a in range(3)], forward)
             t_start = t_end = None
             if hit:
                 t_start = max(hit[0], (near - eye_offset) / along, 0.0)
                 t_end = min(hit[1], (far - eye_offset) / along)
+                if anchored:
+                    # VTK: the ray starts on the near plane, and the first sample
+                    # is 1 + floor(distance / step) steps along it.
+                    t_near = (near - eye_offset) / along
+                    t_start = t_near + (math.floor((max(hit[0], t_near) - t_near) / step) + 1) * step
             acc = [0.0, 0.0, 0.0, 0.0]; reduced = 0.0; counted = 0
             if hit and t_end >= t_start:
                 slack = step * 1e-4
@@ -168,6 +199,8 @@ def oracle(case, volume):
                         break
                     world = [origin[a] + direction[a] * t for a in range(3)]
                     v = [world[a] / spacing[a] for a in range(3)]
+                    if anchored:
+                        v = [c * 32767 / 32768 for c in v]
                     value = trilinear(volume, dims, v)
                     if value is None:
                         continue
@@ -244,7 +277,7 @@ struct Case: Encodable {
     var name: String, volume: String, dims: [Int], spacing: [Double]
     var camera: Cam, width: Int, height: Int, level: Double, windowWidth: Double
     var clut: [[Int]], opacityPoints: [[Double]], mode: Int, sampleStep: Double, background: [Double]
-    var shading: Shade, crop: [[Double]]?, clippingRange: [Double]?
+    var shading: Shade, crop: [[Double]]?, clippingRange: [Double]?, anchored: Bool, planes: [[Double]]?
     var bgra: [Int], scalar: [Float], milliseconds: Double
     struct Cam: Encodable { var position: [Double], focal: [Double], viewUp: [Double], parallel: Bool, parallelScale: Double, viewAngle: Double }
     struct Shade: Encodable { var enabled: Bool, ambient: Double, diffuse: Double, specular: Double, specularPower: Double }
@@ -263,17 +296,19 @@ struct Case: Encodable {
                  position: SIMD3<Float>, focal: SIMD3<Float>, viewUp: SIMD3<Float>, parallel: Bool = true, parallelScale: Float = 5, viewAngle: Float = 30,
                  width: Int = 12, height: Int = 10, level: Float = 120, window: Float = 240, clut: [[Int]] = grey,
                  opacity: [SIMD2<Float>] = [], mode: VolumeRenderingMode = .maximum, step: Float = 1, shading: VolumeShading = VolumeShading(enabled: false),
-                 crop: (SIMD3<Float>, SIMD3<Float>)? = nil, clipping: SIMD2<Float>? = nil) throws {
+                 crop: (SIMD3<Float>, SIMD3<Float>)? = nil, clipping: SIMD2<Float>? = nil, anchored: Bool = false,
+                 planes: [SIMD4<Float>] = []) throws {
             let camera = try VolumeCamera(position: position, focalPoint: focal, viewUp: viewUp, parallel: parallel, parallelScale: parallelScale, viewAngle: viewAngle, clippingRange: clipping)
             let transfer = try VolumeTransferFunction(level: level, width: window, colour: clutData(clut), opacity: VolumeTransferFunction.opacityTable(points: opacity))
-            let request = try VolumeRenderRequest(camera: camera, transfer: transfer, mode: mode, shading: shading, crop: crop.map { (minimum: $0.0, maximum: $0.1) }, width: width, height: height, sampleStep: step)
+            let request = try VolumeRenderRequest(camera: camera, transfer: transfer, mode: mode, shading: shading, crop: crop.map { (minimum: $0.0, maximum: $0.1) }, width: width, height: height, sampleStep: step, anchoredProjection: anchored, clippingPlanes: planes)
             let result = try engine.render(request)
             cases.append(Case(name: name, volume: volumeName, dims: [volume.width, volume.height, volume.depth], spacing: vec(spacing),
                 camera: Case.Cam(position: vec(position), focal: vec(focal), viewUp: vec(viewUp), parallel: parallel, parallelScale: Double(parallelScale), viewAngle: Double(viewAngle)),
                 width: width, height: height, level: Double(level), windowWidth: Double(window), clut: clut,
                 opacityPoints: opacity.map { [Double($0.x), Double($0.y)] }, mode: mode.rawValue, sampleStep: Double(step), background: [0, 0, 0],
                 shading: Case.Shade(enabled: shading.enabled, ambient: Double(shading.ambient), diffuse: Double(shading.diffuse), specular: Double(shading.specular), specularPower: Double(shading.specularPower)),
-                crop: crop.map { [vec($0.0), vec($0.1)] }, clippingRange: clipping.map { [Double($0.x), Double($0.y)] },
+                crop: crop.map { [vec($0.0), vec($0.1)] }, clippingRange: clipping.map { [Double($0.x), Double($0.y)] }, anchored: anchored,
+                planes: planes.isEmpty ? nil : planes.map { [Double($0.x), Double($0.y), Double($0.z), Double($0.w)] },
                 bgra: result.bgra.map { Int($0) }, scalar: result.scalar.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }, milliseconds: result.milliseconds))
         }
 
@@ -297,6 +332,40 @@ struct Case: Encodable {
                 shading: VolumeShading(enabled: true, ambient: 0.2, diffuse: 0.7, specular: 0.25, specularPower: 10))
         try run("composite-perspective", "phantom", iso, spacing: SIMD3(1, 1, 1), position: SIMD3(3.5, -14, -10), focal: centre, viewUp: SIMD3(0, 0, 1), parallel: false, viewAngle: 40, clut: twoTone,
                 opacity: [SIMD2(0, 0), SIMD2(100, 0), SIMD2(256, 0.6)], mode: .composite, step: 0.5)
+
+        // #659: sampled as the host's VTK ray caster, from the near plane, with a
+        // step that does not divide the distance to the box, so the phase shows.
+        for mode in [VolumeRenderingMode.maximum, .minimum, .mean] {
+            try run("anchored-z-\(mode.rawValue)", "phantom", iso, spacing: SIMD3(1, 1, 1), position: SIMD3(3.5, 3.5, -20), focal: centre, viewUp: SIMD3(0, -1, 0),
+                    mode: mode, step: 0.7, clipping: SIMD2(3.3, 60), anchored: true)
+            try run("anchored-oblique-\(mode.rawValue)", "phantom", iso, spacing: SIMD3(1, 1, 1), position: SIMD3(-9, -7, -11), focal: centre, viewUp: SIMD3(0, 0, 1),
+                    parallelScale: 6, width: 14, height: 12, mode: mode, step: 0.45, clipping: SIMD2(1.2, 60), anchored: true)
+        }
+        try run("anchored-perspective-mip", "phantom", iso, spacing: SIMD3(1, 1, 1), position: SIMD3(3.5, -14, -10), focal: centre, viewUp: SIMD3(0, 0, 1), parallel: false, viewAngle: 40, width: 14, height: 12,
+                step: 0.45, clipping: SIMD2(2.5, 60), anchored: true)
+
+        // #664: a crop's planes in voxel index space, a·v + d ≥ 0 kept, as the
+        // host's box widget can leave them - here a box turned 30° about z.
+        func box(_ centre: SIMD3<Float>, _ half: SIMD3<Float>, degrees: Float) -> [SIMD4<Float>] {
+            let a = degrees * .pi / 180
+            let axes = [SIMD3<Float>(cos(a), sin(a), 0), SIMD3<Float>(-sin(a), cos(a), 0), SIMD3<Float>(0, 0, 1)]
+            return (0..<3).flatMap { k -> [SIMD4<Float>] in
+                let u = axes[k], along = simd_dot(u, centre)
+                return [SIMD4(u.x, u.y, u.z, half[k] - along), SIMD4(-u.x, -u.y, -u.z, half[k] + along)]
+            }
+        }
+        let turned = box(centre, SIMD3(2.2, 1.6, 1.8), degrees: 30)
+        // Along z the turned sides are parallel to every ray: a ray outside one is dropped whole.
+        try run("planes-z-mip", "phantom", iso, spacing: SIMD3(1, 1, 1), position: SIMD3(3.5, 3.5, -20), focal: centre, viewUp: SIMD3(0, -1, 0),
+                planes: turned)
+        for mode in [VolumeRenderingMode.maximum, .mean] {
+            try run("planes-oblique-\(mode.rawValue)", "phantom", iso, spacing: SIMD3(1, 1, 1), position: SIMD3(-9, -7, -11), focal: centre, viewUp: SIMD3(0, 0, 1),
+                    parallelScale: 6, width: 14, height: 12, mode: mode, step: 0.45, clipping: SIMD2(1.2, 60), anchored: true, planes: turned)
+        }
+        let slant = simd_normalize(SIMD3<Float>(1, 1, 1))
+        try run("planes-composite", "phantom", iso, spacing: SIMD3(1, 1, 1), position: SIMD3(-9, -7, -11), focal: centre, viewUp: SIMD3(0, 0, 1), parallelScale: 6,
+                width: 14, height: 12, clut: twoTone, opacity: [SIMD2(0, 0), SIMD2(120, 0), SIMD2(160, 0.35), SIMD2(256, 0.9)], mode: .composite, step: 0.5,
+                planes: [SIMD4(slant.x, slant.y, slant.z, -simd_dot(slant, centre))])
 
         // Anisotropic spacing: the same rays in millimetres.
         let anisoTransform = simd_float4x4(diagonal: SIMD4(0.5, 1, 2, 1))
@@ -334,6 +403,15 @@ struct Case: Encodable {
         for reversed in [false, true] {
             try run("sparse-\(reversed)", "sparse", sparse, spacing: SIMD3(1, 1, 1), position: SIMD3(reversed ? 70 : -20, -25, reversed ? 80 : -20), focal: SIMD3(23.5, 15.5, 19.5), viewUp: SIMD3(0, 1, 0),
                 parallelScale: 25, width: 24, height: 20, level: 0, window: 2000, opacity: [SIMD2(0,0), SIMD2(120,0), SIMD2(160,0.7), SIMD2(200,0), SIMD2(256,0)], mode: .composite, step: 0.7)
+            // #659: MIP and MinIP leap bricks that cannot change the reduction;
+            // across these 120 bricks the leaps must leave every value as it was.
+            for mode in [VolumeRenderingMode.maximum, .minimum] {
+                for anchored in [false, true] {
+                    try run("sparse-\(mode.rawValue)-\(anchored)-\(reversed)", "sparse", sparse, spacing: SIMD3(1, 1, 1), position: SIMD3(reversed ? 70 : -20, -25, reversed ? 80 : -20),
+                            focal: SIMD3(23.5, 15.5, 19.5), viewUp: SIMD3(0, 1, 0), parallelScale: 25, width: 24, height: 20, level: 0, window: 2000,
+                            mode: mode, step: 0.7, clipping: anchored ? SIMD2(1.3, 300) : nil, anchored: anchored)
+                }
+            }
         }
         func refusal(_ body: () throws -> Void) -> String { do { try body(); return "accepted" } catch { return "\(error)" } }
         try engine.upload(iso)
@@ -488,6 +566,8 @@ def main():
                         '%s changed %s' % ('empty-space skipping' if interpolation == 'unskipped' else 'Metal 4', before['name'])
             if interpolation == 'metal4':
                 assert run['messages'].get('metal4Slots') == 'idle', 'Metal 4 slots not given back: %r' % run['messages'].get('metal4Slots')
+            for case in run['cases']:
+                case['configuration'] = interpolation
             payload['cases'].extend(run['cases'])
             payload['messages'].update(run['messages'])
 
@@ -512,7 +592,11 @@ def main():
         assert len(scalars) == len(got_scalar) == case['width'] * case['height'], name
         span = max(1.0, max(scalars) - min(scalars))
         diffs = [abs(a - b) for a, b in zip(scalars, got_scalar)]
-        axis_aligned = name.startswith(('mip-', 'minip-', 'mean-', 'slab-', 'crop-', 'aniso-mip-y', 'centre', 'a215'))
+        # An anchored projection samples through the hardware filter when the
+        # device has one (#659); its fixed-point weights are held to the
+        # relative tolerance, and the manual configuration keeps the exact one.
+        axis_aligned = name.startswith(('mip-', 'minip-', 'mean-', 'slab-', 'crop-', 'planes-z-', 'aniso-mip-y', 'centre', 'a215')) or \
+            (name.startswith('anchored-z-') and case['configuration'] == 'manual')
         if axis_aligned:
             worst = max(diffs)
             if worst > 1e-3:
@@ -553,6 +637,12 @@ def main():
             full = next(c for c in payload['cases'] if c['name'] == 'mip-z')['scalar']
             if got_scalar == full:
                 failures.append('crop-mip: the crop box did not restrict the projection')
+        if name == 'planes-z-mip':
+            # The turned box drops the rays outside its sides and shortens the rest (#664).
+            full = next(c for c in payload['cases'] if c['name'] == 'mip-z')['scalar']
+            outside = sum(1 for g, f in zip(got_scalar, full) if g != f)
+            if outside == 0 or outside == len(full):
+                failures.append('planes-z-mip: the crop planes changed %d of %d pixels' % (outside, len(full)))
     shaded = next(c for c in payload['cases'] if c['name'] == 'composite-shaded')['bgra']
     plain = next(c for c in payload['cases'] if c['name'] == 'composite')['bgra']
     if shaded == plain:

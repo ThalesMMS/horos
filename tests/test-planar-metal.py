@@ -175,7 +175,8 @@ with tempfile.TemporaryDirectory(prefix='horos-planar-metal-') as temporary:
     (work/'HostRGB.c').write_text(host_rule)
     (work/'HostRGB.h').write_text('void hostRGBTable(float level, float width, unsigned char *table);\n')
     subprocess.run(['xcrun','clang','-O0','-c',str(work/'HostRGB.c'),'-o',str(work/'HostRGB.o')],check=True)
-    sources = ['VolumeAllocation.swift', 'VolumeSession.swift', 'PlanarComparison.swift']
+    sources = ['VolumeAllocation.swift', 'VolumeSession.swift', 'PlanarComparison.swift', 'MPRMetalReslicer.swift',
+               'MetalPerformanceTrace.swift', 'MetalComputePipelineCache.swift', 'Metal4ComputeSubmitter.swift']
     subprocess.run(['xcrun','swiftc','-parse-as-library',*[str(root/'Horos/Sources'/name) for name in sources],
                     str(args.renderer_source),str(work/'HostRGB.o'),'-import-objc-header',str(work/'HostRGB.h'),
                     str(work/'Check.swift'),'-o',str(work/'check')],check=True)

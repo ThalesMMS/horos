@@ -1,7 +1,16 @@
 #!/usr/bin/env python3
-"""Real TLS C-ECHO using Horos's archives, cipher helper and verification mapping."""
+"""Real TLS C-ECHO using Horos's archives, cipher helper and verification mapping.
+
+The listening side reports READY before the other side connects (#666). The
+Python peer binds port 0 itself and reports the port it was given, so its
+port cannot be taken in between; the DCMTK driver binds the port the test
+reserves, and a case whose driver cannot bind it is retried with another
+port, a few times. A listener that exits before READY fails with its exit
+code and its standard error.
+"""
 import os
 from pathlib import Path
+import re
 import socket
 import subprocess
 import tempfile
@@ -55,7 +64,7 @@ int main(int argc,char**argv){@autoreleasepool{
  OFCondition status=EC_Normal;
  const char*transfers[]={UID_LittleEndianExplicitTransferSyntax,UID_LittleEndianImplicitTransferSyntax};
  if(server){
-  puts("READY");fflush(stdout);
+  printf("READY %d\n",port);fflush(stdout);
   void*pdu=NULL;unsigned long length=0;
   status=ASC_receiveAssociation(network,&association,ASC_DEFAULTMAXPDU,&pdu,&length,OFTrue,DUL_BLOCK,5);
   if(status.good())status=HorosDIMSEValidateAssociationPDU(pdu,length);free(pdu);
@@ -104,7 +113,7 @@ ae=AE(ae_title='FIXTURE');ae.acse_timeout=5;ae.dimse_timeout=5
 if role=='server':
  ae.add_supported_context(Verification)
  server=ae.start_server(('127.0.0.1',port),block=False,ssl_context=context,evt_handlers=[(evt.EVT_C_ECHO,lambda e:0)])
- print('READY',flush=True)
+ print('READY',server.server_address[1],flush=True)
  try:time.sleep(50)
  finally:server.shutdown()
 else:
@@ -143,19 +152,50 @@ with tempfile.TemporaryDirectory(prefix='horos-tls-') as directory:
              ('server', 0, 'trusted', True), ('server', 1, 'trusted', True),
              ('server', 0, 'none', False), ('server', 1, 'none', True),
              ('server', 1, 'untrusted', False), ('server', 2, 'untrusted', True)]
+    def listen(command, case):
+        """Starts the listening side; returns it and the port it reports, or None if it could not bind."""
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        line = process.stdout.readline().strip()
+        if re.fullmatch(r'READY \d+', line):
+            return process, int(line.split()[1])
+        try:
+            output, error = process.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill(); output, error = process.communicate()
+        if process.returncode == 3 and re.search(r'bind|address already in use|TCP Initialization Error', error, re.I):
+            return None, error
+        raise AssertionError('%s: the listener stopped before READY, exit code %s, first line %r, stdout %r, stderr %r'
+                             % (case, process.returncode, line, output, error))
+
     for version, (role, mode, identity, success) in [(v, c) for v in ('TLSv1_2', 'TLSv1_3') for c in cases]:
-        with socket.socket() as reservation:
-            reservation.bind(('127.0.0.1', 0)); port = reservation.getsockname()[1]
+        case = (version, role, mode, identity)
         cert = str(p/(identity+'.pem')) if identity != 'none' else 'none'
         key = str(p/(identity+'.key')) if identity != 'none' else 'none'
-        driver = [str(p/'driver'), role, str(port), str(mode), str(p/'trusted.pem'),
-                  str(p/'trusted.pem') if role=='server' else 'none', str(p/'trusted.key'),
-                  'TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256' if mode==1 else 'default']
-        remote = [str(python), str(p/'peer.py'), 'server' if role=='client' else 'client', str(port), str(p/'trusted.pem'), cert, key, version]
-        first, second = (remote, driver) if role=='client' else (driver, remote)
-        process = subprocess.Popen(first, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+        def driver(port):
+            return [str(p/'driver'), role, str(port), str(mode), str(p/'trusted.pem'),
+                    str(p/'trusted.pem') if role=='server' else 'none', str(p/'trusted.key'),
+                    'TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256' if mode==1 else 'default']
+
+        def remote(port):
+            return [str(python), str(p/'peer.py'), 'server' if role=='client' else 'client', str(port), str(p/'trusted.pem'), cert, key, version]
+
+        if role == 'client':
+            # The peer listens on the port the system gives it: no race.
+            process, port = listen(remote(0), case)
+            assert process, (case, 'the peer could not bind port 0', port)
+        else:
+            # DCMTK binds the port the test reserves; another connection can take
+            # it between the reservation and the bind, so that case is retried.
+            for attempt in range(5):
+                with socket.socket() as reservation:
+                    reservation.bind(('127.0.0.1', 0)); reserved = reservation.getsockname()[1]
+                process, port = listen(driver(reserved), case)
+                if process: break
+                print('RETRY', case, 'port', reserved, 'taken before the driver bound it', flush=True)
+            assert process, (case, 'the driver could not bind a port in five attempts', port)
+        second = driver(port) if role == 'client' else remote(port)
         try:
-            assert process.stdout.readline().strip() == 'READY'
             completed = subprocess.run(second, capture_output=True, text=True, timeout=15)
             assert (completed.returncode == 0) == success, (version, role, mode, identity, completed.stdout, completed.stderr)
             if role=='server':
@@ -164,6 +204,22 @@ with tempfile.TemporaryDirectory(prefix='horos-tls-') as directory:
         finally:
             if process.poll() is None: process.terminate(); process.wait(timeout=5)
         print('PASS', version, role, mode, identity, 'accepted' if success else 'rejected', flush=True)
+    # The listener's failures: one that stops before READY says why, and a port
+    # another socket holds sends the driver's case to the retry.
+    try:
+        listen([str(python), '-c', 'import sys; sys.stderr.write("no READY here"); sys.exit(4)'], 'self-check')
+    except AssertionError as failure:
+        assert 'exit code 4' in str(failure) and 'no READY here' in str(failure), failure
+    else:
+        raise AssertionError('a listener that stopped before READY did not fail')
+    with socket.socket() as occupied:
+        # DCMTK listens on every address with SO_REUSEADDR, so only a listener on
+        # every address keeps it from binding.
+        occupied.bind(('', 0)); occupied.listen(1); taken = occupied.getsockname()[1]
+        process, error = listen([str(p/'driver'), 'server', str(taken), '1', str(p/'trusted.pem'), str(p/'trusted.pem'),
+                                 str(p/'trusted.key'), 'default'], 'bind self-check')
+        assert process is None, 'the driver bound a port another socket holds'
+    print('PASS: a listener that stops before READY reports its exit code and stderr; a taken port is retried', flush=True)
     rejected = subprocess.run([str(p/'driver'), 'client', '1', '2', 'none', 'none', 'none', 'NOT_A_TLS_CIPHER'], capture_output=True)
     assert rejected.returncode == 3, 'Unknown saved cipher must fail during configuration'
     print('PASS: real TLS 1.2/1.3 C-ECHO, default/explicit profiles, three verification modes, unknown preference and invalid cipher')

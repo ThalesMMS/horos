@@ -59,19 +59,17 @@
 #include <vtkVolumeProperty.h>
 #include <vtkFixedPointRayCastImage.h>
 #include <vtkDataArray.h>
+#include "vtkHorosFixedPointVolumeRayCastMapper.h"
 
 #include <math.h>
 
 
 
-static int vtkMeanIPMode = 0;
-
-extern "C"
+// The mean is a mode of the mapper that draws, not of the process (#665).
+static int HorosMeanIntensity(vtkFixedPointVolumeRayCastMapper *mapper)
 {
-    void setvtkMeanIPMode( int m)
-    {
-        vtkMeanIPMode = m;
-    }
+    vtkHorosFixedPointVolumeRayCastMapper *horos = dynamic_cast<vtkHorosFixedPointVolumeRayCastMapper *>(mapper);
+    return horos && horos->GetMeanIntensity();
 }
 
 
@@ -350,7 +348,7 @@ void vtkFixedPointMIPHelperGenerateImageOneSimpleTrilin(
   VTKKWRCHelper_InitializeMIPOneTrilin();
   VTKKWRCHelper_SpaceLeapSetup();
 
-  int meanIP = vtkMeanIPMode;
+  int meanIP = HorosMeanIntensity(mapper);
   int maxValueDefined = 0;
   unsigned short maxIdx=0;
   unsigned int maxScalar = 0;
@@ -432,7 +430,9 @@ void vtkFixedPointMIPHelperGenerateImageOneSimpleTrilin(
     
     if( meanIP)
     {
-        maxValue = total / hits;
+        // A ray without a sample averages to 0, as the division used to give
+        // on arm64 - without dividing by zero.
+        maxValue = hits ? total / hits : 0;
         maxIdx = static_cast<unsigned short>(maxValue);
         maxValueDefined = 1;
         

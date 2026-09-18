@@ -46,7 +46,21 @@ public:
     
     static vtkHorosFixedPointVolumeRayCastMapper *New();
     void Render( vtkRenderer *, vtkVolume * );
-    bool PrepareMPRGeometry(vtkRenderer *, vtkVolume *);
+    // Why PrepareMPRGeometry last said no, for the host's fallback reason (#664).
+    enum GeometryRefusal { GeometryAccepted = 0, GeometryNoInput, GeometryNoViewport, GeometryClippingPlane, GeometryNoRows };
+    // Sets up the ray-cast image and matrices as a CPU render would, without
+    // casting a ray. A clipping plane that cuts into the voxel centres refuses
+    // unless the caller clips rays against the planes itself (#664).
+    bool PrepareMPRGeometry(vtkRenderer *, vtkVolume *, bool acceptClippingPlanes = false);
+    GeometryRefusal GetGeometryRefusal() const { return this->LastGeometryRefusal; }
+    // After PrepareMPRGeometry: the clipping planes in voxel index coordinates,
+    // exactly as VTK clips its rays against them - four floats per plane, the
+    // kept side where a*x + b*y + c*z + d >= 0 (#664).
+    int GetVoxelClippingPlanes(const float **planes) const
+    {
+        *planes = this->TransformedClippingPlanes;
+        return this->TransformedClippingPlanes ? this->NumTransformedClippingPlanes : 0;
+    }
     typedef bool (*ImageRenderer)(void *, vtkHorosFixedPointVolumeRayCastMapper *, vtkRenderer *, vtkVolume *);
     void SetImageRenderer(ImageRenderer renderer, void *context)
     {
@@ -55,6 +69,11 @@ public:
         this->ExternalImageValid = false;
     }
     bool GetExternalImageValid() const { return this->ExternalImageValid; }
+    // A minimum-intensity blend that averages instead: the mean projection. A
+    // mode of this mapper, which its view sets; it used to be a process-wide
+    // flag that any MPR or CPR window changed for every mapper (#665).
+    void SetMeanIntensity(bool on) { this->MeanIntensity = on; }
+    bool GetMeanIntensity() const { return this->MeanIntensity; }
     
 protected:
     
@@ -66,6 +85,8 @@ private:
     ImageRenderer RenderImage = nullptr;
     void *RenderImageContext = nullptr;
     bool ExternalImageValid = false;
+    GeometryRefusal LastGeometryRefusal = GeometryAccepted;
+    bool MeanIntensity = false;
     
     vtkHorosFixedPointVolumeRayCastMapper(const vtkHorosFixedPointVolumeRayCastMapper&);  // Not implemented.
     void operator=(const vtkHorosFixedPointVolumeRayCastMapper&);  // Not implemented.

@@ -571,12 +571,16 @@ unsigned int minimumStep;
         if( blendingView)
         {
             [blendingView getWLWW: &previousWL :&previousWW];
-            
-            [vrView renderBlendedVolume];
-            
-            float *blendedImagePtr = nil;
+
+            // Metal resliced the fused series with the plane (#658); otherwise VTK does.
+            float *blendedImagePtr = moveCenter ? nil : [self horosMPRTakeFusedImageWidth: &w height: &h];
+            if( blendedImagePtr)
+                isRGB = NO;
+            else
+                [vrView renderBlendedVolume];
+
             DCMPix *bPix = blendingView.curDCM;
-            
+
             if( moveCenter)
             {
                 blendedImagePtr = [bPix fImage];
@@ -584,7 +588,7 @@ unsigned int minimumStep;
                 h = [bPix pheight];
                 isRGB = [bPix isRGB];
             }
-            else
+            else if( blendedImagePtr == nil)
                 blendedImagePtr = [vrView imageInFullDepthWidth: &w height: &h isRGB: &isRGB blendingView: YES];
             
             if( [bPix pwidth] == w && [bPix pheight] == h && isRGB == [bPix isRGB])

@@ -615,8 +615,6 @@ typedef char* VTKStereoVRView;
 - (void) saViewOpposite:(id) sender;
 /// Column-major voxel-to-world affine in millimetres.
 - (NSArray *)mprVoxelToWorldTransform;
-/// Updates the MPR plane geometry without CPU ray casting or OpenGL drawing.
-- (BOOL)prepareMPRGeometryWidth:(long *)width height:(long *)height;
 - (void) render;
 - (void) renderBlendedVolume;
 - (void) goToCenter;

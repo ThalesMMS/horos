@@ -2,14 +2,16 @@
 #import "PlanarHostBridge.h"
 #import "VRController.h"
 #import "VRView.h"
+#import "VRHostBridge.h"
 #import "DCMPix.h"
 #import "Horos-Swift.h"
 #import <objc/runtime.h>
 
-static char enabledKey, reslicerKey, uploadedKey, reasonKey, millisecondsKey;
+static char enabledKey, reslicerKey, uploadedKey, reasonKey, millisecondsKey, fusedReslicerKey, fusedUploadedKey, fusedPlaneKey;
 
 @interface MPRController (HorosMPRHostPrivate)
 - (HorosMPRReslicer *)horosMPRReslicerForCurrentVolume:(NSString **)reason;
+- (HorosMPRReslicer *)horosMPRFusedReslicerForVolume:(NSDictionary *)volume reason:(NSString **)reason;
 - (DCMPix *)horosMPRFirstPix;
 - (float)horosMPRBackground;
 - (void)horosMPRWindowWillClose:(NSNotification *)note;
@@ -48,13 +50,16 @@ static char enabledKey, reslicerKey, uploadedKey, reasonKey, millisecondsKey;
 
 - (NSInteger)horosMPRVolumeBytes {
     HorosMPRReslicer *reslicer = objc_getAssociatedObject(self, &reslicerKey);
-    return reslicer.volumeBytes;
+    HorosMPRReslicer *fused = objc_getAssociatedObject(self, &fusedReslicerKey);
+    return reslicer.volumeBytes + fused.volumeBytes;
 }
 
 - (void)horosMPRReleaseVolume {
     HorosMPRReslicer *reslicer = objc_getAssociatedObject(self, &reslicerKey);
     [reslicer releaseVolume];
+    [(HorosMPRReslicer *)objc_getAssociatedObject(self, &fusedReslicerKey) releaseVolume];
     objc_setAssociatedObject(self, &uploadedKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(self, &fusedUploadedKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(self, &millisecondsKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
@@ -62,6 +67,34 @@ static char enabledKey, reslicerKey, uploadedKey, reasonKey, millisecondsKey;
     [[NSNotificationCenter defaultCenter] removeObserver:self name:NSWindowWillCloseNotification object:note.object];
     [self horosMPRReleaseVolume];
     objc_setAssociatedObject(self, &reslicerKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(self, &fusedReslicerKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+/// The fused series' own reslicer (#658), uploaded once per buffer and placement.
+- (HorosMPRReslicer *)horosMPRFusedReslicerForVolume:(NSDictionary *)volume reason:(NSString **)reason {
+    HorosMPRReslicer *reslicer = objc_getAssociatedObject(self, &fusedReslicerKey);
+    if (!reslicer) {
+        NSError *error = nil;
+        reslicer = [HorosMPRReslicer makeAndReturnError:&error];
+        if (!reslicer) { *reason = error.localizedDescription ?: @"Metal is unavailable."; return nil; }
+        objc_setAssociatedObject(self, &fusedReslicerKey, reslicer, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    NSData *voxels = volume[@"volume"];
+    NSArray *transform = volume[@"transform"];
+    NSArray *uploaded = objc_getAssociatedObject(self, &fusedUploadedKey);
+    if (!reslicer.isReady || uploaded.firstObject != voxels || ![uploaded.lastObject isEqual:transform]) {
+        long width = [volume[@"width"] longValue], height = [volume[@"height"] longValue], depth = [volume[@"depth"] longValue];
+        NSUInteger expected = [HorosVolumeAllocation byteCountForWidth:width height:height slices:depth bytesPerVoxel:4];
+        NSData *slices = voxels.length == expected ? voxels : [NSData dataWithBytesNoCopy:(void *)voxels.bytes length:expected freeWhenDone:NO];
+        NSError *error = nil;
+        if (![reslicer uploadVolume:slices width:width height:height depth:depth voxelToWorld:transform error:&error]) {
+            objc_setAssociatedObject(self, &fusedUploadedKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            *reason = error.localizedDescription ?: @"The fused volume could not be uploaded.";
+            return nil;
+        }
+        objc_setAssociatedObject(self, &fusedUploadedKey, @[voxels, transform], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    return reslicer;
 }
 
 - (float)horosMPRBackground { return [hiddenVRController minimumValue]; }
@@ -115,6 +148,29 @@ static char enabledKey, reslicerKey, uploadedKey, reasonKey, millisecondsKey;
 
 @end
 
+/// VTK casts each ray through the centre of its ray-cast pixel; -getOrigin:
+/// gives the image's upper-left corner. The reslicer samples pixel (0, 0) at
+/// the origin it is given, so it gets that centre: half a pixel along the row
+/// and the column (#658).
+static NSArray *HorosMPRPixelCentre(const float corner[3], const float cosines[9], double spacing) {
+    return @[@(corner[0] + 0.5 * spacing * (cosines[0] + cosines[3])),
+             @(corner[1] + 0.5 * spacing * (cosines[1] + cosines[4])),
+             @(corner[2] + 0.5 * spacing * (cosines[2] + cosines[5]))];
+}
+
+/// A fused plane resliced with the image's, owned until the host's blending
+/// branch takes it: the malloc-owned buffer VTK's own path would hand over.
+@interface HorosMPRFusedPlane : NSObject {
+@public
+    float *pixels;
+    long width, height;
+    double milliseconds;
+}
+@end
+@implementation HorosMPRFusedPlane
+- (void)dealloc { free(pixels); [super dealloc]; }
+@end
+
 @implementation MPRDCMView (HorosMPRHost)
 
 - (NSMenu *)menuForEvent:(NSEvent *)event {
@@ -127,31 +183,87 @@ static char enabledKey, reslicerKey, uploadedKey, reasonKey, millisecondsKey;
     return menu;
 }
 
+/// The series fused over this plane (#658), resliced in Metal where VTK
+/// reslices it: on the blending mapper's own grid, origin and sample distance,
+/// with the same camera, slab and mode, from the fused volume in its own frame.
+/// Nil, with the reason, when that plane stays with VTK.
+- (HorosMPRFusedPlane *)horosMPRFusedPlane:(NSString **)reason {
+    MPRController *controller = windowController;
+    NSDictionary *volume = [vrView horosMPRFusedVolume];
+    if (volume[@"error"]) { *reason = volume[@"error"]; return nil; }
+    long width = 0, height = 0;
+    NSString *geometry = [vrView horosMPRFusedGeometryRefusalWidth:&width height:&height];
+    if (geometry) { *reason = geometry; return nil; }
+    HorosMPRReslicer *reslicer = [controller horosMPRFusedReslicerForVolume:volume reason:reason];
+    if (!reslicer) return nil;
+    float cosines[9];
+    float position[3];
+    [vrView getOrientation:cosines];
+    [vrView getOrigin:position windowCentered:YES sliceMiddle:YES blendedView:YES];
+    double spacing = [vrView getResolution] * [vrView blendingImageSampleDistance];
+    HorosMPRFusedPlane *plane = [[[HorosMPRFusedPlane alloc] init] autorelease];
+    plane->pixels = malloc((size_t)width * (size_t)height * sizeof(float));
+    if (!plane->pixels) { *reason = @"The fused plane could not be allocated."; return nil; }
+    NSError *error = nil;
+    if (![reslicer resliceWithOrigin:HorosMPRPixelCentre(position, cosines, spacing)
+                         orientation:@[@(cosines[0]), @(cosines[1]), @(cosines[2]), @(cosines[3]), @(cosines[4]), @(cosines[5]),
+                                       @(cosines[6]), @(cosines[7]), @(cosines[8])]
+                             spacing:spacing width:width height:height thickness:[vrView getClippingRangeThicknessInMm]
+                          sampleStep:[volume[@"sampleStep"] doubleValue] projection:controller.clippingRangeMode
+                          background:[volume[@"background"] floatValue] into:plane->pixels error:&error]) {
+        *reason = error.localizedDescription ?: @"The fused reslice produced no plane.";
+        return nil;
+    }
+    plane->width = width;
+    plane->height = height;
+    plane->milliseconds = reslicer.lastMilliseconds;
+    return plane;
+}
+
+- (float *)horosMPRTakeFusedImageWidth:(long *)width height:(long *)height {
+    HorosMPRFusedPlane *plane = objc_getAssociatedObject(self, &fusedPlaneKey);
+    float *image = plane ? plane->pixels : NULL;
+    if (image) {
+        *width = plane->width;
+        *height = plane->height;
+        plane->pixels = NULL;
+    }
+    objc_setAssociatedObject(self, &fusedPlaneKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    return image;
+}
+
 - (float *)horosMPRCopyImageWidth:(long *)width height:(long *)height {
     NSAssert([NSThread isMainThread], @"MPR reslice requires the main thread");
     MPRController *controller = windowController;
     objc_setAssociatedObject(controller, &millisecondsKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(self, &fusedPlaneKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     if (!controller.horosMPRMetalEnabled) { [self horosSetPlanarFallbackReason:nil]; return NULL; }
     if (moveCenter) return NULL;
     NSString *reason = nil;
     if (controller.clippingRangeMode < 1 || controller.clippingRangeMode > 3) reason = @"Volume rendering keeps the original renderer.";
-    else if (self.blendingView) reason = @"Fusion keeps the original renderer.";
     else if (pix.isRGB) reason = @"RGB planes keep the original renderer.";
     HorosMPRReslicer *reslicer = reason ? nil : [controller horosMPRReslicerForCurrentVolume:&reason];
     // The host's share of a Metal plane, for the trace (#619): the geometry and
     // arguments before the reslice, and the copy after it.
     double preparedFrom = [HorosMetalPerformanceTrace now];
-    if (reslicer && ![vrView prepareMPRGeometryWidth:width height:height]) {
+    // One reason per cause, so that the trace counts which camera or crop refuses (#664).
+    NSString *geometry = reslicer ? [vrView horosMPRGeometryRefusalWidth:width height:height] : nil;
+    if (geometry) {
         reslicer = nil;
-        reason = @"The current camera or crop keeps the original renderer.";
+        reason = geometry;
     }
+    // A fused series is resliced in Metal with the plane or both stay with
+    // VTK, so a view never mixes the two engines (#658). The plane waits for
+    // the host's blending branch, which takes it instead of VTK's.
+    HorosMPRFusedPlane *fused = reslicer && self.blendingView ? [self horosMPRFusedPlane:&reason] : nil;
+    if (self.blendingView && !fused) reslicer = nil;
     if (reslicer) {
         float cosines[9];
         float position[3];
         [vrView getOrientation:cosines];
         [vrView getOrigin:position windowCentered:YES sliceMiddle:YES];
         double spacing = [vrView getResolution] * [vrView imageSampleDistance];
-        NSArray *origin = @[@(position[0]), @(position[1]), @(position[2])];
+        NSArray *origin = HorosMPRPixelCentre(position, cosines, spacing);
         NSArray *orientation = @[@(cosines[0]), @(cosines[1]), @(cosines[2]), @(cosines[3]), @(cosines[4]), @(cosines[5]),
                                  @(cosines[6]), @(cosines[7]), @(cosines[8])];
         DCMPix *first = [controller horosMPRFirstPix];
@@ -167,7 +279,9 @@ static char enabledKey, reslicerKey, uploadedKey, reasonKey, millisecondsKey;
                                          width:*width height:*height thickness:[vrView getClippingRangeThicknessInMm] sampleStep:step
                                     projection:controller.clippingRangeMode background:[controller horosMPRBackground]
                                           into:image error:&error]) {
-            objc_setAssociatedObject(controller, &millisecondsKey, @(reslicer.lastMilliseconds), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            objc_setAssociatedObject(controller, &millisecondsKey, @(reslicer.lastMilliseconds + (fused ? fused->milliseconds : 0)),
+                                     OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            objc_setAssociatedObject(self, &fusedPlaneKey, fused, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
             objc_setAssociatedObject(controller, &reasonKey, nil, OBJC_ASSOCIATION_COPY_NONATOMIC);
             [self horosSetPlanarFallbackReason:nil];
             return image;
@@ -176,6 +290,7 @@ static char enabledKey, reslicerKey, uploadedKey, reasonKey, millisecondsKey;
             reason = error.localizedDescription ?: @"The reslice produced no plane.";
         }
     }
+    if (reason) [HorosMetalPerformanceTrace recordRefusal:@"mpr.refusal" reason:reason];
     objc_setAssociatedObject(controller, &reasonKey, reason, OBJC_ASSOCIATION_COPY_NONATOMIC);
     [self horosSetPlanarFallbackReason:reason];
     return NULL;

@@ -1123,6 +1123,9 @@ static bool HorosRenderMetalVolume(void *context, vtkHorosFixedPointVolumeRayCas
             if( blendingVolumeMapper) blendingVolumeMapper->SetBlendModeToMinimumIntensity();
             break;
     }
+    
+    if( blendingVolumeMapper)
+        blendingVolumeMapper->SetMeanIntensity( modeID == 3);
 }
 
 - (long) mode
@@ -1168,7 +1171,7 @@ static bool HorosRenderMetalVolume(void *context, vtkHorosFixedPointVolumeRayCas
             break;
             
             
-        case 3: // Mean - Effect of Mean is triggered externally by setvtkMeanIPMode
+        case 3: // Mean: a minimum-intensity blend that averages, a mode of the mapper (#665)
             if( volumeMapper)
                 volumeMapper->SetBlendModeToMinimumIntensity();
             
@@ -1184,6 +1187,13 @@ static bool HorosRenderMetalVolume(void *context, vtkHorosFixedPointVolumeRayCas
             //				textureMapper->SetBlendModeToAdditive();
             //        break;
     }
+    
+    if( volumeMapper)
+        volumeMapper->SetMeanIntensity( modeID == 3);
+    
+    // A fused series follows the view's mode, as setBlendingEngine: sets it
+    // when fusing; its opacity table below already does (#671).
+    [self setBlendingMode: modeID];
     
     [self setBlendingFactor: blendingFactor];
     
@@ -1258,10 +1268,46 @@ static bool HorosRenderMetalVolume(void *context, vtkHorosFixedPointVolumeRayCas
     volume->SetMapper( volumeMapper);
 }
 
+// One crop on every mapper the view draws with: the image's, whichever engine
+// is in use, and a fused series' (#668). Copied into each mapper's own
+// collection: VTK refills a mapper's collection in place, and a shared one
+// would let one mapper's crop move the others'.
+- (void) applyCropPlanes: (vtkPlaneCollection*) crop
+{
+    vtkPlanes *planes = vtkPlanes::New();
+    vtkPoints *points = vtkPoints::New( VTK_DOUBLE);
+    vtkDoubleArray *normals = vtkDoubleArray::New();
+    normals->SetNumberOfComponents( 3);
+    for( int i = 0; i < crop->GetNumberOfItems(); i++)
+    {
+        vtkPlane *plane = crop->GetItem( i);
+        points->InsertNextPoint( plane->GetOrigin());
+        normals->InsertNextTuple( plane->GetNormal());
+    }
+    planes->SetPoints( points);
+    planes->SetNormals( normals);
+    
+    if( volumeMapper) volumeMapper->SetClippingPlanes( planes);
+    if( textureMapper) textureMapper->SetClippingPlanes( planes);
+    if( blendingVolumeMapper) blendingVolumeMapper->SetClippingPlanes( planes);
+    if( blendingTextureMapper) blendingTextureMapper->SetClippingPlanes( planes);
+    
+    points->Delete();
+    normals->Delete();
+    planes->Delete();
+}
+
 - (void) instantiateEngine: (int) e
 {
     @try
     {
+        // The crop in place - the box widget's or a saved camera's - carries
+        // over to the new engine. Executing the crop callback re-applied the
+        // widget's planes, and a camera's crop was lost at every switch (#668).
+        vtkPlaneCollection *crop = volume && volume->GetMapper() ? volume->GetMapper()->GetClippingPlanes() : NULL;
+        if( crop)
+            crop->Register( NULL);
+        
         //        double a[ 6];
         //		BOOL validBox = [VRView getCroppingBox: a :volume :croppingBox];
         
@@ -1296,7 +1342,9 @@ static bool HorosRenderMetalVolume(void *context, vtkHorosFixedPointVolumeRayCas
         
         if( firstTime == NO)
         {
-            if( cropcallback)
+            if( crop)
+                [self applyCropPlanes: crop];
+            else if( cropcallback)
                 cropcallback->Execute( croppingBox, 0, nil);
         }
         else
@@ -1321,6 +1369,9 @@ static bool HorosRenderMetalVolume(void *context, vtkHorosFixedPointVolumeRayCas
             textureMapper->SetSampleDistance( [[NSUserDefaults standardUserDefaults] floatForKey: @"BESTRENDERING"]);
             textureMapper->SetMaximumImageSampleDistance( LOD*lowResLODFactor);
         }
+        
+        if( crop)
+            crop->UnRegister( NULL);
     }
     @catch (NSException * e)
     {
@@ -1399,7 +1450,9 @@ static bool HorosRenderMetalVolume(void *context, vtkHorosFixedPointVolumeRayCas
             {
                 blendingVolumeMapper = vtkHorosFixedPointVolumeRayCastMapper::New();
                 blendingVolumeMapper->SetInputConnection(blendingReader->GetOutputPort());
-                
+                // The fused series ray-casts in Metal too; VTK composes its image
+                // over the volume's (#671).
+                blendingVolumeMapper->SetImageRenderer(HorosRenderMetalVolume, self);
             }
             blendingVolumeMapper->Update();
             
@@ -1435,7 +1488,12 @@ static bool HorosRenderMetalVolume(void *context, vtkHorosFixedPointVolumeRayCas
     
     if( firstTime == NO)
     {
-        if( cropcallback)
+        // The fused series takes the crop in place, which a saved camera may
+        // have set without moving the widget (#668).
+        vtkPlaneCollection *crop = volume && volume->GetMapper() ? volume->GetMapper()->GetClippingPlanes() : NULL;
+        if( crop)
+            [self applyCropPlanes: crop];
+        else if( cropcallback)
             cropcallback->Execute( croppingBox, 0, nil);
     }
     else
@@ -2574,23 +2632,6 @@ static bool HorosRenderMetalVolume(void *context, vtkHorosFixedPointVolumeRayCas
             [transform addObject:@(value)];
         }
     return transform;
-}
-
-- (BOOL)prepareMPRGeometryWidth:(long *)width height:(long *)height
-{
-    if (!volumeMapper || !aCamera || !aCamera->GetParallelProjection() ||
-        !clipRangeActivated || firstObject.isRGB ||
-        volumeMapper->GetCropping() ||
-        ![self prepareRenderWindow])
-        return NO;
-
-    if (!volumeMapper->PrepareMPRGeometry(aRenderer, volume))
-        return NO;
-    int size[2];
-    volumeMapper->GetRayCastImage()->GetImageInUseSize(size);
-    *width = size[0];
-    *height = size[1];
-    return size[0] > 0 && size[1] > 0;
 }
 
 - (void) render
@@ -6739,6 +6780,11 @@ static bool HorosRenderMetalVolume(void *context, vtkHorosFixedPointVolumeRayCas
     {
         if( blendingVolume)
         {
+            // The crop callback applies its planes to this volume's mapper
+            // too; it must not reach the volume once it is deleted (#673).
+            if( cropcallback)
+                cropcallback->setBlendingVolume( nil);
+            
             aRenderer->RemoveVolume( blendingVolume);
             
             blendingVolume->Delete();
@@ -7796,7 +7842,10 @@ static bool HorosRenderMetalVolume(void *context, vtkHorosFixedPointVolumeRayCas
                 destPtr = destFixedPtr = (unsigned char*) malloc( (*w+1) * (*h+1) * 4 * sizeof( unsigned char));
                 if( destFixedPtr)
                 {
-                    unsigned short *iptr = im + 3 + 4*(*h-1)*fullSize[0];
+                    // The ray-cast image is RGBA, four components per pixel, R first:
+                    // each pixel's own R, G and B, as ARGB bytes. The loop used to start
+                    // on the alpha and skip it, reading the next pixel's colour (#672).
+                    unsigned short *iptr = im + 4*(*h-1)*fullSize[0];
                     
                     int j = *h, rowBytes = 4*fullSize[0];
                     while( j-- > 0)
@@ -7805,13 +7854,11 @@ static bool HorosRenderMetalVolume(void *context, vtkHorosFixedPointVolumeRayCas
                         int i = *w;
                         while( i-- > 0)
                         {
-                            *destPtr = 255;
-                            destPtr++;
-                            iptrTemp++;
-                            
-                            *destPtr++ = *iptrTemp++ >> 7;
-                            *destPtr++ = *iptrTemp++ >> 7;
-                            *destPtr++ = *iptrTemp++ >> 7;
+                            *destPtr++ = 255;
+                            *destPtr++ = iptrTemp[ 0] >> 7;
+                            *destPtr++ = iptrTemp[ 1] >> 7;
+                            *destPtr++ = iptrTemp[ 2] >> 7;
+                            iptrTemp += 4;
                         }
                         
                         iptr -= rowBytes;

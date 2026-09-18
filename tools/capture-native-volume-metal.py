@@ -26,6 +26,11 @@ parser.add_argument('--pid', type=int, required=True)
 parser.add_argument('--mode', type=int, choices=[0, 1, 2, 3], help='0 volume rendering, 1 MIP, 2 MinIP, 3 mean')
 parser.add_argument('--wl', type=float); parser.add_argument('--ww', type=float)
 parser.add_argument('--clip', help='clipping range thickness in mm, or "off"')
+parser.add_argument('--engine', type=int, choices=[0, 2], help='switch the view to this engine first. A switch keeps the crop '
+                    'in place, a camera\'s (--crop) included (#668)')
+parser.add_argument('--crop', help='SHRINK[,THIN[,DEGREES]]: the uncropped camera\'s six crop planes moved inward by SHRINK of '
+                    'the box on every side (THIN more on the pair along z), turned DEGREES about the box centre around z, '
+                    'applied through setCamera: as a saved camera applies them; 0 restores the uncropped planes (#664)')
 parser.add_argument('--rotate', type=float, help='azimuth the camera by this many degrees about the view-up axis')
 parser.add_argument('--elevate', type=float, help='elevate the camera by this many degrees')
 parser.add_argument('--preset', help='GROUP:INDEX from the 3D presets, applied through the controller\'s own steps')
@@ -43,6 +48,8 @@ base = (args.output / args.label).resolve()
 staged = Path(str(base) + '.json.' + uuid.uuid4().hex + '.partial')
 
 actions = ''
+if args.engine is not None:
+    actions += '(void)[f375V setEngine:(long)%d showWait:(BOOL)0];\n' % args.engine
 if args.preset:
     group, index = args.preset.rsplit(':', 1)
     if not re.fullmatch(r'[A-Za-z0-9 _-]+', group):
@@ -55,7 +62,12 @@ if args.preset:
                 ' (void)[f375C applyShading:f375C]; (void)[f375V activateShading:(BOOL)1]; } else { (void)[f375V activateShading:(BOOL)0]; }'
                 ' f375S[@"presetName"] = (NSString *)[f375P objectForKey:@"name"] ?: @""; }\n' % (group, int(index)))
 if args.mode is not None:
-    actions += '(void)[f375C setModeIndex:(long)%d];\n' % args.mode
+    if args.mode in (0, 1):
+        actions += '(void)[f375C setModeIndex:(long)%d];\n' % args.mode
+    else:
+        # MinIP and mean are not in the window's matrix; the view takes them.
+        actions += '(void)[f375V setMode:(long)%d]; (void)[f375V setBlendingMode:(long)%d];\n' % (args.mode, args.mode)
+    # The mean is a mode of the view's own mapper, which setMode: sets (#665).
 if args.wl is not None and args.ww is not None:
     actions += '(void)[f375C setWLWW:(float)%g :(float)%g];\n' % (args.wl, args.ww)
 if args.clip is not None:
@@ -65,6 +77,24 @@ if args.clip is not None:
         actions += '(void)[f375V setClipRangeActivated:(BOOL)1]; (void)[f375V setClippingRangeThicknessInMm:(double)%g];\n' % float(args.clip)
 if args.projection:
     actions += '(void)[f375V setProjectionMode:(int)%d];\n' % (1 if args.projection == 'parallel' else 0)
+if args.crop is not None:
+    shrink, thin, degrees = (list(map(float, args.crop.split(','))) + [0.0, 0.0])[:3]
+    # The first planes seen are the uncropped box; they are kept on the view so a
+    # later capture builds its crop from them, and --crop 0 puts them back.
+    actions += ('{ id f375Cam = (id)[f375V cameraWithThumbnail:(BOOL)0]; NSMutableArray *f375Pl = (NSMutableArray *)[f375Cam croppingPlanes];'
+                ' NSArray *f375Base = (NSArray *)objc_getAssociatedObject((id)f375V, (const void *)@selector(horosRayCastImageRegion));'
+                ' if (!f375Base) { f375Base = [f375Pl copy]; (void)objc_setAssociatedObject((id)f375V, (const void *)@selector(horosRayCastImageRegion), (id)f375Base, (objc_AssociationPolicy)1); }'
+                ' double f375B[6][6], f375O[6][6], f375Cx = 0, f375Cy = 0;'
+                ' for (int i = 0; i < 6; ++i) { (void)[(NSValue *)[f375Base objectAtIndex:i] getValue:f375B[i]]; f375Cx += f375B[i][0] / 6; f375Cy += f375B[i][1] / 6; }'
+                ' for (int i = 0; i < 6; ++i) { int j = 0; double best = 2; for (int k = 0; k < 6; ++k) { double dot = f375B[i][3]*f375B[k][3] + f375B[i][4]*f375B[k][4] + f375B[i][5]*f375B[k][5]; if (dot < best) { best = dot; j = k; } }'
+                '  double d = f375B[i][3]*(f375B[j][0]-f375B[i][0]) + f375B[i][4]*(f375B[j][1]-f375B[i][1]) + f375B[i][5]*(f375B[j][2]-f375B[i][2]);'
+                '  double f = %g + (fabs(f375B[i][5]) > 0.9 ? %g : 0.0);'
+                '  double px = f375B[i][0] + f*d*f375B[i][3], py = f375B[i][1] + f*d*f375B[i][4], pz = f375B[i][2] + f*d*f375B[i][5];'
+                '  double a = %g * M_PI / 180.0, ca = cos(a), sa = sin(a);'
+                '  f375O[i][0] = f375Cx + ca*(px-f375Cx) - sa*(py-f375Cy); f375O[i][1] = f375Cy + sa*(px-f375Cx) + ca*(py-f375Cy); f375O[i][2] = pz;'
+                '  f375O[i][3] = ca*f375B[i][3] - sa*f375B[i][4]; f375O[i][4] = sa*f375B[i][3] + ca*f375B[i][4]; f375O[i][5] = f375B[i][5]; }'
+                ' for (int i = 0; i < 6; ++i) (void)[f375Pl replaceObjectAtIndex:(NSUInteger)i withObject:[NSValue valueWithBytes:f375O[i] objCType:"{N3Plane={N3Vector=ddd}{N3Vector=ddd}}"]];'
+                ' (void)[f375V setCamera:f375Cam]; }\n' % (shrink, thin, degrees))
 if args.shading:
     actions += '(void)[f375V activateShading:(BOOL)%d];\n' % (1 if args.shading == 'on' else 0)
 if args.rotate is not None or args.elevate is not None:
@@ -153,9 +183,22 @@ double f375Back = f375T > 0 ? f375T * 0.5 : f375Ext;
 NSArray *f375Cam = @[@(f375Cx + f375Cos[6] * f375Back), @(f375Cy + f375Cos[7] * f375Back), @(f375Cz + f375Cos[8] * f375Back),
                      @(f375Cx), @(f375Cy), @(f375Cz), @(-f375Cos[3]), @(-f375Cos[4]), @(-f375Cos[5]), @1, @((double)f375Height * f375Pitch * 0.5), @30];
 f375S[@"derivedCamera"] = f375Cam; f375S[@"pitch"] = @(f375Pitch); f375S[@"imageOrigin"] = @[@(f375O[0]), @(f375O[1]), @(f375O[2])];
+/* A projection samples from VTK's near plane (#659); the derived camera has its own eye, so the planes are re-expressed from it. */
+double f375Near = 0.0, f375Far = f375T > 0 ? f375T : -1.0;
+if ([(NSNumber *)[f375Snap objectForKey:@"anchoredProjection"] boolValue]) {
+  NSArray *f375VC = (NSArray *)[f375Snap objectForKey:@"camera"];
+  double f375Dx = [(NSNumber *)f375VC[3] doubleValue] - [(NSNumber *)f375VC[0] doubleValue], f375Dy = [(NSNumber *)f375VC[4] doubleValue] - [(NSNumber *)f375VC[1] doubleValue], f375Dz = [(NSNumber *)f375VC[5] doubleValue] - [(NSNumber *)f375VC[2] doubleValue];
+  double f375Dl = sqrt(f375Dx * f375Dx + f375Dy * f375Dy + f375Dz * f375Dz); f375Dx /= f375Dl; f375Dy /= f375Dl; f375Dz /= f375Dl;
+  double f375VN = [(NSNumber *)[f375Snap objectForKey:@"near"] doubleValue], f375VF = [(NSNumber *)[f375Snap objectForKey:@"far"] doubleValue];
+  f375Near = ([(NSNumber *)f375VC[0] doubleValue] + f375Dx * f375VN - [(NSNumber *)f375Cam[0] doubleValue]) * f375Dx
+           + ([(NSNumber *)f375VC[1] doubleValue] + f375Dy * f375VN - [(NSNumber *)f375Cam[1] doubleValue]) * f375Dy
+           + ([(NSNumber *)f375VC[2] doubleValue] + f375Dz * f375VN - [(NSNumber *)f375Cam[2] doubleValue]) * f375Dz;
+  f375Far = f375Near + (f375VF - f375VN);
+}
+f375S[@"derivedNear"] = @(f375Near); f375S[@"derivedFar"] = @(f375Far);
 NSMutableData *f375Scalar = [NSMutableData data];
 NSError *f375E = nil;
-NSData *f375Metal = (NSData *)[f375C horosVolumeMetalRenderWithCamera:f375Cam near:(double)0.0 far:(double)(f375T > 0 ? f375T : -1.0) width:(long)f375Width height:(long)f375Height scalarOut:f375Scalar error:&f375E];
+NSData *f375Metal = (NSData *)[f375C horosVolumeMetalRenderWithCamera:f375Cam near:f375Near far:f375Far width:(long)f375Width height:(long)f375Height scalarOut:f375Scalar error:&f375E];
 f375S[@"metalBytes"] = @((long)[f375Metal length]);
 f375S[@"metalMilliseconds"] = @((double)[f375C horosVolumeMetalLastMilliseconds]);
 f375S[@"metalVolumeBytes"] = @((long)[f375C horosVolumeMetalBytes]);
@@ -168,7 +211,7 @@ if ([f375Scalar length] > 0) { (void)[f375Scalar writeToFile:METALSCALAR atomica
                               @([(NSNumber *)f375Cam[3] doubleValue] + f375Sx * f375Cos[0] + f375Sy * f375Cos[3]), @([(NSNumber *)f375Cam[4] doubleValue] + f375Sx * f375Cos[1] + f375Sy * f375Cos[4]), @([(NSNumber *)f375Cam[5] doubleValue] + f375Sx * f375Cos[2] + f375Sy * f375Cos[5]),
                               f375Cam[6], f375Cam[7], f375Cam[8], f375Cam[9], f375Cam[10], f375Cam[11]];
     NSMutableData *f375ShiftScalar = [NSMutableData data]; NSError *f375ShiftE = nil;
-    NSData *f375ShiftMetal = (NSData *)[f375C horosVolumeMetalRenderWithCamera:f375ShiftCam near:(double)0.0 far:(double)(f375T > 0 ? f375T : -1.0) width:(long)f375Width height:(long)f375Height scalarOut:f375ShiftScalar error:&f375ShiftE];
+    NSData *f375ShiftMetal = (NSData *)[f375C horosVolumeMetalRenderWithCamera:f375ShiftCam near:f375Near far:f375Far width:(long)f375Width height:(long)f375Height scalarOut:f375ShiftScalar error:&f375ShiftE];
     if (f375ShiftMetal && [f375ShiftScalar length] > 0) { (void)[f375ShiftScalar writeToFile:[NSString stringWithFormat:@"%@.shift%d_%d.f32", METALBASE, f375Dx, f375Dy] atomically:YES]; }
   }
 }
@@ -180,7 +223,16 @@ if ((long)[f375V renderingMode] != 0) {
   (void)[f375V prepareFullDepthCapture]; (void)[f375V render];
   long f375FW = 0, f375FH = 0; BOOL f375RGB = 0;
   float *f375Full = (float *)[f375V imageInFullDepthWidth:&f375FW height:&f375FH isRGB:&f375RGB];
+  NSArray *f375Grid = (NSArray *)[f375V horosRayCastImageRegion];
   (void)[f375V restoreFullDepthCapture]; (void)[f375V render];
+  /* The grid VTK just ray-cast, rendered in Metal as the hook renders it: the snapshot's own camera, planes and step (#659). */
+  if (f375Grid.count == 6) {
+    f375S[@"vtkGrid"] = f375Grid;
+    NSMutableData *f375GridScalar = [NSMutableData data]; NSError *f375GridE = nil;
+    NSData *f375GridMetal = (NSData *)[f375C horosVolumeMetalRenderWithCamera:(NSArray *)nil near:(double)0.0 far:(double)-1.0 width:(long)[(NSNumber *)f375Grid[4] longValue] height:(long)[(NSNumber *)f375Grid[5] longValue] imageRegion:(NSArray *)[f375Grid subarrayWithRange:NSMakeRange(0, 4)] scalarOut:f375GridScalar error:&f375GridE];
+    if (f375GridMetal && [f375GridScalar length] > 0) { (void)[f375GridScalar writeToFile:METALGRID atomically:YES]; }
+    f375S[@"gridFallback"] = (NSString *)[f375C horosVolumeMetalFallbackReason] ?: @"";
+  }
   f375S[@"vtkFullWidth"] = @(f375FW); f375S[@"vtkFullHeight"] = @(f375FH); f375S[@"vtkFullRGB"] = @(f375RGB);
   if (f375Full && !f375RGB) { (void)[[NSData dataWithBytesNoCopy:f375Full length:(NSUInteger)(f375FW * f375FH * 4) freeWhenDone:NO] writeToFile:VTKSCALAR atomically:YES]; }
   if (f375Full) free(f375Full);
@@ -192,7 +244,7 @@ f375S[@"footprintBytes"] = @((unsigned long long)f375Info.phys_footprint);
 }
 (void)[[NSJSONSerialization dataWithJSONObject:f375S options:3 error:nil] writeToFile:OUTPUT atomically:YES];
 '''.replace('ACTIONS', actions).replace('OUTPUT', '@' + json.dumps(str(staged)))
-for token, suffix in (('METALSCALAR', '.metal.f32'), ('METALFULL', '.metal.full.f32'), ('METALVIEW', '.metal.view.bgra'), ('METALBASE', '.metal'), ('VTKSCALAR', '.vtk.f32'), ('METAL', '.metal.bgra'), ('VTK', '.vtk.rgb')):
+for token, suffix in (('METALGRID', '.metal.grid.f32'), ('METALSCALAR', '.metal.f32'), ('METALFULL', '.metal.full.f32'), ('METALVIEW', '.metal.view.bgra'), ('METALBASE', '.metal'), ('VTKSCALAR', '.vtk.f32'), ('METAL', '.metal.bgra'), ('VTK', '.vtk.rgb')):
     expression = expression.replace(token, '@' + json.dumps(str(base) + suffix))
 commands = args.output / (args.label + '.lldb')
 commands.write_text('expression -l objc++ -- @import AppKit\n'

@@ -83,11 +83,15 @@ if 'let options = MTL4CommitOptions()' not in submit:
     failures.append('the commit options are reused across submissions; the origin recorded a hang')
 if 'slot.allocator.reset()' not in submit or 'beginCommandBuffer(allocator: slot.allocator)' not in submit:
     failures.append('submissions do not get their own command allocator')
-if 'slot.retained = [image, clut, target]' not in submit:
+if 'slot.retained = [textures.image, textures.clut, target]' not in submit or \
+        'slot.retained += [fused.image, fused.clut]' not in submit:
     failures.append('a submission does not retain what it reads and writes')
 if 'useResidencySet' not in submit:
     failures.append('residency is not made explicit')
-if 'setTexture(image.gpuResourceID, index: 0)' not in submit or 'setTexture(clut.gpuResourceID, index: 1)' not in submit:
+if any(binding not in submit for binding in ['argumentTable.setTexture(textures.image.gpuResourceID, index: 0)',
+                                              'argumentTable.setTexture(textures.clut.gpuResourceID, index: 1)',
+                                              'fusionTable.setTexture(fused.image.gpuResourceID, index: 0)',
+                                              'fusionTable.setTexture(fused.clut.gpuResourceID, index: 1)']):
     failures.append('texture bindings are not set on every draw, so a stale one can survive')
 if 'once.claim()' not in pilot:
     failures.append('a submission can report completion more than once')

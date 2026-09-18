@@ -130,6 +130,25 @@ for label in args.labels:
         entry.update({'kind': 'projection', 'inside': len(inside), 'meanOfRange': mean, 'worstOfRange': worst, 'maskAgreement': agree,
                       'meanOfValueRange': mean * span / value_span, 'worstOfValueRange': worst * span / value_span,
                       'medianAbsHU': sorted(diffs)[len(diffs) // 2] if diffs else 0})
+        grid_file = args.directory / (label + '.metal.grid.f32')
+        if grid_file.exists() and state.get('vtkGrid') and state['vtkGrid'][4:] == [width, height]:
+            # #659: Metal on VTK's own ray-cast grid, as the hook renders it; no
+            # alignment search. This is the comparison the tolerances judge.
+            gs = struct.unpack('<%df' % (width * height), grid_file.read_bytes())
+            g_inside = [k for k in range(width * height) if gs[k] != background_metal and vs[k] != background_vtk]
+            g_agree = sum(1 for k in range(width * height) if (gs[k] == background_metal) == (vs[k] == background_vtk)) / (width * height)
+            g_diffs = sorted(abs(gs[k] - vs[k]) for k in g_inside)
+            g_mean = (sum(g_diffs) / len(g_diffs) if g_diffs else 0) / span
+            g_worst = (g_diffs[-1] if g_diffs else 0) / span
+            entry['grid'] = {'inside': len(g_inside), 'meanOfRange': g_mean, 'worstOfRange': g_worst, 'maskAgreement': g_agree,
+                             'medianAbsHU': g_diffs[len(g_diffs) // 2] if g_diffs else 0,
+                             'p99AbsHU': g_diffs[int(len(g_diffs) * 0.99)] if g_diffs else 0,
+                             'withinOneHU': sum(1 for d in g_diffs if d <= 1) / max(1, len(g_diffs)),
+                             'meanOfValueRange': g_mean * span / value_span}
+            print('%s grid (VTK\'s own rays): inside %d, mean %.5f worst %.5f of window, median |Δ| %.2f, p99 %.2f, within 1 HU %.4f, masks %.4f'
+                  % (label, len(g_inside), g_mean, g_worst, entry['grid']['medianAbsHU'], entry['grid']['p99AbsHU'],
+                     entry['grid']['withinOneHU'], g_agree))
+            mean, worst, agree = g_mean, g_worst, g_agree
         if mean > TOLERANCES['projectionMean'] or worst > TOLERANCES['projectionWorst'] or agree < TOLERANCES['projectionMask']:
             failures.append('%s: projection mean %.4f worst %.4f mask %.4f' % (label, mean, worst, agree))
         print('%s (%s, %dx%d): projection inside %d, mean %.5f worst %.5f of window, %.5f / %.5f of value range, median |Δ| %.1f, masks %.4f'

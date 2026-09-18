@@ -61,6 +61,9 @@ struct Check {
                                               crop: nil, width: 192, height: 160, sampleStep: 1)
         for _ in 0..<10 { _ = try renderer.render(request) }
 
+        // A frame the original renderer drew, with its fixed reason (#664).
+        MetalPerformanceTrace.recordRefusal("vr.refusal", reason: "The crop uses the original renderer.")
+
         // A Metal 4 feedback that carried no timestamps.
         let start = MetalPerformanceTrace.now()
         MetalPerformanceTrace.record("check.metal4.untimed", startedAt: start, committedAt: MetalPerformanceTrace.now(),
@@ -95,6 +98,7 @@ struct Check {
             MetalPerformanceTrace.record("check.metal4.untimed", startedAt: MetalPerformanceTrace.now(),
                                          committedAt: MetalPerformanceTrace.now(), observedAt: MetalPerformanceTrace.now(),
                                          gpuStartTime: 0, gpuEndTime: 0, failed: false)
+            MetalPerformanceTrace.recordRefusal("vr.refusal", reason: "The crop uses the original renderer.")
             result["samples"] = MetalPerformanceTrace.snapshot()["samples"]
         }
 
@@ -156,13 +160,18 @@ def main():
         by_operation.setdefault(sample["operation"], []).append(sample)
         allowed = {"operation", "status", "cold", "bytes", "width", "height", "samples", "cpu_prepare_ms", "submit_to_gpu_ms",
                    "gpu_ms", "wait_ms", "gpu_to_observed_ms", "readback_ms", "total_ms"}
+        # A refusal carries the host's fixed fallback text, and nothing else is added (#664).
+        if sample["operation"].endswith(".refusal"):
+            allowed = allowed | {"reason"}
         if set(sample) - allowed:
             failures.append(f"a sample carries {sorted(set(sample) - allowed)}")
     expected = {"mpr.pipeline": 2, "mpr.upload": 1, "mpr.reslice": 20, "vr.pipeline": 1, "vr.upload": 1, "vr.render": 10,
-                "check.metal4.untimed": 1}
+                "check.metal4.untimed": 1, "vr.refusal": 1}
     for operation, count in expected.items():
         if len(by_operation.get(operation, [])) != count:
             failures.append(f"{len(by_operation.get(operation, []))} {operation} samples, expected {count}")
+    if [r.get("reason") for r in by_operation.get("vr.refusal", [])] != ["The crop uses the original renderer."]:
+        failures.append(f"the refusal did not keep its reason: {by_operation.get('vr.refusal')}")
     phases = ("cpu_prepare_ms", "submit_to_gpu_ms", "gpu_ms", "wait_ms", "gpu_to_observed_ms", "readback_ms", "total_ms")
     for operation in ("mpr.reslice", "vr.render", "vr.upload"):
         for sample in by_operation.get(operation, []):

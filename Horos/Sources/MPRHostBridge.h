@@ -11,7 +11,7 @@
 - (NSString *)horosMPRFallbackReason;
 /// Wall milliseconds of the last synchronous Metal reslice, or -1 if none ran.
 - (double)horosMPRLastMilliseconds;
-/// Bytes of the volume currently on the GPU, or 0.
+/// Bytes of the volumes currently on the GPU, the fused one included (#658), or 0.
 - (NSInteger)horosMPRVolumeBytes;
 /// Drops the GPU volume; the next reconstruction re-uploads if enabled.
 - (void)horosMPRReleaseVolume;
@@ -21,4 +21,7 @@
 /// Returns a malloc-owned float image after preparing the camera geometry.
 /// A NULL result requests the normal CPU render. Main thread only.
 - (float *)horosMPRCopyImageWidth:(long *)width height:(long *)height;
+/// The fused series' plane the last call resliced with it (#658), malloc-owned,
+/// or NULL: then the host reslices it with VTK, as it does the plane.
+- (float *)horosMPRTakeFusedImageWidth:(long *)width height:(long *)height;
 @end

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MPR geometry without ray casting agrees with VTK and rejects actual crops."""
+"""MPR geometry without ray casting agrees with VTK, rejects actual crops unless the caller clips them, and says why it refused."""
 from pathlib import Path
 import subprocess, tempfile, sys
 root = Path(__file__).resolve().parents[1]
@@ -71,10 +71,38 @@ int main(){@autoreleasepool{
   vtkNew<vtkPlane> plane;double n[3]={0,0,0},o[3]={0,0,0};
   n[axis]=high?-1:1;o[axis]=bounds[2*axis+high];plane->SetNormal(n);plane->SetOrigin(o);mapper->AddClippingPlane(plane);
  }
+ typedef vtkHorosFixedPointVolumeRayCastMapper Mapper;
  assert(mapper->PrepareMPRGeometry(renderer,volume));
+ assert(mapper->GetGeometryRefusal()==Mapper::GeometryAccepted);
  vtkNew<vtkPlane> crop;crop->SetNormal(1,0,0);crop->SetOrigin(5,0,0);mapper->AddClippingPlane(crop);
  assert(!mapper->PrepareMPRGeometry(renderer,volume));
+ assert(mapper->GetGeometryRefusal()==Mapper::GeometryClippingPlane);
+ // A caller that clips its rays takes the crop, with the very planes VTK's
+ // own rays are clipped against when it casts them (#664).
+ assert(mapper->PrepareMPRGeometry(renderer,volume,true));
+ assert(mapper->GetGeometryRefusal()==Mapper::GeometryAccepted);
+ const float *prepared=nullptr;
+ assert(mapper->GetVoxelClippingPlanes(&prepared)==7);
+ float kept[28];for(int i=0;i<28;++i) kept[i]=prepared[i];
+ // x >= 5 mm on a 0.7 mm grid: x >= 7.142857 voxels.
+ assert(std::fabs(kept[24]-1)<1e-6 && std::fabs(kept[25])<1e-6 && std::fabs(kept[26])<1e-6 && std::fabs(kept[27]+5/.7)<1e-4);
+ mapper->Render(renderer,volume);
+ const float *cast=nullptr;
+ assert(mapper->GetVoxelClippingPlanes(&cast)==7);
+ for(int i=0;i<28;++i) assert(kept[i]==cast[i]);
  mapper->RemoveAllClippingPlanes();assert(mapper->PrepareMPRGeometry(renderer,volume));
+ const float *none=nullptr;assert(mapper->GetVoxelClippingPlanes(&none)==0);
+ // A volume far outside the view is not refused: VTK seeds its bounds at the
+ // image edges, so it still casts a strip of a few rows there, which the
+ // geometry accepts as it is (#664).
+ double position[3],focal[3],up[3];camera->GetPosition(position);camera->GetFocalPoint(focal);camera->GetViewUp(up);
+ camera->SetPosition(position[0]+2000*up[0],position[1]+2000*up[1],position[2]+2000*up[2]);
+ camera->SetFocalPoint(focal[0]+2000*up[0],focal[1]+2000*up[1],focal[2]+2000*up[2]);
+ renderer->ResetCameraClippingRange();
+ assert(mapper->PrepareMPRGeometry(renderer,volume));
+ assert(mapper->GetRayCastImage()->GetImageInUseSize()[1]<=4 && mapper->GetRayCastImage()->GetImageOrigin()[1]==0);
+ camera->SetPosition(position);camera->SetFocalPoint(focal);renderer->ResetCameraClippingRange();
+ assert(mapper->PrepareMPRGeometry(renderer,volume));
  struct External { int calls=0; bool accepted=true; } external;
  mapper->SetImageRenderer([](void* p,vtkHorosFixedPointVolumeRayCastMapper* m,vtkRenderer* r,vtkVolume* v){
   auto state=static_cast<External*>(p);++state->calls;
@@ -97,7 +125,7 @@ int main(){@autoreleasepool{
  assert(!mapper->GetExternalImageValid());
  mapper->Render(renderer,volume);assert(raycasts==beforeExternal+2);
  mapper->ReleaseGraphicsResources(window);
- puts("PASS: 12 planes match CPU geometry; clipping, external image, cached display, CPU fallback and renderer switch verified");
+ puts("PASS: 12 planes match CPU geometry; clipping refusal and its reasons, the accepted crop with VTK's own voxel planes, external image, cached display, CPU fallback and renderer switch verified");
 }}
 
 '''
