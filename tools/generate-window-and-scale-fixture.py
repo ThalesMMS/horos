@@ -28,13 +28,23 @@ from pathlib import Path
 
 import numpy
 from pydicom.dataset import Dataset, FileMetaDataset
-from pydicom.uid import ComputedRadiographyImageStorage, ExplicitVRLittleEndian, generate_uid
+from pydicom.uid import CTImageStorage, ComputedRadiographyImageStorage, ExplicitVRLittleEndian, generate_uid
 
 parser = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
 parser.add_argument('destination', type=Path)
 parser.add_argument('--size', type=int, default=256)
+parser.add_argument('--content-fit', action='store_true', help='generate a synthetic content auto-zoom series instead of the windowing matrix')
+parser.add_argument('--curved-table', action='store_true', help='include a curved support below the synthetic content-fit body')
+parser.add_argument('--varying-content', action='store_true', help='vary body size and position between content-fit slices')
+parser.add_argument('--content-count', type=int, default=8, help='number of content-fit slices')
 arguments = parser.parse_args()
+if arguments.curved_table and not arguments.content_fit:
+    parser.error('--curved-table requires --content-fit')
+if arguments.varying_content and not arguments.content_fit:
+    parser.error('--varying-content requires --content-fit')
+if arguments.content_count < 1:
+    parser.error('--content-count must be positive')
 
 arguments.destination.mkdir(parents=True, exist_ok=True)
 if any(arguments.destination.iterdir()):
@@ -101,6 +111,8 @@ def build(name, number, description, pixels, **overrides):
         else:
             setattr(dataset, key, value)
 
+    dataset.file_meta.MediaStorageSOPClassUID = dataset.SOPClassUID
+
     dataset.PixelData = pixels.astype(
         numpy.int16 if dataset.PixelRepresentation else numpy.uint16).tobytes()
 
@@ -108,6 +120,44 @@ def build(name, number, description, pixels, **overrides):
     dataset.save_as(str(path), enforce_file_format=True)
     print('%-22s %-48s %s' % (name, description, path.name))
 
+
+if arguments.content_fit:
+    yy, xx = numpy.mgrid[:size, :size]
+    x, y = xx / size, yy / size
+    series, frame_of_reference = generate_uid(), generate_uid()
+    for index in range(arguments.content_count):
+        cx, cy = (.5, .41) if arguments.curved_table else (.59, .60)
+        body = ((x - cx) / .27) ** 2 + ((y - cy) / (.18 + index * .002)) ** 2 <= 1
+        arm = ((x - .17) / .06) ** 2 + ((y - cy) / .10) ** 2 <= 1
+        if arguments.varying_content:
+            phase = numpy.sin(numpy.pi * index / max(1, arguments.content_count - 1)) ** 2
+            cx, cy = .45 + .10 * phase, .30 + .18 * phase
+            body = ((x - cx) / (.12 + .19 * phase)) ** 2 + ((y - cy) / (.10 + .20 * phase)) ** 2 <= 1
+            arm = ((x - .14) / .06) ** 2 + ((y - cy) / .10) ** 2 <= 1
+        pixels = ((xx * 7 + yy * 3) % 5).astype(numpy.uint16)
+        pixels[body | arm] = 1800 + ((xx[body | arm] + yy[body | arm]) % 500)
+        if arguments.curved_table:
+            curve = .89 - .6 * (x - .5) ** 2
+            rails = (numpy.abs(y - curve) < .007) | (numpy.abs(y - curve - .035) < .007)
+            ends = (numpy.abs(x - .05) < .007) | (numpy.abs(x - .95) < .007)
+            table = ((x >= .043) & (x <= .957)
+                     & (rails | (ends & (y >= curve) & (y <= curve + .035))))
+            pixels[table] = 3000
+        else:
+            pixels[int(size * .92), int(size * .05):int(size * .95)] = 3000
+        pixels[int(size * .10), int(size * .95)] = 4095
+        description = 'offset body, separate arm and curved table' if arguments.curved_table else 'offset content with separate arm and thin table'
+        if arguments.varying_content:
+            description = 'varying body extent across slices'
+        build('content-fit-%02d' % index, 1, description, pixels,
+              PatientName='SYNTHETIC^CONTENTFIT', PatientID='CONTENT-FIT',
+              SOPClassUID=CTImageStorage, Modality='CT',
+              StudyDescription='Synthetic opening content auto-zoom', StudyID='CFIT',
+              SeriesInstanceUID=series, FrameOfReferenceUID=frame_of_reference,
+              InstanceNumber=index + 1, ImageOrientationPatient=[1, 0, 0, 0, 1, 0],
+              ImagePositionPatient=[0, 0, index], SliceThickness=1, PixelSpacing=[1, 1],
+              WindowCenter=1500, WindowWidth=3000)
+    raise SystemExit(0)
 
 ramp = picture(4095)
 

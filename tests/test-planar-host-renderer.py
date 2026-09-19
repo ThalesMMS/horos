@@ -4,7 +4,7 @@
 Read back the destination FBO, not the intermediate Metal texture. Tolerance
 is zero for this transfer: the independently tested shader has already applied
 interpolation/window/CLUT. Also exercise state restoration, cache, resize,
-content replacement, session invalidation and a host overlay after the quad.
+content replacement, session invalidation and host overlays across Ctrl frames.
 """
 from pathlib import Path
 import argparse
@@ -14,7 +14,47 @@ import tempfile
 root = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--host-source', type=Path, default=root/'Horos/Sources/PlanarHostRenderer.swift')
+parser.add_argument('--dcm-view-source', type=Path, default=root/'Horos/Sources/DCMView.m')
 args = parser.parse_args()
+# Compile the host's actual Ctrl-description block and annotation transform.
+# The description's text is nil: this check measures the matrix state left for
+# subsequent frames, using a red rectangle as the annotation's visible pixels.
+dcm_view = args.dcm_view_source.read_bytes().decode('latin1')
+draw = dcm_view.index('- (void) drawRect:(NSRect)aRect withContext:')
+description_start = dcm_view.index('            if( showDescriptionInLarge)', draw)
+description_end = dcm_view.index('\n        }\n        else', description_start)
+text_start = dcm_view.index('    //** TEXT INFORMATION',
+                           dcm_view.index('- (void) drawTextualData:(NSRect) size annotationsLevel:'))
+text_end = dcm_view.index('    //draw line around edge', text_start)
+header = 'void drawCtrlDescription(int width, int height);\nvoid drawAnnotationMarker(int width, int height);\n'
+host_overlay = r'''
+#import <Cocoa/Cocoa.h>
+#import "GLString.h"
+@interface CtrlDescriptionView : NSView
+- (void)drawDescription:(NSRect)drawingFrameRect;
+@end
+@implementation CtrlDescriptionView
+- (void)drawDescription:(NSRect)drawingFrameRect {
+    BOOL showDescriptionInLarge = YES;
+    GLString *showDescriptionInLargeText = nil;
+DESCRIPTION
+}
+@end
+void drawCtrlDescription(int width, int height) {
+    @autoreleasepool {
+        CtrlDescriptionView *view = [[CtrlDescriptionView alloc] init];
+        [view drawDescription:NSMakeRect(0, 0, width, height)];
+        [view release];
+    }
+}
+void drawAnnotationMarker(int width, int height) {
+    NSRect size = NSMakeRect(0, 0, width, height);
+TEXT_TRANSFORM
+    glColor4f(1, 0, 0, 1);
+    glRectf(16, 16, 96, 32);
+}
+'''.replace('DESCRIPTION', dcm_view[description_start:description_end]).replace(
+    'TEXT_TRANSFORM', dcm_view[text_start:text_end])
 driver = r'''
 import AppKit
 import Metal
@@ -111,6 +151,30 @@ import OpenGL.GL
             var overlay=[UInt8](repeating:0,count:4)
             glReadPixels(0,0,1,1,GLenum(GL_BGRA),GLenum(GL_UNSIGNED_BYTE),&overlay)
             assert(overlay==[0,0,255,255])
+            if w >= 100 && h >= 100 {
+                payload["isColor"]=false; payload["pixels"]=pixels
+                payload["clut"]=Data((0..<256).flatMap { [UInt8($0),UInt8($0),UInt8($0),255] })
+                // Do not reset matrices between frames: pressing Ctrl must not
+                // poison overlays on the next redraw or after releasing it.
+                for cycle in 0..<3 {
+                    for (phase, ctrl) in [false, true, true, false, false].enumerated() {
+                        assert(host.draw(snapshot:payload,session:session,context:context,width:w,height:h))
+                        drawAnnotationMarker(Int32(w),Int32(h))
+                        if ctrl { drawCtrlDescription(Int32(w),Int32(h)) }
+                        var rgba=[UInt8](repeating:0,count:w*h*4)
+                        glReadPixels(0,0,GLsizei(w),GLsizei(h),GLenum(GL_RGBA),GLenum(GL_UNSIGNED_BYTE),&rgba)
+                        let visible=stride(from:0,to:rgba.count,by:4).filter {
+                            rgba[$0]==255 && rgba[$0+1]==0 && rgba[$0+2]==0
+                        }.count
+                        assert(visible==1280, "Ctrl cycle \(cycle), phase \(phase): annotation pixels \(visible), expected 1280")
+                        assert(glGetError()==GLenum(GL_NO_ERROR))
+                    }
+                }
+                var mode:GLint=0
+                glGetIntegerv(GLenum(GL_MATRIX_MODE),&mode)
+                assert(mode==GL_MODELVIEW)
+                print("PASS: host annotations remain visible through three Ctrl press/hold/release/redraw cycles")
+            }
             glDeleteFramebuffersEXT(1,&framebuffer); glDeleteTextures(1,&attachment)
         }
         registry.invalidateVolume(session.identity)
@@ -128,13 +192,20 @@ import OpenGL.GL
 with tempfile.TemporaryDirectory(prefix='horos-planar-host-') as temporary:
     work = Path(temporary)
     (work/'Check.swift').write_text(driver)
+    (work/'HostOverlay.h').write_text(header)
+    (work/'HostOverlay.m').write_text(host_overlay)
+    subprocess.run(['xcrun', 'clang', '-Wno-deprecated-declarations', '-fno-objc-arc',
+                    '-I', str(root/'Horos/Sources'), '-c', str(work/'HostOverlay.m'),
+                    '-o', str(work/'HostOverlay.o')], check=True)
     # PlanarMetal4Renderer is the backend the host may be asked for (#609);
     # it compiles here so the selection and its fallback are exercised, not stubbed.
     sources = ['VolumeAllocation.swift', 'VolumeSession.swift', 'PlanarMetalRenderer.swift',
                'PlanarMetal4Renderer.swift', 'MetalPerformanceTrace.swift', 'MPRMetalReslicer.swift',
                'MetalComputePipelineCache.swift', 'Metal4ComputeSubmitter.swift']
     command = ['xcrun', 'swiftc', '-Onone', '-parse-as-library', '-suppress-warnings',
-               *[str(root/'Horos/Sources'/name) for name in sources], str(args.host_source), str(work/'Check.swift'), '-o', str(work/'check')]
+               *[str(root/'Horos/Sources'/name) for name in sources], str(args.host_source),
+               str(work/'Check.swift'), str(work/'HostOverlay.o'),
+               '-import-objc-header', str(work/'HostOverlay.h'), '-o', str(work/'check')]
     subprocess.run(command, check=True)
     result = subprocess.run([str(work/'check')], timeout=45)
     raise SystemExit(result.returncode)

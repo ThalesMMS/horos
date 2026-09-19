@@ -2609,10 +2609,16 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
     
     long planeWidth = (orientationStack == 0) ? height : width;
     long planeHeight = (orientationStack == 2) ? height : (long)pixArray.count;
+    // A copied image used as a 2D ROI mask has pixels but no owning stack.
+    // Validate that local plane as one slice; restore and orthogonal cuts
+    // still require the original stack and keep their existing bounds checks.
+    long sliceCount = pixArray.count;
+    if( sliceCount == 0 && orientationStack == 2 && !restore)
+        sliceCount = 1;
 #ifndef DECOMPRESS_APP
     HorosVRScissorPlan *scissorPlan = [HorosVRScissorBounds planWithWidth:(int)width
                                                                   height:(int)height
-                                                              sliceCount:(int)pixArray.count
+                                                              sliceCount:(int)sliceCount
                                                              orientation:(int)orientationStack
                                                                  stackNo:(int)stackNo
                                                                  restore:restore
@@ -3076,7 +3082,7 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
     
     if( ptsInt != nil && no > 1)
     {
-        ras_FillPolygon( ptsInt, no, fImage, width, height, pixArray.count, minValue, maxValue, outside, newVal, addition, isRGB, NO, nil, nil, nil, nil, nil, 0, orientationStack, stackNo, restore, nil, nil);
+        ras_FillPolygon( ptsInt, no, fImage, width, height, sliceCount, minValue, maxValue, outside, newVal, addition, isRGB, NO, nil, nil, nil, nil, nil, 0, orientationStack, stackNo, restore, nil, nil);
     }
     else
     {	// Fill the image that contains no ROI :

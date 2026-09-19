@@ -16,6 +16,10 @@ outside it to air. What must then be true:
 * every pixel inside the region keeps the value it had;
 * and nothing outside the table that was already air changed value.
 
+It also fills a standalone copied slice, as used by 3D ROI surface extraction,
+and checks that its missing stack does not disable valid axial masks or allow
+invalid volume/restore operations.
+
 The phantom is computed here rather than read from disk: the fixture is images,
 and images are not committed.
 """
@@ -74,8 +78,10 @@ static bool insideEllipse( int x, int y, int rx, int ry)
 
 @interface ProbePix : DCMPix
 - (void) preparePhantom;
+- (void) detachFromStack;
 @end
 @implementation ProbePix
+- (void) detachFromStack { [pixArray release]; pixArray = nil; }
 - (void) CheckLoad {}
 - (float*) computefImage { return fImage; }
 - (void) preparePhantom
@@ -98,16 +104,22 @@ static bool insideEllipse( int x, int y, int rx, int ry)
 }
 @end
 
-// fillROI asks a brush ROI only for its texture and its type.
+@interface ProbePoint : NSObject
+@property NSPoint point;
+@end
+@implementation ProbePoint @end
+
+// Only the ROI boundary is substituted; rasterization is the application's DCMPix.o.
 @interface ROI : NSObject
 @property (assign) long type;
+@property (retain) NSMutableArray *points;
 @property (assign) unsigned char *textureBuffer;
 @property (assign) long textureWidth, textureHeight;
 @property (assign) long textureUpLeftCornerX, textureUpLeftCornerY;
 @end
 @implementation ROI
 - (BOOL) isSpline { return NO; }
-- (NSMutableArray*) splinePoints { return nil; }
+- (NSMutableArray*) splinePoints { return self.points; }
 @end
 
 static int failures = 0;
@@ -183,9 +195,56 @@ int main(){ @autoreleasepool {
               tableBefore, kTable);
     check( tableBefore == (kTableRow1 - kTableRow0) * (kTableColumn1 - kTableColumn0), message);
 
+    // ROI surface extraction fills copied slices with no pixArray. This is
+    // still a valid local 2D plane, not an empty 3D volume.
+    [pix detachFromStack];
+    memset(pix.fImage, 0, kWidth * kHeight * sizeof(float));
+    [pix fillROI:(id)roi newVal:1000 minValue:-FLT_MAX maxValue:FLT_MAX
+         outside:NO orientationStack:2 stackNo:0 restore:NO addition:NO];
+    long maskPixels = 0;
+    for (int i = 0; i < kWidth * kHeight; ++i)
+        if (pix.fImage[i] == 1000) ++maskPixels;
+    check(maskPixels == painted, "a standalone ROI mask must retain every painted pixel");
+
+    // A standalone slice cannot address another slice, an orthogonal volume
+    // plane, or original pixels for restore. Those requests must stay refused.
+    const long orientations[] = {0, 1, 2, 2};
+    const long stacks[] = {0, 0, 1, 0};
+    for (int request = 0; request < 4; ++request)
+    {
+        memset(pix.fImage, 0, kWidth * kHeight * sizeof(float));
+        [pix fillROI:(id)roi newVal:1000 minValue:-FLT_MAX maxValue:FLT_MAX
+             outside:NO orientationStack:orientations[request] stackNo:stacks[request]
+             restore:request == 3 addition:NO];
+        bool unchanged = true;
+        for (int i = 0; i < kWidth * kHeight; ++i)
+            unchanged = unchanged && pix.fImage[i] == 0;
+        check(unchanged, "invalid standalone volume or restore must not write pixels");
+    }
+
+    // Polygon masks use a second bounds check in DrawRuns. The local slice
+    // count must reach that rasterizer too, not only the brush fill above.
+    roi.type = 11; // tCPolygon
+    roi.points = [NSMutableArray array];
+    const NSPoint corners[] = {{10,10}, {30,10}, {30,30}, {10,30}};
+    for (int i = 0; i < 4; ++i) {
+        ProbePoint *point = [ProbePoint new]; point.point = corners[i];
+        [roi.points addObject:point]; [point release];
+    }
+    memset(pix.fImage, 0, kWidth * kHeight * sizeof(float));
+    [pix fillROI:(id)roi newVal:1000 minValue:-FLT_MAX maxValue:FLT_MAX
+         outside:NO orientationStack:2 stackNo:0 restore:NO addition:NO];
+    bool polygonFilled = true;
+    for (int y = 15; y < 25; ++y)
+        for (int x = 15; x < 25; ++x)
+            polygonFilled = polygonFilled && pix.fImage[y * kWidth + x] == 1000;
+    check(polygonFilled, "a standalone polygon must fill its interior");
+    check(pix.fImage[0] == 0 && pix.fImage[50 * kWidth + 50] == 0,
+          "a polygon must leave exterior pixels untouched");
+
     if( failures) { fprintf( stderr, "FAIL: %d check%s\n", failures, failures == 1 ? "" : "s"); return 1; }
-    printf( "removed %ld table pixels at %+g HU, left %ld patient pixels untouched\n",
-            tableBefore, kTable, painted);
+    printf( "removed %ld table pixels at %+g HU, left %ld patient pixels untouched; standalone mask %ld pixels\n",
+            tableBefore, kTable, painted, maskPixels);
     return 0;
 }}
 '''
@@ -249,7 +308,7 @@ if not failures:
             raise SystemExit(1)
         if run.returncode:
             sys.stderr.write(run.stderr)
-            failures.append('the crop did not remove the table')
+            failures.append('CT crop or standalone ROI mask checks failed')
         else:
             crop = run.stdout.strip()
 

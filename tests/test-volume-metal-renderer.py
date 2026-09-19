@@ -184,6 +184,8 @@ def oracle(case, volume):
             if hit:
                 t_start = max(hit[0], (near - eye_offset) / along, 0.0)
                 t_end = min(hit[1], (far - eye_offset) / along)
+                if case.get('geometryDepth'):
+                    t_end = min(t_end, (case['geometryDepth'][y * width + x] - eye_offset) / along)
                 if anchored:
                     # VTK: the ray starts on the near plane, and the first sample
                     # is 1 + floor(distance / step) steps along it.
@@ -277,7 +279,7 @@ struct Case: Encodable {
     var name: String, volume: String, dims: [Int], spacing: [Double]
     var camera: Cam, width: Int, height: Int, level: Double, windowWidth: Double
     var clut: [[Int]], opacityPoints: [[Double]], mode: Int, sampleStep: Double, background: [Double]
-    var shading: Shade, crop: [[Double]]?, clippingRange: [Double]?, anchored: Bool, planes: [[Double]]?
+    var shading: Shade, crop: [[Double]]?, clippingRange: [Double]?, anchored: Bool, planes: [[Double]]?, geometryDepth: [Float]?
     var bgra: [Int], scalar: [Float], milliseconds: Double
     struct Cam: Encodable { var position: [Double], focal: [Double], viewUp: [Double], parallel: Bool, parallelScale: Double, viewAngle: Double }
     struct Shade: Encodable { var enabled: Bool, ambient: Double, diffuse: Double, specular: Double, specularPower: Double }
@@ -297,10 +299,11 @@ struct Case: Encodable {
                  width: Int = 12, height: Int = 10, level: Float = 120, window: Float = 240, clut: [[Int]] = grey,
                  opacity: [SIMD2<Float>] = [], mode: VolumeRenderingMode = .maximum, step: Float = 1, shading: VolumeShading = VolumeShading(enabled: false),
                  crop: (SIMD3<Float>, SIMD3<Float>)? = nil, clipping: SIMD2<Float>? = nil, anchored: Bool = false,
-                 planes: [SIMD4<Float>] = []) throws {
+                 planes: [SIMD4<Float>] = [], geometryDepth: [Float]? = nil) throws {
             let camera = try VolumeCamera(position: position, focalPoint: focal, viewUp: viewUp, parallel: parallel, parallelScale: parallelScale, viewAngle: viewAngle, clippingRange: clipping)
             let transfer = try VolumeTransferFunction(level: level, width: window, colour: clutData(clut), opacity: VolumeTransferFunction.opacityTable(points: opacity))
-            let request = try VolumeRenderRequest(camera: camera, transfer: transfer, mode: mode, shading: shading, crop: crop.map { (minimum: $0.0, maximum: $0.1) }, width: width, height: height, sampleStep: step, anchoredProjection: anchored, clippingPlanes: planes)
+            let request = try VolumeRenderRequest(camera: camera, transfer: transfer, mode: mode, shading: shading, crop: crop.map { (minimum: $0.0, maximum: $0.1) }, width: width, height: height, sampleStep: step, anchoredProjection: anchored, clippingPlanes: planes,
+                                                 geometryDepth: geometryDepth.map { $0.withUnsafeBytes { Data($0) } })
             let result = try engine.render(request)
             cases.append(Case(name: name, volume: volumeName, dims: [volume.width, volume.height, volume.depth], spacing: vec(spacing),
                 camera: Case.Cam(position: vec(position), focal: vec(focal), viewUp: vec(viewUp), parallel: parallel, parallelScale: Double(parallelScale), viewAngle: Double(viewAngle)),
@@ -309,6 +312,7 @@ struct Case: Encodable {
                 shading: Case.Shade(enabled: shading.enabled, ambient: Double(shading.ambient), diffuse: Double(shading.diffuse), specular: Double(shading.specular), specularPower: Double(shading.specularPower)),
                 crop: crop.map { [vec($0.0), vec($0.1)] }, clippingRange: clipping.map { [Double($0.x), Double($0.y)] }, anchored: anchored,
                 planes: planes.isEmpty ? nil : planes.map { [Double($0.x), Double($0.y), Double($0.z), Double($0.w)] },
+                geometryDepth: geometryDepth,
                 bgra: result.bgra.map { Int($0) }, scalar: result.scalar.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }, milliseconds: result.milliseconds))
         }
 
@@ -332,6 +336,22 @@ struct Case: Encodable {
                 shading: VolumeShading(enabled: true, ambient: 0.2, diffuse: 0.7, specular: 0.25, specularPower: 10))
         try run("composite-perspective", "phantom", iso, spacing: SIMD3(1, 1, 1), position: SIMD3(3.5, -14, -10), focal: centre, viewUp: SIMD3(0, 0, 1), parallel: false, viewAngle: 40, clut: twoTone,
                 opacity: [SIMD2(0, 0), SIMD2(100, 0), SIMD2(256, 0.6)], mode: .composite, step: 0.5)
+
+        // An ROI in the volume must hide samples behind its surface while
+        // retaining those in front. Unequal quadrants catch flipped rows or
+        // a single global clipping distance; perspective needs axial depth
+        // converted to distance along each oblique ray.
+        let roiDepth: [Float] = (0..<120).map { index in
+            index / 12 < 4 ? 10 : index % 12 < 7 ? 22.3 : 1000
+        }
+        for parallel in [true, false] {
+            for mode in [VolumeRenderingMode.composite, .maximum, .minimum, .mean] {
+                try run("roi-depth-\(parallel)-\(mode.rawValue)", "phantom", iso, spacing: SIMD3(1, 1, 1),
+                        position: SIMD3(3.5, 3.5, -20), focal: centre, viewUp: SIMD3(0, -1, 0), parallel: parallel,
+                        opacity: [SIMD2(0, 0), SIMD2(256, 0.5)], mode: mode, step: 0.5,
+                        geometryDepth: roiDepth)
+            }
+        }
 
         // #659: sampled as the host's VTK ray caster, from the near plane, with a
         // step that does not divide the distance to the box, so the phase shows.
@@ -420,8 +440,13 @@ struct Case: Encodable {
             let regionCamera = try VolumeCamera(position: SIMD3(3.5, 3.5, -20), focalPoint: centre, viewUp: SIMD3(0, -1, 0), parallel: parallel, parallelScale: 6, viewAngle: 30, clippingRange: nil)
             for mode in [VolumeRenderingMode.maximum, .composite] {
                 func request(_ size: SIMD2<Int>, origin: SIMD2<Int> = .zero) throws -> VolumeRenderRequest {
-                    try VolumeRenderRequest(camera: regionCamera, transfer: regionTransfer, mode: mode, shading: VolumeShading(enabled: true), crop: nil,
-                        width: size.x, height: size.y, sampleStep: 0.5, viewportSize: SIMD2(31, 23), viewportOrigin: origin)
+                    let depths: [Float] = (0..<size.x * size.y).map { index in
+                        let x = index % size.x + origin.x, y = index / size.x + origin.y
+                        return y < 9 ? 10 : x < 15 ? 22.3 : .infinity
+                    }
+                    return try VolumeRenderRequest(camera: regionCamera, transfer: regionTransfer, mode: mode, shading: VolumeShading(enabled: true), crop: nil,
+                        width: size.x, height: size.y, sampleStep: 0.5, viewportSize: SIMD2(31, 23), viewportOrigin: origin,
+                        geometryDepth: depths.withUnsafeBytes { Data($0) })
                 }
                 let full = try engine.render(request(SIMD2(31, 23)))
                 let saved = Array(full.bgra)

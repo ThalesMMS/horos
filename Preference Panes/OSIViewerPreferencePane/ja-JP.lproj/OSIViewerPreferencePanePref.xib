@@ -30,6 +30,17 @@
                             <rect key="frame" x="2" y="2" width="766" height="322"/>
                             <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                             <subviews>
+                                <button horizontalCompressionResistancePriority="1000" id="fit-open-control">
+                                    <rect key="frame" x="416" y="15" width="340" height="18"/>
+                                    <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
+                                    <buttonCell key="cell" type="check" title="シリーズを開く時に画像内容に合わせてズーム" bezelStyle="regularSquare" imagePosition="left" alignment="left" scrollable="YES" lineBreakMode="clipping" inset="2" id="fit-open-cell">
+                                        <behavior key="behavior" changeContents="YES" doesNotDimImage="YES" lightByContents="YES"/>
+                                        <font key="font" metaFont="system"/>
+                                    </buttonCell>
+                                    <connections>
+                                        <binding destination="308" name="value" keyPath="values.ScaleToFitOnOpen" id="fit-open-binding"/>
+                                    </connections>
+                                </button>
                                 <button horizontalCompressionResistancePriority="1000" id="104">
                                     <rect key="frame" x="10" y="301" width="196" height="18"/>
                                     <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>

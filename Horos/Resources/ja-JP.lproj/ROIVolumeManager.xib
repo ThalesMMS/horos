@@ -27,7 +27,7 @@
             <windowPositionMask key="initialPositionMask" leftStrut="YES" rightStrut="YES" topStrut="YES" bottomStrut="YES"/>
             <rect key="contentRect" x="600" y="677" width="542" height="270"/>
             <rect key="screenRect" x="0.0" y="0.0" width="2560" height="1417"/>
-            <value key="minSize" type="size" width="213" height="113"/>
+            <value key="minSize" type="size" width="542" height="113"/>
             <view key="contentView" id="6">
                 <rect key="frame" x="0.0" y="0.0" width="542" height="270"/>
                 <autoresizingMask key="autoresizingMask"/>
@@ -38,7 +38,7 @@
                             <rect key="frame" x="1" y="0.0" width="540" height="270"/>
                             <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                             <subviews>
-                                <tableView verticalHuggingPriority="750" allowsExpansionToolTips="YES" columnAutoresizingStyle="lastColumnOnly" alternatingRowBackgroundColors="YES" columnSelection="YES" multipleSelection="NO" autosaveColumns="NO" headerView="85" id="8">
+                                <tableView viewBased="YES" rowHeight="26" verticalHuggingPriority="750" allowsExpansionToolTips="YES" columnAutoresizingStyle="lastColumnOnly" alternatingRowBackgroundColors="YES" columnSelection="NO" multipleSelection="NO" autosaveColumns="NO" headerView="85" id="8">
                                     <rect key="frame" x="0.0" y="0.0" width="540" height="247"/>
                                     <autoresizingMask key="autoresizingMask"/>
                                     <size key="intercellSpacing" width="3" height="2"/>
@@ -56,9 +56,6 @@
                                                 <font key="font" metaFont="cellTitle"/>
                                             </buttonCell>
                                             <tableColumnResizingMask key="resizingMask" resizeWithTable="YES" userResizable="YES"/>
-                                            <connections>
-                                                <binding destination="54" name="value" keyPath="arrangedObjects.properties.visible" id="65"/>
-                                            </connections>
                                         </tableColumn>
                                         <tableColumn identifier="name" width="96" minWidth="40" maxWidth="1000" id="9">
                                             <tableHeaderCell key="headerCell" lineBreakMode="truncatingTail" borderStyle="border" alignment="left" title="name">
@@ -72,9 +69,6 @@
                                                 <color key="backgroundColor" name="controlBackgroundColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
                                             <tableColumnResizingMask key="resizingMask" resizeWithTable="YES" userResizable="YES"/>
-                                            <connections>
-                                                <binding destination="54" name="value" keyPath="arrangedObjects.properties.name" id="59"/>
-                                            </connections>
                                         </tableColumn>
                                         <tableColumn identifier="volume" width="80.941890000000001" minWidth="10" maxWidth="1000" id="11">
                                             <tableHeaderCell key="headerCell" lineBreakMode="truncatingTail" borderStyle="border" alignment="left" title="volume">
@@ -88,9 +82,6 @@
                                                 <color key="backgroundColor" name="controlBackgroundColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
                                             <tableColumnResizingMask key="resizingMask" resizeWithTable="YES" userResizable="YES"/>
-                                            <connections>
-                                                <binding destination="54" name="value" keyPath="arrangedObjects.properties.volume" id="60"/>
-                                            </connections>
                                         </tableColumn>
                                         <tableColumn identifier="texture" width="57.058109999999999" minWidth="10" maxWidth="1000" id="72">
                                             <tableHeaderCell key="headerCell" lineBreakMode="truncatingTail" borderStyle="border" alignment="left" title="texture">
@@ -103,9 +94,6 @@
                                                 <font key="font" metaFont="cellTitle"/>
                                             </buttonCell>
                                             <tableColumnResizingMask key="resizingMask" resizeWithTable="YES" userResizable="YES"/>
-                                            <connections>
-                                                <binding destination="54" name="value" keyPath="arrangedObjects.properties.texture" id="77"/>
-                                            </connections>
                                         </tableColumn>
                                         <tableColumn identifier="red" width="55" minWidth="50" maxWidth="1000" id="21">
                                             <tableHeaderCell key="headerCell" lineBreakMode="truncatingTail" borderStyle="border" alignment="left" title="red">
@@ -117,9 +105,6 @@
                                                 <font key="font" metaFont="cellTitle"/>
                                             </sliderCell>
                                             <tableColumnResizingMask key="resizingMask" resizeWithTable="YES" userResizable="YES"/>
-                                            <connections>
-                                                <binding destination="54" name="value" keyPath="arrangedObjects.properties.red" id="61"/>
-                                            </connections>
                                         </tableColumn>
                                         <tableColumn identifier="green" width="55" minWidth="50" maxWidth="1000" id="22">
                                             <tableHeaderCell key="headerCell" lineBreakMode="truncatingTail" borderStyle="border" alignment="left" title="green">
@@ -131,9 +116,6 @@
                                                 <font key="font" metaFont="cellTitle"/>
                                             </sliderCell>
                                             <tableColumnResizingMask key="resizingMask" resizeWithTable="YES" userResizable="YES"/>
-                                            <connections>
-                                                <binding destination="54" name="value" keyPath="arrangedObjects.properties.green" id="62"/>
-                                            </connections>
                                         </tableColumn>
                                         <tableColumn identifier="blue" width="55" minWidth="27.058109999999999" maxWidth="1000" id="23">
                                             <tableHeaderCell key="headerCell" lineBreakMode="truncatingTail" borderStyle="border" alignment="left" title="blue">
@@ -145,9 +127,6 @@
                                                 <font key="font" metaFont="cellTitle"/>
                                             </sliderCell>
                                             <tableColumnResizingMask key="resizingMask" resizeWithTable="YES" userResizable="YES"/>
-                                            <connections>
-                                                <binding destination="54" name="value" keyPath="arrangedObjects.properties.blue" id="63"/>
-                                            </connections>
                                         </tableColumn>
                                         <tableColumn identifier="opacity" width="74" minWidth="27.058109999999999" maxWidth="1000" id="74">
                                             <tableHeaderCell key="headerCell" lineBreakMode="truncatingTail" borderStyle="border" alignment="left" title="opacity">
@@ -159,9 +138,6 @@
                                                 <font key="font" metaFont="cellTitle"/>
                                             </sliderCell>
                                             <tableColumnResizingMask key="resizingMask" resizeWithTable="YES" userResizable="YES"/>
-                                            <connections>
-                                                <binding destination="54" name="value" keyPath="arrangedObjects.properties.opacity" id="79"/>
-                                            </connections>
                                         </tableColumn>
                                     </tableColumns>
                                     <connections>

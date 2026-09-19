@@ -290,6 +290,13 @@ typedef enum {DCMViewTextAlignLeft, DCMViewTextAlignCenter, DCMViewTextAlignRigh
 	float			repulsorAlpha, repulsorAlphaSign;
 	BOOL			repulsorROIEdition;
 	long            scrollMode;
+    NSEvent *lengthClickEvent;
+    BOOL replayingLengthDrag;
+    NSDictionary *lengthFirstEndpoint;
+    ROI *lengthPendingMarker;
+    double slabScrollRemainder;
+    NSTimeInterval slabScrollTimestamp;
+    BOOL consumeSlabScrollTail;
 	
 	NSPoint			ROISelectorStartPoint, ROISelectorEndPoint;
 	BOOL			selectorROIEdition;
@@ -515,6 +522,9 @@ typedef enum {DCMViewTextAlignLeft, DCMViewTextAlignCenter, DCMViewTextAlignRigh
 - (DicomSeries *)seriesObj;
 - (DicomStudy *)studyObj;
 - (void) updatePresentationStateFromSeries;
+- (void) prepareForWorkspacePresentation;
+- (void) applyOpeningScaleToFit: (NSRect) content;
+- (void) cancelOpeningScaleToFitForInteraction;
 - (void) updatePresentationStateFromSeriesOnlyImageLevel: (BOOL) onlyImage;
 - (void) updatePresentationStateFromSeriesOnlyImageLevel: (BOOL) onlyImage scale: (BOOL) scale offset: (BOOL) offset;
 - (void) setCursorForView: (ToolMode) tool;
@@ -539,6 +549,7 @@ typedef enum {DCMViewTextAlignLeft, DCMViewTextAlignCenter, DCMViewTextAlignRigh
 //- (NSPoint) convertFromView2iChat: (NSPoint) a;
 //- (NSPoint) convertFromNSView2iChat: (NSPoint) a;
 - (void) annotMenu:(id) sender;
+- (void) cancelLengthPlacement;
 - (ROI*) clickInROI: (NSPoint) tempPt;
 - (void) switchShowDescriptionInLarge;
 - (void) deleteLens;

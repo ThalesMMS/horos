@@ -18,9 +18,13 @@ if 'SanitizeRayCastZBuffer' not in mapper:
 if 'SanitizeRayCastZBuffer' not in header:
     failures.append('mapper.h does not declare SanitizeRayCastZBuffer')
 
-init_at = mapper.find('this->PerSubVolumeInitialization')
-cast_at = mapper.find('this->RenderSubVolume()')
-sanitize_at = mapper.find('SanitizeRayCastZBuffer')
+# The external Metal pass sanitizes its own capture too. Check the CPU
+# Render method's ordering rather than the first occurrence in the file.
+render = mapper[mapper.index('void vtkHorosFixedPointVolumeRayCastMapper::Render('):
+                mapper.index('void vtkHorosFixedPointVolumeRayCastMapper::SanitizeRayCastZBuffer()')]
+init_at = render.find('this->PerSubVolumeInitialization')
+cast_at = render.find('this->RenderSubVolume()')
+sanitize_at = render.find('SanitizeRayCastZBuffer')
 if init_at < 0 or cast_at < 0 or sanitize_at < 0:
     failures.append('cannot locate PerSubVolumeInitialization / RenderSubVolume / sanitize')
 elif not (init_at < sanitize_at < cast_at):

@@ -63,6 +63,69 @@ static NSArray *languagesToMoveWhenQuitting = nil;
 
 @synthesize languages;
 
+- (NSView *)tableView:(NSTableView *)tableView viewForTableColumn:(NSTableColumn *)column row:(NSInteger)row
+{
+    NSTableCellView *cell = [tableView makeViewWithIdentifier:column.identifier owner:self];
+    if (cell) return cell;
+
+    cell = [[[NSTableCellView alloc] initWithFrame:NSMakeRect(0, 0, column.width, tableView.rowHeight)] autorelease];
+    cell.identifier = column.identifier;
+    NSControl *control;
+    NSString *binding = NSValueBinding;
+    if ([column.identifier isEqualToString:@"quality"])
+    {
+        // NSSliderCell alone draws against the table's bounds on recent AppKit.
+        // A real slider view keeps both drawing and tracking inside this row.
+        control = [[[NSSlider alloc] initWithFrame:NSZeroRect] autorelease];
+        [control setCell:[[column.dataCell copy] autorelease]];
+        [control bind:NSEnabledBinding toObject:cell withKeyPath:@"objectValue.compression"
+              options:@{NSValueTransformerNameBindingOption: @"IsQualityEnabled"}];
+    }
+    else if ([column.identifier isEqualToString:@"compression"])
+    {
+        control = [[[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO] autorelease];
+        [control setCell:[[column.dataCell copy] autorelease]];
+        binding = NSSelectedTagBinding;
+    }
+    else
+    {
+        NSTextField *text = [NSTextField labelWithString:@""];
+        text.alignment = NSTextAlignmentCenter;
+        text.font = [NSFont systemFontOfSize:[NSFont smallSystemFontSize]];
+        cell.textField = text;
+        control = text;
+    }
+    control.target = self;
+    control.action = @selector(changeCompressionSetting:);
+    control.translatesAutoresizingMaskIntoConstraints = NO;
+    control.accessibilityLabel = column.headerCell.stringValue;
+    [cell addSubview:control];
+    [NSLayoutConstraint activateConstraints:@[
+        [control.leadingAnchor constraintEqualToAnchor:cell.leadingAnchor constant:4],
+        [control.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-4],
+        [control.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor],
+        [control.heightAnchor constraintEqualToConstant:20]
+    ]];
+    // The existing table content binding supplies the row dictionary. Binding
+    // through objectValue also follows reuse and preserves defaults persistence.
+    [control bind:binding toObject:cell
+      withKeyPath:[@"objectValue." stringByAppendingString:column.identifier] options:nil];
+    return cell;
+}
+
+- (void)changeCompressionSetting:(NSControl *)sender
+{
+    NSView *view = sender.superview;
+    while (view && ![view isKindOfClass:NSTableView.class]) view = view.superview;
+    if (!view) return;
+
+    NSArrayController *controller = [view infoForBinding:NSContentBinding][NSObservedObjectKey];
+    NSDictionary *binding = [controller infoForBinding:NSContentArrayBinding];
+    // The control binding has updated this row's dictionary. Defaults stores
+    // the array as a compound value, so write that value back after the edit.
+    [binding[NSObservedObjectKey] setValue:controller.content forKeyPath:binding[NSObservedKeyPathKey]];
+}
+
 - (id) initWithBundle:(NSBundle *)bundle
 {
 	if( self = [super init])

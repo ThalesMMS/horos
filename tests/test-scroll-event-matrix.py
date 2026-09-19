@@ -14,6 +14,11 @@ start = source.index('static short HorosImageIndexByAddingScroll')
 wheel = source[start:source.index('\n- (void) otherMouseDown:', start)]
 start = source.index('- (void)mouseDraggedImageScroll:')
 drag = source[start:source.index('\n- (void)mouseDraggedBlending:', start)]
+controller = (root/'Horos/Sources/ViewerController.m').read_text()
+a = controller.index('- (void) adjustThickSlabBySteps:')
+adjust = controller[a:controller.index('\n- (void) activateFusion:', a)]
+a = source.index('-(void) getThickSlabThickness:')
+thickness = source[a:source.index('\n- (float) displayedScaleValue', a)]
 code = r'''
 #import <AppKit/AppKit.h>
 #import "Horos-Swift.h"
@@ -36,35 +41,65 @@ code = r'''
 -(BOOL)isMainWindow{return YES;}
 -(void)makeKeyAndOrderFront:(id)sender{}
 @end
-@interface ViewerController:NSObject
-@property NSInteger curMovieIndex;
+@interface Control:NSObject
+@property NSInteger integerValue,state;
+@property double maxValue;
+@property BOOL enabled;
+@end
+@implementation Control
+-(int)intValue{return (int)self.integerValue;}
+-(void)setIntValue:(int)n{self.integerValue=n;}
+@end
+@interface ViewerController:NSObject {
+@public BOOL windowWillClose; NSInteger maxMovieIndex;
+ NSArray *pixList[3]; Control *sliderFusion,*stacksFusion,*activatedFusion; id popFusion,imageView;
+}
+@property BOOL refuse;
+@property NSInteger curMovieIndex,selectedMode,appliedMode,projections;
+-(void)adjustThickSlabBySteps:(NSInteger)steps;
 +(BOOL)isFrontMost2DViewer:(id)w;
 @end
 @implementation ViewerController
 +(BOOL)isFrontMost2DViewer:(id)w{return YES;}
 -(BOOL)windowWillClose{return NO;}
--(NSInteger)maxMovieIndex{return 3;}
+-(NSInteger)maxMovieIndex{return maxMovieIndex;}
 -(void)setMovieIndex:(NSInteger)i{self.curMovieIndex=i;}
 -(void)adjustSlider{}
 -(void)propagateSettings{}
 -(void)windowDidBecomeMain:(id)n{}
+-(void)setFusionMode:(NSInteger)mode {
+ self.appliedMode=mode;activatedFusion.state=mode?NSOnState:NSOffState;
+ sliderFusion.enabled=mode!=0;self.projections++;
+}
+-(void)popFusionAction:(id)sender {[self setFusionMode:self.refuse?0:self.selectedMode];[imageView sendSyncMessage:0];}
+-(void)sliderFusionAction:(id)sender {
+ self.projections++;stacksFusion.integerValue=sliderFusion.integerValue;
+ [NSUserDefaults.standardUserDefaults setInteger:sliderFusion.integerValue forKey:@"stackThickness"];
+ [imageView sendSyncMessage:0];
+}
+ADJUST
 @end
 @interface Frame:NSObject
 @property NSInteger ordinal, frameNumber, stack;
+@property double sliceLocation,sliceThickness;
 @property(retain) NSArray *position, *orientation;
 @end
 @implementation Frame
 @end
+#define DCMPix Frame
 @interface Event:NSObject
 @property BOOL precise, inverted;
-@property CGFloat dy, scrollY;
+@property CGFloat dy, scrollY, dx;
+@property NSEventPhase phase,momentumPhase;
+@property NSTimeInterval timestamp;
 @property NSEventModifierFlags flags;
 @end
 @implementation Event
+-(NSPoint)locationInWindow{return NSZeroPoint;}
 -(CGFloat)deltaY{return self.dy;}
--(CGFloat)deltaX{return 0;}
+-(CGFloat)deltaX{return self.dx;}
 -(CGFloat)scrollingDeltaY{return self.scrollY;}
--(CGFloat)scrollingDeltaX{return 0;}
+-(CGFloat)scrollingDeltaX{return self.dx;}
 -(BOOL)hasPreciseScrollingDeltas{return self.precise;}
 -(BOOL)isDirectionInvertedFromDevice{return self.inverted;}
 -(NSEventModifierFlags)modifierFlags{return self.flags;}
@@ -74,6 +109,8 @@ code = r'''
  NSArray *dcmPixList; char listType; NSMatrix *matrix; NSString *stringID;
  BOOL flippedData,drawing; int _imageRows,_imageColumns; id blendingView;
  float blendingFactor,scaleValue; NSInteger syncDelta;
+ double slabScrollRemainder; NSTimeInterval slabScrollTimestamp; BOOL consumeSlabScrollTail;
+ BOOL openingFitPending;
 }
 @property NSRect frame;
 @property(retain) TestWindow *window;
@@ -82,6 +119,9 @@ code = r'''
 @property(readonly) Frame *curDCM;
 @end
 @implementation DCMView
+-(void)horosShowScrollPreviewAtWindowPoint:(NSPoint)point{}
+-(void)mouseMoved:(NSEvent*)event{}
+-(void)cancelOpeningScaleToFitForInteraction{openingFitPending=NO;}
 -(BOOL)is2DViewer{return YES;}
 -(Frame*)curDCM{return dcmPixList[curImage];}
 -(NSPoint)currentPointInView:(id)e{return pointer;}
@@ -95,6 +135,7 @@ code = r'''
 -(void)setNeedsDisplay:(BOOL)v{}
 WHEEL
 DRAG
+THICKNESS
 @end
 #define check(...) do { if(!(__VA_ARGS__)) { NSLog(@"FAIL %s",#__VA_ARGS__); return 1; } } while(0)
 int main(){@autoreleasepool{
@@ -102,8 +143,8 @@ int main(){@autoreleasepool{
  NSUserDefaults *defaults=NSUserDefaults.standardUserDefaults;
  [defaults setBool:NO forKey:@"SelectWindowScrollWheel"];
  [defaults setBool:NO forKey:@"loopScrollWheel"];
- DCMView *v=[DCMView new];v.window=[TestWindow new];v.windowController=[ViewerController new];
- v->drawing=YES;v->listType='i';v->_imageRows=v->_imageColumns=1;
+ DCMView *v=[DCMView new];v.window=[TestWindow new];v.windowController=[ViewerController new];v.windowController->maxMovieIndex=3;
+ v->drawing=YES;v->listType='i';v->_imageRows=v->_imageColumns=1;v->openingFitPending=YES;
  v.frame=NSMakeRect(0,0,400,200);
  // Axial, coronal, sagittal and an oblique normal. Identifiers remain in
  // acquisition order; a reversed backing array must not reverse user intent.
@@ -130,6 +171,7 @@ int main(){@autoreleasepool{
    event.dy=precise?deviceY:-deviceY*20;
    event.scrollY=precise?-deviceY*20:deviceY;
    [v scrollWheel:(NSEvent*)event];
+   check(v->openingFitPending); // navigating while analysis is pending must still allow its delivery
    NSInteger expected=before+down*(reversed?1:-1);
    check(v.curDCM.ordinal==expected);
    check(v.curDCM.frameNumber==(multi?expected:0));
@@ -148,9 +190,78 @@ int main(){@autoreleasepool{
   check([defaults boolForKey:HorosScrollDirection.reversedPreferenceKey]==reversed);
   scenarios++;
  }
+ // Execute the new controller action behind the real wheel handler.
+ ViewerController *c=v.windowController;c->maxMovieIndex=1;c->imageView=v;
+ c->pixList[0]=v->dcmPixList;c->sliderFusion=[Control new];c->sliderFusion.maxValue=128;
+ c->sliderFusion.integerValue=20;c->stacksFusion=[Control new];c->activatedFusion=[Control new];
+ c.selectedMode=2;c->popFusion=[NSObject new];
+ Event *e=[Event new];e.flags=NSEventModifierFlagOption;e.scrollY=-2.5;
+ v->curImage=10;v->scaleValue=3;v->origin=NSMakePoint(4,5);
+ [defaults setBool:YES forKey:HorosScrollDirection.reversedPreferenceKey];
+ [v scrollWheel:(NSEvent*)e];
+ check(c->sliderFusion.integerValue==2 && c->stacksFusion.integerValue==2 && c.appliedMode==2);
+ check(v->curImage==10 && v->scaleValue==3 && c.curMovieIndex==0 && v->origin.x==4);
+ check([defaults integerForKey:@"stackThickness"]==2);
+ [v scrollWheel:(NSEvent*)e];check(c->sliderFusion.integerValue==3);
+ e.scrollY=2.5;[v scrollWheel:(NSEvent*)e];check(c->sliderFusion.integerValue==2);
+ [v scrollWheel:(NSEvent*)e];check(c->activatedFusion.state==NSOffState && c->sliderFusion.integerValue==2 && c->stacksFusion.integerValue==1);
+ NSInteger calls=c.projections;[v scrollWheel:(NSEvent*)e];check(c.projections==calls && v->curImage==10);
+ // Single slices and refused activations consume input without navigation.
+ c->pixList[0]=@[v.curDCM];e.scrollY=-1000;[v scrollWheel:(NSEvent*)e];check(c.projections==calls && v->curImage==10);
+ c->pixList[0]=v->dcmPixList;c.refuse=YES;[v scrollWheel:(NSEvent*)e];check(c.appliedMode==0 && v->curImage==10);
+ c.refuse=NO;c.selectedMode=3;[v scrollWheel:(NSEvent*)e];check(c.appliedMode==3 && c->sliderFusion.integerValue==2);
+ [v scrollWheel:(NSEvent*)e];check(c->sliderFusion.integerValue==20); // bounded by series
+ calls=c.projections;[v scrollWheel:(NSEvent*)e];check(c.projections==calls);
+ // Fractions, natural scrolling and flipped order must preserve thickness intent.
+ for(int natural=0;natural<2;natural++)for(int flipped=0;flipped<2;flipped++) {
+  [c setFusionMode:0];v->flippedData=flipped;v->slabScrollRemainder=0;
+  e.precise=YES;e.inverted=natural;e.dy=natural?.5:-.5;e.flags=NSEventModifierFlagOption;
+  e.phase=NSEventPhaseBegan;e.momentumPhase=NSEventPhaseNone;
+  calls=c.projections;
+  for(int n=0;n<4;n++){[v scrollWheel:(NSEvent*)e];e.phase=NSEventPhaseChanged;}
+  check(c.projections==calls);[v scrollWheel:(NSEvent*)e];check(c->sliderFusion.integerValue==2 && c->activatedFusion.state==NSOnState);
+  calls=c.projections;NSInteger index=v->curImage;
+  e.flags=0;e.phase=NSEventPhaseChanged;[v scrollWheel:(NSEvent*)e];check(v->curImage==index);
+  e.phase=NSEventPhaseNone;e.momentumPhase=NSEventPhaseBegan;[v scrollWheel:(NSEvent*)e];
+  e.momentumPhase=NSEventPhaseChanged;[v scrollWheel:(NSEvent*)e];
+  e.momentumPhase=NSEventPhaseEnded;[v scrollWheel:(NSEvent*)e];check(v->curImage==index && c.projections==calls);
+  e.momentumPhase=NSEventPhaseNone;e.phase=NSEventPhaseBegan;[v scrollWheel:(NSEvent*)e];check(v->curImage!=index);
+ }
+ // Invalid and horizontal-only Option input never changes zoom or the slice.
+ v->curImage=10;v->flippedData=NO;e.phase=NSEventPhaseBegan;e.flags=NSEventModifierFlagOption;
+ e.inverted=NO;e.dy=0;e.dx=20;calls=c.projections;
+ [defaults setBool:YES forKey:@"ZoomWithHorizonScroll"];
+ [v scrollWheel:(NSEvent*)e];check(v->scaleValue==3 && v->curImage==10 && c.projections==calls);
+ e.dx=0;e.dy=NAN;[v scrollWheel:(NSEvent*)e];e.dy=INFINITY;[v scrollWheel:(NSEvent*)e];
+ check(c.projections==calls && v->curImage==10);
+ // Explicit modifier precedence: Option+Shift changes time, Command wins over both.
+ e.precise=NO;e.phase=NSEventPhaseNone;e.scrollY=-2.5;c->maxMovieIndex=3;
+ v->consumeSlabScrollTail=NO;e.flags=NSEventModifierFlagOption|NSEventModifierFlagShift;
+ [v scrollWheel:(NSEvent*)e];check(c.curMovieIndex==1 && v->curImage==10 && c.projections==calls);
+ v->blendingView=[NSObject new];e.flags|=NSEventModifierFlagCommand;
+ [v scrollWheel:(NSEvent*)e];check(v->blendingFactor!=0 && c.curMovieIndex==1 && v->curImage==10 && c.projections==calls);
+ e.flags=NSEventModifierFlagShift;[v scrollWheel:(NSEvent*)e];check(v->curImage==13 && v->openingFitPending);
+ // A horizontal gesture cancels only when it actually changes the zoom.
+ e.flags=0;e.dx=2;e.dy=e.scrollY=0;v->consumeSlabScrollTail=NO;
+ [defaults setBool:NO forKey:@"ZoomWithHorizonScroll"];
+ float previousScale=v->scaleValue;[v scrollWheel:(NSEvent*)e];
+ check(v->openingFitPending && v->scaleValue==previousScale);
+ [defaults setBool:YES forKey:@"ZoomWithHorizonScroll"];
+ [v scrollWheel:(NSEvent*)e];
+ check(!v->openingFitPending && v->scaleValue!=previousScale && v->curImage==13);
+ NSLog(@"PASS: pending opening fit survives wheel/trackpad navigation and cancels for manual horizontal zoom");
+ // Physical thickness is valid at origin zero and clipped at either edge.
+ NSMutableArray *physical=[NSMutableArray array];
+ for(int n=0;n<6;n++){Frame *f=[Frame new];f.sliceLocation=n*2;f.sliceThickness=2;f.stack=3;[physical addObject:f];}
+ v->dcmPixList=physical;float mm,location;v->curImage=0;v->flippedData=NO;
+ [v getThickSlabThickness:&mm location:&location];check(mm==6 && location==2);
+ v->curImage=5;[v getThickSlabThickness:&mm location:&location];check(mm==2 && location==10);
+ v->flippedData=YES;[v getThickSlabThickness:&mm location:&location];check(mm==6 && location==8);
+ v->curImage=0;[v getThickSlabThickness:&mm location:&location];check(mm==2 && location==0);
+ NSLog(@"PASS: slab activation, fractions, bounds, refusal, modifier precedence, momentum and physical thickness");
  NSLog(@"PASS: %lu scenarios, %lu gestures; precise/classic accessor, natural/reverse/flipped, four acquisition normals, single/multiframe, both drag axes and sync deltas",(unsigned long)scenarios,(unsigned long)gestures);
 }}
-'''.replace('WHEEL',wheel).replace('DRAG',drag)
+'''.replace('WHEEL',wheel).replace('DRAG',drag).replace('ADJUST',adjust).replace('THICKNESS',thickness)
 with tempfile.TemporaryDirectory(prefix='horos-scroll-events-') as directory:
     p = Path(directory); (p/'test.m').write_text(code)
     subprocess.run(['xcrun','swiftc','-swift-version','5','-parse-as-library','-module-name','Horos',

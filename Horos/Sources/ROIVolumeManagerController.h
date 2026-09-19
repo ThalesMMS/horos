@@ -40,7 +40,7 @@
 
 /** \brief  Window Controller for managing ROIVolume collection */
 
-@interface ROIVolumeManagerController : NSWindowController <NSTableViewDataSource>
+@interface ROIVolumeManagerController : NSWindowController <NSTableViewDataSource, NSTableViewDelegate>
 {
 		Window3DController			*viewer;
 		IBOutlet NSTableView		*tableView;

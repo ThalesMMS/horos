@@ -47,6 +47,10 @@
 #import <CoreMedia/CoreMedia.h>
 #import <AVFoundation/AVFoundation.h>
 
+@interface QuicktimeExport ()
+@property(nonatomic) NSInteger exportFrameRate;
+@end
+
 @implementation QuicktimeExport
 
 - (id) initWithSelector:(id) o :(SEL) s :(long) f
@@ -141,13 +145,14 @@
 
 - (NSString*) createMovieQTKit:(BOOL) openIt :(BOOL) produceFiles :(NSString*) name :(NSInteger)fps
 {
-    if (fps <= 0)
-        fps = [[NSUserDefaults standardUserDefaults] integerForKey: @"quicktimeExportRateValue"];
+    NSInteger savedFPS = [[NSUserDefaults standardUserDefaults] integerForKey:@"quicktimeExportRateValue"];
+    // Interactive exports reuse the last confirmed rate instead of the viewer's cine rate.
+    if ((!produceFiles || fps <= 0) && savedFPS > 0)
+        fps = savedFPS;
     if (fps <= 0)
         fps = 10;
-    
-    if (fps > 0)
-        [[NSUserDefaults standardUserDefaults] setInteger:fps forKey:@"quicktimeExportRateValue"];
+
+    self.exportFrameRate = fps;
     
     NSString *fileName;
     long result;
@@ -209,7 +214,11 @@
     {
         if( result == NSModalResponseOK)
         {
-            CMTimeValue timeValue = 600 / [[NSUserDefaults standardUserDefaults] integerForKey:@"quicktimeExportRateValue"];
+            fps = self.exportFrameRate;
+            if (!produceFiles)
+                [[NSUserDefaults standardUserDefaults] setInteger:fps forKey:@"quicktimeExportRateValue"];
+
+            CMTimeValue timeValue = 600 / fps;
             CMTime frameDuration = CMTimeMake( timeValue, 600);
             
             NSError *error = nil;

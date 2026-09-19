@@ -97,6 +97,7 @@ public struct ROIInterchangeError: LocalizedError, CustomNSError {
     public var points: [NSValue] = []
     /// The same vertices in the DICOM patient coordinate system, millimetres, when the image geometry is known.
     public var patientPoints: [[Double]] = []
+    public var volumeLength: [String: Any]?
     public var hasRect: Bool = false
     public var rect: NSRect = NSZeroRect
     public var thickness: Double = 1
@@ -205,6 +206,7 @@ private struct ROIRecord: Codable {
     var comments: String?
     var points: [[Double]]
     var pointsPatient: [[Double]]?
+    var volumeLength: VolumeLengthRecord?
     var rect: [Double]?
     var thickness: Double?
     var opacity: Double?
@@ -214,11 +216,56 @@ private struct ROIRecord: Codable {
     var brush: BrushRecord?
 }
 
+// Version 2 explicitly identifies physical Lengths so older readers reject the
+// document instead of flattening endpoints into a single image plane.
+private struct VolumeEndpointReference: Codable {
+    var sopInstanceUID: String
+    var frame: Int
+    var generated: Bool
+    var imagePositionPatient: [Double]
+    var imageOrientationPatient: [Double]
+    var pixelSpacing: [Double]
+}
+private struct VolumeLengthRecord: Codable {
+    var version: Int
+    var id: String
+    var a: [Double]
+    var b: [Double]
+    var series: String
+    var frameOfReference: String
+    var temporalIndex: Int
+    var referenceA: VolumeEndpointReference
+    var referenceB: VolumeEndpointReference
+    var storageSOPInstanceUID: String?
+    var storageFrame: Int?
+
+    func validatedDictionary() throws -> [String: Any] {
+        guard version == 1, !id.isEmpty, !series.isEmpty, !frameOfReference.isEmpty,
+              temporalIndex >= 0, a.count == 3, b.count == 3,
+              a.allSatisfy(\.isFinite), b.allSatisfy(\.isFinite),
+              zip(a,b).reduce(0, { $0 + pow($1.0-$1.1, 2) }) > 1e-12 else {
+            throw ROIInterchangeError(code: .invalidROI, reason: "Invalid patient-space Length endpoints or identity.")
+        }
+        for reference in [referenceA, referenceB] {
+            guard !reference.sopInstanceUID.isEmpty, reference.frame >= 0,
+                  reference.imagePositionPatient.count == 3,
+                  reference.imageOrientationPatient.count == 6,
+                  reference.pixelSpacing.count == 2,
+                  reference.imagePositionPatient.allSatisfy(\.isFinite),
+                  reference.imageOrientationPatient.allSatisfy(\.isFinite),
+                  reference.pixelSpacing.allSatisfy({ $0.isFinite && $0 > 0 }) else {
+                throw ROIInterchangeError(code: .invalidROI, reason: "Invalid Length endpoint reference geometry.")
+            }
+        }
+        return try JSONSerialization.jsonObject(with: JSONEncoder().encode(self)) as! [String: Any]
+    }
+}
+
 // MARK: - Public API
 
 @objc public final class ROIInterchange: NSObject {
     @objc public static let formatIdentifier = "org.horosproject.roi-interchange"
-    @objc public static let formatVersion = 1
+    @objc public static let formatVersion = 2
     @objc public static let fileExtension = "json"
     @objc public static let pixelCoordinateSystem = "image pixels: x right, y down, origin at the top-left corner of pixel (0,0), one unit per pixel"
     @objc public static let patientCoordinateSystem = "DICOM patient coordinates (LPS), millimetres"
@@ -244,6 +291,7 @@ private struct ROIRecord: Codable {
                                        comments: roi.comments?.isEmpty == false ? roi.comments : nil,
                                        points: roi.points.map { [Double($0.pointValue.x), Double($0.pointValue.y)] },
                                        pointsPatient: roi.patientPoints.isEmpty ? nil : roi.patientPoints,
+                                       volumeLength: nil,
                                        rect: roi.hasRect ? [Double(roi.rect.origin.x), Double(roi.rect.origin.y), Double(roi.rect.size.width), Double(roi.rect.size.height)] : nil,
                                        thickness: roi.thickness,
                                        opacity: roi.opacity,
@@ -251,6 +299,29 @@ private struct ROIRecord: Codable {
                                        isSpline: roi.isSpline ? true : nil,
                                        groupID: roi.groupID != 0 ? roi.groupID : nil,
                                        brush: nil)
+                if let volume = roi.volumeLength {
+                    guard type == .length else {
+                        throw ROIInterchangeError(code: .invalidROI, reason: "Only Length can carry patient-space endpoints.")
+                    }
+                    // NSArchiver restores historical BOOL NSNumbers as 0/1.
+                    // Normalize them before the strongly typed JSON conversion.
+                    var normalized = volume
+                    for key in ["referenceA", "referenceB"] {
+                        if var reference = normalized[key] as? [String: Any],
+                           let generated = reference["generated"] as? NSNumber {
+                            reference["generated"] = generated.boolValue
+                            normalized[key] = reference
+                        }
+                    }
+                    let physical: VolumeLengthRecord
+                    do {
+                        physical = try JSONDecoder().decode(VolumeLengthRecord.self, from: JSONSerialization.data(withJSONObject: normalized))
+                    } catch let error as DecodingError {
+                        throw ROIInterchangeError(code: .invalidROI, reason: "Invalid physical Length: \(describe(error))")
+                    }
+                    _ = try physical.validatedDictionary()
+                    record.volumeLength = physical
+                }
                 if type == .brush {
                     guard let mask = roi.brushMask, roi.brushWidth > 0, roi.brushHeight > 0,
                           mask.count == roi.brushWidth * roi.brushHeight else {
@@ -280,7 +351,7 @@ private struct ROIRecord: Codable {
 
         let formatter = ISO8601DateFormatter()
         let document = Document(format: formatIdentifier,
-                                version: formatVersion,
+                                version: images.contains(where: { $0.rois.contains(where: { $0.volumeLength != nil }) }) ? 2 : 1,
                                 generator: generator,
                                 created: formatter.string(from: Date()),
                                 coordinateSystems: CoordinateSystems(pixel: pixelCoordinateSystem, patient: patientCoordinateSystem),
@@ -368,6 +439,15 @@ private struct ROIRecord: Codable {
                 }
                 roi.typeCode = type.rawValue
                 roi.comments = roiRecord.comments
+                if let physical = roiRecord.volumeLength {
+                    guard document.version >= 2, type == .length,
+                          physical.series == series.seriesInstanceUID,
+                          physical.frameOfReference == series.frameOfReferenceUID,
+                          physical.temporalIndex == image.temporalIndex else {
+                        throw ROIInterchangeError(code: .invalidROI, reason: "Length identity does not match its series or temporal phase.")
+                    }
+                    roi.volumeLength = try physical.validatedDictionary()
+                }
 
                 for (i, point) in roiRecord.points.enumerated() {
                     guard point.count == 2, point.allSatisfy({ $0.isFinite }) else {

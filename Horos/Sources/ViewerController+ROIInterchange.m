@@ -96,6 +96,13 @@ static NSMenuItem *ROIInterchangeFindItem( NSMenu *menu, SEL action, NSMenu **ow
 
     record.points = points;
     record.patientPoints = patientPoints;
+    if ([roi isKindOfClass:HorosVolumeLengthROI.class])
+    {
+        record.volumeLength = [(HorosVolumeLengthROI*)roi volumeLength];
+        record.patientPoints = @[record.volumeLength[@"a"], record.volumeLength[@"b"]];
+        // The patient endpoints are authoritative; the pixel pair is only a preview.
+        if (record.points.count != 2) record.points = @[[NSValue valueWithPoint:NSZeroPoint], [NSValue valueWithPoint:NSZeroPoint]];
+    }
 
     if( roi.type == tROI || roi.type == tOval || roi.type == t2DPoint)
     {
@@ -186,6 +193,7 @@ static NSMenuItem *ROIInterchangeFindItem( NSMenu *menu, SEL action, NSMenu **ow
 
                 for( ROI *roi in [rois objectAtIndex: x])
                 {
+                    if ([roi isKindOfClass:HorosVolumeLengthROI.class] && x != roi.originalIndexForAlias) continue;
                     ROIInterchangeROI *r = [self interchangeROIForROI: roi pix: pix];
                     if( r) [converted addObject: r];
                 }
@@ -208,7 +216,15 @@ static NSMenuItem *ROIInterchangeFindItem( NSMenu *menu, SEL action, NSMenu **ow
     NSPoint origin = [DCMPix originCorrectedAccordingToOrientation: pix];
     ROI *roi = nil;
 
-    if( record.typeCode == tPlain)
+    if (record.volumeLength)
+    {
+        if (![HorosVolumeLengthROI validPayload:record.volumeLength]) return nil;
+        HorosVolumeLengthROI *physical = [[[HorosVolumeLengthROI alloc] initWithType:tMesure :pix.pixelSpacingX :pix.pixelSpacingY :origin] autorelease];
+        physical.volumeLength = record.volumeLength;
+        physical.name = record.name;
+        roi = physical;
+    }
+    else if( record.typeCode == tPlain)
     {
         if( record.brushMask.length != (NSUInteger) record.brushWidth * (NSUInteger) record.brushHeight)
             return nil;
@@ -320,6 +336,15 @@ static NSMenuItem *ROIInterchangeFindItem( NSMenu *menu, SEL action, NSMenu **ow
 
         ROI *roi = object;
         HorosROIAssociationItem *item = [[[HorosROIAssociationItem alloc] init] autorelease];
+        if ([roi isKindOfClass:HorosVolumeLengthROI.class])
+        {
+            BOOL duplicate = NO;
+            for (ROI *existing in collected)
+                if ([existing isKindOfClass:HorosVolumeLengthROI.class] &&
+                    [[(HorosVolumeLengthROI*)existing volumeIdentifier] isEqual:[(HorosVolumeLengthROI*)roi volumeIdentifier]]) duplicate = YES;
+            if (duplicate) continue;
+            item.volumeLength = [(HorosVolumeLengthROI*)roi volumeLength];
+        }
         item.sourceIndex = (int) items.count;
         item.name = roi.name ?: @"";
         item.typeCode = roi.type;
@@ -432,6 +457,12 @@ static NSMenuItem *ROIInterchangeFindItem( NSMenu *menu, SEL action, NSMenu **ow
         DCMPix *pix = [[self pixList: y] objectAtIndex: x];
         NSMutableArray *slice = [[self roiList: y] objectAtIndex: x];
         ROI *roi = [rois objectAtIndex: i];
+        if ([roi isKindOfClass:HorosVolumeLengthROI.class])
+        {
+            [self addVolumeLengthROI:(HorosVolumeLengthROI*)roi movieIndex:[[(HorosVolumeLengthROI*)roi volumeLength][@"temporalIndex"] integerValue]];
+            added++;
+            continue;
+        }
 
         if( binding.reoriented)
         {
@@ -527,6 +558,12 @@ static NSMenuItem *ROIInterchangeFindItem( NSMenu *menu, SEL action, NSMenu **ow
             ROI *roi = [self roiFromInterchangeROI: record pix: pix];
             if( roi == nil)
                 continue;
+            if ([roi isKindOfClass:HorosVolumeLengthROI.class])
+            {
+                [self addVolumeLengthROI:(HorosVolumeLengthROI*)roi movieIndex:[[(HorosVolumeLengthROI*)roi volumeLength][@"temporalIndex"] integerValue]];
+                added++;
+                continue;
+            }
 
             [[[self roiList: y] objectAtIndex: x] addObject: roi];
             [[self imageView] roiSet: roi];

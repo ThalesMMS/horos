@@ -1196,10 +1196,10 @@ Gw
             </view>
         </box>
         <box autoresizesSubviews="NO" borderType="none" title="Box" titlePosition="noTitle" id="697" userLabel="tb Tools">
-            <rect key="frame" x="0.0" y="0.0" width="229" height="49"/>
+            <rect key="frame" x="0.0" y="0.0" width="248" height="49"/>
             <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
             <view key="contentView" id="msc-nz-mNg">
-                <rect key="frame" x="0.0" y="0.0" width="229" height="49"/>
+                <rect key="frame" x="0.0" y="0.0" width="248" height="49"/>
                 <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                 <subviews>
                     <matrix verticalHuggingPriority="750" allowsEmptySelection="NO" autosizesCells="NO" id="700">
@@ -1260,10 +1260,10 @@ Gw
                             <action selector="setTool:" target="-2" id="748"/>
                         </connections>
                     </matrix>
-                    <popUpButton id="698">
-                        <rect key="frame" x="210" y="2" width="16" height="17"/>
+                    <popUpButton toolTip="Choose ROI type" id="698">
+                        <rect key="frame" x="216" y="12" width="28" height="32"/>
                         <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
-                        <popUpButtonCell key="cell" type="bevel" bezelStyle="regularSquare" alignment="left" borderStyle="bezel" inset="2" pullsDown="YES" preferredEdge="maxY" selectedItem="719" id="712">
+                        <popUpButtonCell key="cell" type="push" bezelStyle="rounded" alignment="center" borderStyle="borderAndBezel" inset="2" pullsDown="YES" arrowPosition="arrowAtCenter" preferredEdge="maxY" selectedItem="719" id="712">
                             <behavior key="behavior" lightByBackground="YES" lightByGray="YES"/>
                             <font key="font" metaFont="menu"/>
                             <menu key="menu" title="OtherViews" id="713">

@@ -24,6 +24,9 @@ VTK_MODULE_INIT(vtkRenderingVolumeOpenGL2);
 #include <vtkFixedPointRayCastImage.h>
 #include <vtkPiecewiseFunction.h>
 #include <vtkPlane.h>
+#include <vtkPlaneSource.h>
+#include <vtkPolyDataMapper.h>
+#include <vtkActor.h>
 #include <vtkCallbackCommand.h>
 #include <vtkNew.h>
 #include <cassert>
@@ -124,8 +127,43 @@ int main(){@autoreleasepool{
  mapper->SetImageRenderer(nullptr,nullptr);
  assert(!mapper->GetExternalImageValid());
  mapper->Render(renderer,volume);assert(raycasts==beforeExternal+2);
+ // Capture the same opaque geometry that terminates VTK's CPU rays, at
+ // different LODs and in perspective. The upper-right plane detects row
+ // inversion and image-origin errors; its depth is known independently.
+ vtkNew<vtkPlaneSource> surface;
+ surface->SetOrigin(10,19,25);surface->SetPoint1(16,19,25);surface->SetPoint2(10,28,25);
+ vtkNew<vtkPolyDataMapper> surfaceMapper;surfaceMapper->SetInputConnection(surface->GetOutputPort());
+ vtkNew<vtkActor> actor;actor->SetMapper(surfaceMapper);renderer->AddActor(actor);
+ camera->SetPosition(8,16,120);camera->SetFocalPoint(8,16,20);camera->SetViewUp(0,1,0);
+ window->SetSize(240,160);
+ struct DepthState { bool present=true; int captures=0; } depthState;
+ mapper->SetImageRenderer([](void* p,vtkHorosFixedPointVolumeRayCastMapper* m,vtkRenderer* r,vtkVolume* v){
+  auto state=static_cast<DepthState*>(p);
+  assert(m->PrepareMPRGeometry(r,v));
+  auto depth=m->CaptureGeometryDepth(r,7.0);auto image=m->GetRayCastImage();
+  if(!state->present) { assert(depth.empty());image->ClearImage();return true; }
+  int *size=image->GetImageInUseSize(),*origin=image->GetImageOrigin(),*viewport=image->GetImageViewportSize();
+  assert(depth.size()==static_cast<size_t>(size[0])*size[1]);
+  int hits=0,misses=0;
+  for(int y=0;y<size[1];++y)for(int x=0;x<size[0];++x){
+   float d=depth[y*size[0]+x];
+   if(!std::isfinite(d)){++misses;continue;}
+   ++hits;assert(std::fabs(d-95.0/7)<0.001);
+   assert(x+origin[0]>viewport[0]/2);
+   assert(y+viewport[1]-origin[1]-size[1]<viewport[1]/2);
+  }
+  assert(hits>10 && misses>hits);++state->captures;image->ClearImage();return true;
+ },&depthState);
+ for(int perspective=0;perspective<2;++perspective)for(double lod : {1.0,2.3}){
+  camera->SetParallelProjection(!perspective);camera->SetClippingRange(20,180);
+  mapper->SetMinimumImageSampleDistance(lod);window->Render();
+ }
+ assert(depthState.captures==4);
+ depthState.present=false;mapper->IntermixIntersectingGeometryOff();window->Render();
+ mapper->IntermixIntersectingGeometryOn();actor->VisibilityOff();window->Render();
+ mapper->SetImageRenderer(nullptr,nullptr);
  mapper->ReleaseGraphicsResources(window);
- puts("PASS: 12 planes match CPU geometry; clipping refusal and its reasons, the accepted crop with VTK's own voxel planes, external image, cached display, CPU fallback and renderer switch verified");
+ puts("PASS: CPU geometry, clipping, external images and opaque geometry depth in parallel/perspective at two LODs; hiding geometry clears the depth");
 }}
 
 '''

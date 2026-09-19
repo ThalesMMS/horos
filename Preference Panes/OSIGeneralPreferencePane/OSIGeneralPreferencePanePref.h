@@ -37,7 +37,7 @@
 
 #import <PreferencePanes/PreferencePanes.h>
 
-@interface OSIGeneralPreferencePanePref : NSPreferencePane 
+@interface OSIGeneralPreferencePanePref : NSPreferencePane <NSTableViewDelegate>
 {
 	IBOutlet NSWindow *compressionSettingsWindow;
 	NSArray *compressionSettingsCopy, *compressionSettingsLowResCopy;

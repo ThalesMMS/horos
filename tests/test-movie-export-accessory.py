@@ -9,6 +9,7 @@ import AppKit
  @IBOutlet var view: NSView!
  @IBOutlet var type: NSPopUpButton!
  @IBOutlet var rateValue: NSTextField!
+ @objc dynamic var exportFrameRate: Int = 10
  @IBAction func changeExportType(_ sender: Any?) {}
 }
 @main struct Test {
@@ -28,6 +29,15 @@ import AppKit
     precondition(control.frame.minY >= -1 && control.frame.maxY <= size.height+1,
                  "Movie accessory clips a control vertically")
    }
+   let slider = view.subviews.compactMap { $0 as? NSSlider }.first!
+   let savedRate = UserDefaults.standard.object(forKey: "quicktimeExportRateValue") as? NSObject
+   for rate in [10, 15, 2] {
+    owner.exportFrameRate = rate
+    precondition(slider.integerValue == rate, "Movie slider did not follow the export rate")
+    precondition(owner.rateValue.stringValue == "\(rate) im/s", "Movie rate label is stale")
+   }
+   precondition((UserDefaults.standard.object(forKey: "quicktimeExportRateValue") as? NSObject) == savedRate,
+                "Unconfirmed movie settings changed the saved rate")
    print("PASS: \(URL(fileURLWithPath:path).lastPathComponent) fitting size \(size)")
    withExtendedLifetime(top) {}
   }

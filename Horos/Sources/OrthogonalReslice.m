@@ -379,13 +379,8 @@
 	if( thickSlab <= 1)
 	{
 		thickSlab = 1;
-		minI = sliceNumber;
+		minI = MAX(0, MIN(sliceNumber, newTotal-1));
 		maxI = minI+1;
-		if( maxI > newTotal-1)
-		{
-			maxI = newTotal-1;
-			minI = maxI-1;
-		}
 	}
 	else
 	{

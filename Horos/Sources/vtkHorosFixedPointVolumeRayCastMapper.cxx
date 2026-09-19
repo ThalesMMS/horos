@@ -42,6 +42,7 @@
 #include <vtkAlgorithm.h>
 #include <vtkRenderWindow.h>
 #include <vtkRenderer.h>
+#include <vtkCamera.h>
 #include <vtkTimerLog.h>
 #include <vtkRayCastImageDisplayHelper.h>
 #include <vtkFixedPointRayCastImage.h>
@@ -143,6 +144,35 @@ bool vtkHorosFixedPointVolumeRayCastMapper::PrepareMPRGeometry(vtkRenderer *ren,
     this->InitializeRayInfo(vol);
     this->LastGeometryRefusal = GeometryAccepted;
     return true;
+}
+
+std::vector<float> vtkHorosFixedPointVolumeRayCastMapper::CaptureGeometryDepth(vtkRenderer *ren, double worldUnitsPerMillimetre)
+{
+    this->CaptureZBuffer(ren);
+    this->SanitizeRayCastZBuffer();
+    vtkFixedPointRayCastImage *image = this->RayCastImage;
+    if (!image->GetUseZBuffer()) return {};
+
+    int *size = image->GetImageInUseSize();
+    vtkCamera *camera = ren->GetActiveCamera();
+    const double *range = camera->GetClippingRange();
+    const double near = range[0], far = range[1];
+    std::vector<float> depth(static_cast<size_t>(size[0]) * size[1], INFINITY);
+    for (int y = 0; y < size[1]; ++y)
+        for (int x = 0; x < size[0]; ++x)
+        {
+            // VTK's capture and lookup account for image origin and LOD.
+            // Convert its OpenGL depth to camera distance before changing units;
+            // Metal's composite camera can have a different clipping range.
+            double z = image->GetZBufferValue(x, y);
+            if (z >= 0 && z < 1)
+            {
+                double distance = camera->GetParallelProjection() ? near + z * (far - near)
+                    : near * far / (far - z * (far - near));
+                depth[static_cast<size_t>(size[1] - 1 - y) * size[0] + x] = distance / worldUnitsPerMillimetre;
+            }
+        }
+    return depth;
 }
 
 void vtkHorosFixedPointVolumeRayCastMapper::Render( vtkRenderer *ren, vtkVolume *vol )

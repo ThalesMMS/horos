@@ -460,3 +460,16 @@ enum
 
 - (void) setTexture: (unsigned char*) t width: (int) w height:(int) h;
 @end
+
+// The Length tool's patient-space representation. Its archive extends the ROI
+// subclass, leaving the legacy ROI v11 layout and public tool code untouched.
+@interface HorosVolumeLengthROI : ROI
+@property(copy) NSDictionary *volumeLength;
+@property(readonly) NSString *volumeIdentifier;
+@property(readonly) double distanceMM;
++ (NSDictionary*)referenceForPix:(DCMPix*)pix;
++ (BOOL)validGeometry:(DCMPix*)pix;
++ (NSArray*)patientPoint:(NSPoint)point pix:(DCMPix*)pix;
++ (NSPoint)projectPoint:(NSArray*)point pix:(DCMPix*)pix depth:(double*)depth;
++ (BOOL)validPayload:(NSDictionary*)payload;
+@end

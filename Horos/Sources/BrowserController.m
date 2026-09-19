@@ -76,6 +76,7 @@
 #import "HorosReportExtraction.h"
 #import "HorosReportFileReplacement.h"
 #import "ViewerController.h"
+#import "SeriesView.h"
 #import "BrowserController+GSPS.h"
 #import "PluginFilter.h"
 #import "ReportPluginFilter.h"
@@ -8609,6 +8610,11 @@ static OSStatus HorosNumbersAutomationStatus(void)
                                 [v setWindowFrame:r showWindow:NO];
 
                             [v setImageRows: rows columns: columns];
+
+                            // A workspace explicitly owns its saved zoom/pan.
+                            [v cancelOpeningScaleToFit];
+                            for (DCMView *view in v.seriesView.imageViews)
+                                [view prepareForWorkspacePresentation];
                             
                             [v setImageIndex: index];
                             wl = [v.imageView.curDCM calibratedWindowLevelForStoredLevel:wl];

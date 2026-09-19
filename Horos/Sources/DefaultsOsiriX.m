@@ -1087,6 +1087,7 @@ static NSHost *currentHost = nil;
 	[defaultValues setObject: @"Horos" forKey: @"ALBUMNAME"];
 	[defaultValues setObject: @"1" forKey: @"DisplayCrossReferenceLines"];
 	[defaultValues setObject: @"0" forKey: @"AlwaysScaleToFit"];
+    [defaultValues setObject: @"1" forKey: @"ScaleToFitOnOpen"];
 	[defaultValues setObject:@"0" forKey: @"VRDefaultViewSize"];
 	[defaultValues setObject:@"0" forKey: @"RunListenerOnlyIfActive"];
 	[defaultValues setObject:@"0" forKey: @"UseShutter"];
@@ -1322,12 +1323,16 @@ static NSHost *currentHost = nil;
                       @"dbl-click",	//FullScreenAction
                       @"dbl-click + alt",	//Sync3DAction
                       @"dbl-click + cmd",	//SetKeyImageAction
+                      @"",    //ResliceAxialHotKeyAction
+                      @"",    //ResliceCoronalHotKeyAction
+                      @"",    //ResliceSagittalHotKeyAction
 						nil];						
 	
 	for( int x = 0; x < [array count]; x++)
 	{
 		stringValue = [array objectAtIndex:x];
-		[hotkeys setObject:[NSNumber numberWithInt:x] forKey:stringValue];
+		if ([stringValue length])
+            [hotkeys setObject:[NSNumber numberWithInt:x] forKey:stringValue];
 //		[hotkeysModifiers setObject:[NSNumber numberWithInt:0] forKey:stringValue];
 	}
 	[defaultValues setObject:hotkeys forKey:@"HOTKEYS"];

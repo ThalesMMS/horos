@@ -27,6 +27,7 @@ def method(signature):
 
 
 methods = '\n'.join(method(s) for s in (
+    '+ (NSDictionary*) openingContentBoundsForPixLists:',
     '- (void) startLoadImageThread',
     '- (void) finishLoadImageData:',
     '+ (void) loadImageData:',
@@ -34,6 +35,7 @@ methods = '\n'.join(method(s) for s in (
 stub = r'''
 #import <Foundation/Foundation.h>
 #include <assert.h>
+#include "HorosContentBounds.h"
 #define N2LogException(e) NSLog(@"%@", e)
 NSString * const OsirixViewerControllerDidLoadImagesNotification = @"DidLoad";
 
@@ -80,6 +82,11 @@ NSString * const OsirixViewerControllerDidLoadImagesNotification = @"DidLoad";
 @interface DCMPix : NSObject
 @property(retain) Probe *probe;
 @property BOOL shutterEnabled;
+@property(retain) Probe *contentProbe;
+@property(nonatomic) float *fImage;
+@property(nonatomic) BOOL isRGB, isLoaded;
+@property(nonatomic) double pixelRatio;
+@property(copy) NSString *rescaleType;
 - (NSString *)srcFile;
 - (NSString *)modalityString;
 - (void)CheckLoad;
@@ -92,6 +99,9 @@ NSString * const OsirixViewerControllerDidLoadImagesNotification = @"DidLoad";
 @implementation DCMPix
 - (NSString *)srcFile { return self.probe->compressed ? @"compressed" : @"plain"; }
 - (NSString *)modalityString { return @"CT"; }
+- (BOOL)isLoaded { return YES; }
+- (double)pixelRatio { return 1; }
+- (float *)fImage { static float data[32*32]; if(self.contentProbe)[self.contentProbe decodeFrom:nil]; return data; }
 - (void)CheckLoad { [self.probe decodeFrom:nil]; }
 - (void)CheckLoadFromThread:(NSThread *)thread {
     if (!thread.isExecuting || thread.isCancelled || thread.isFinished) return;
@@ -128,6 +138,7 @@ NSString * const OsirixViewerControllerDidLoadImagesNotification = @"DidLoad";
 
 @interface ViewerController : NSObject {
 @public NSThread *loadingThread;
+    NSDictionary *openingContentBoundsByPixels; BOOL openingScaleToFitRequested;
     BOOL requestLoadingCancel, windowWillClose, enableSubtraction, subCtrlMinMaxComputed;
     int originalOrientation, maxMovieIndex;
     NSMutableArray *pixList[4], *fileList[4];
@@ -161,6 +172,7 @@ NSString * const OsirixViewerControllerDidLoadImagesNotification = @"DidLoad";
 - (void)convertPETtoSUV { assert(NSThread.isMainThread); }
 - (void)setShutterOnOffButton:(id)sender { assert(NSThread.isMainThread); }
 - (void)computeIntervalAsync { assert(NSThread.isMainThread); }
+- (void)finishOpeningScaleToFit { assert(NSThread.isMainThread); }
 - (double)computeOriginalOrientation {
     ++orientations; if (!NSThread.isMainThread) ++backgroundOrientations; return 0;
 }
@@ -203,6 +215,7 @@ static void staleCase(NSString *name) {
     NSMutableArray *first = pixels(probe, 2), *second = pixels(probe, 2);
     NSThread *old = [NSThread new], *current = [NSThread new];
     v->loadingThread = [current retain]; v->pixList[0] = [second retain];
+    NSDictionary *cache=@{@"sentinel":@1};v->openingContentBoundsByPixels=[cache retain];
     NSArray *oldArrays = @[first];
     if ([name isEqual:@"restart-same-pixels"]) oldArrays = @[second];
     if ([name isEqual:@"changed-timepoint"]) {
@@ -217,6 +230,7 @@ static void staleCase(NSString *name) {
     }
     [v finishLoadImageData:completion(v, oldArrays, old)];
     check(v->loadingThread == current, "obsolete completion detached the current load");
+    check(v->openingContentBoundsByPixels==cache, "obsolete completion replaced current series content bounds");
     if (![name isEqual:@"cancelled"]) check(!current.isCancelled, "obsolete completion cancelled the replacement load");
     check(notices == 0, "obsolete completion announced a loaded volume");
     check(v->orientations == 0, "obsolete completion recomputed viewer geometry");
@@ -261,6 +275,27 @@ static void validCase(BOOL compressed) {
     check(v->backgroundWindows == 0, "loader accessed the AppKit window on its worker");
 }
 
+static void contentCancellationCase(void) {
+    ViewerController *v = [ViewerController new];
+    Probe *decode = [Probe new], *content = [Probe new]; [decode resume];
+    NSArray *array = pixels(decode, 64);
+    for (DCMPix *pix in array) pix.contentProbe = content;
+    v->pixList[0] = [array retain];
+    NSMutableDictionary *input = [[job(v, @[array]) mutableCopy] autorelease];
+    input[@"computeOpeningContentBounds"] = @YES;
+    NSThread *old = [[NSThread alloc] initWithTarget:ViewerController.class selector:@selector(loadImageData:) object:input];
+    v->loadingThread = [old retain]; [old start]; [content waitForEntry];
+    check(decode->decoded == 64, "content analysis started before decoding finished");
+    [old cancel];
+    NSThread *replacement = [NSThread new]; v->loadingThread = [replacement retain];
+    v->pixList[0] = [pixels(decode, 2) retain];
+    [content resume]; waitFinished(old); drainMain();
+    check(v->loadingThread == replacement && !replacement.isCancelled, "content cancellation disturbed replacement");
+    check(notices == 0 && v->openingContentBoundsByPixels == nil, "cancelled content reached the viewer");
+    check(content->decoded <= 4, "cancelled analysis continued beyond in-flight reads");
+    check(v->backgroundWindows == 0, "content analysis accessed an AppKit window");
+}
+
 static void reentrantCase(void) {
     ViewerController *v = [ViewerController new]; Probe *p = [Probe new];
     v->pixList[0] = [pixels(p,2) retain];
@@ -284,6 +319,7 @@ int main(int argc, const char **argv) { @autoreleasepool {
     else if ([name isEqual:@"worker-compressed"]) workerCase(YES);
     else if ([name isEqual:@"valid-plain"]) validCase(NO);
     else if ([name isEqual:@"valid-compressed"]) validCase(YES);
+    else if ([name isEqual:@"content-cancelled"]) contentCancellationCase();
     else if ([name isEqual:@"reentrant"]) reentrantCase();
     else staleCase(name);
     [NSNotificationCenter.defaultCenter removeObserver:observer];
@@ -293,7 +329,7 @@ int main(int argc, const char **argv) { @autoreleasepool {
 
 cases = ['stale-series', 'restart-same-pixels', 'changed-timepoint', 'closed',
          'cancelled', 'worker-plain', 'worker-compressed', 'valid-plain',
-         'valid-compressed', 'reentrant']
+         'valid-compressed', 'content-cancelled', 'reentrant']
 if args.case:
     assert args.case in cases
     cases = [args.case]
@@ -301,7 +337,7 @@ with tempfile.TemporaryDirectory(prefix='horos-loader-lifetime-') as tmp:
     folder = Path(tmp)
     (folder/'Check.m').write_text(stub+methods+driver)
     subprocess.run(['xcrun','clang','-fno-objc-arc','-fblocks','-O1','-g',
-                    '-framework','Foundation',str(folder/'Check.m'),'-o',str(folder/'check')], check=True)
+                    '-I',str(ROOT/'Horos/Sources'),'-framework','Foundation',str(folder/'Check.m'),'-o',str(folder/'check')], check=True)
     failed = []
     for case in cases:
         result = subprocess.run([str(folder/'check'), case], timeout=20)

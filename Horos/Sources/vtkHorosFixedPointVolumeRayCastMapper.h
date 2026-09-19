@@ -39,6 +39,7 @@
 #define __vtkHorosFixedPointVolumeRayCastMapper_h
 
 #include <vtkFixedPointVolumeRayCastMapper.h>
+#include <vector>
 
 class  VTKRENDERINGVOLUME_EXPORT vtkHorosFixedPointVolumeRayCastMapper : public vtkFixedPointVolumeRayCastMapper {
     
@@ -52,6 +53,10 @@ public:
     // casting a ray. A clipping plane that cuts into the voxel centres refuses
     // unless the caller clips rays against the planes itself (#664).
     bool PrepareMPRGeometry(vtkRenderer *, vtkVolume *, bool acceptClippingPlanes = false);
+    // After PrepareMPRGeometry, during the volume pass: opaque geometry's
+    // distance along the camera direction, in millimetres, top row first.
+    // An empty vector means no depth capture; infinity means no geometry at a pixel.
+    std::vector<float> CaptureGeometryDepth(vtkRenderer *, double worldUnitsPerMillimetre);
     GeometryRefusal GetGeometryRefusal() const { return this->LastGeometryRefusal; }
     // After PrepareMPRGeometry: the clipping planes in voxel index coordinates,
     // exactly as VTK clips its rays against them - four floats per plane, the

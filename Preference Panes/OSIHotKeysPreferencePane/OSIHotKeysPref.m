@@ -191,6 +191,9 @@ static OSIHotKeysPref *currentKeysPref = 0L;
                                             [NSMutableDictionary dictionaryWithObjectsAndKeys:NSLocalizedString(@"Full screen", nil), @"action", nil],
                                             [NSMutableDictionary dictionaryWithObjectsAndKeys:NSLocalizedString(@"3D Position", nil), @"action", nil],
                                             [NSMutableDictionary dictionaryWithObjectsAndKeys:NSLocalizedString(@"Set Key Image", nil), @"action", nil],
+                                            [NSMutableDictionary dictionaryWithObjectsAndKeys:NSLocalizedString(@"Reslice Axial", nil), @"action", nil],
+                                            [NSMutableDictionary dictionaryWithObjectsAndKeys:NSLocalizedString(@"Reslice Coronal", nil), @"action", nil],
+                                            [NSMutableDictionary dictionaryWithObjectsAndKeys:NSLocalizedString(@"Reslice Sagittal", nil), @"action", nil],
 											nil];
 	
 	NSDictionary *keys = [[NSUserDefaults standardUserDefaults] objectForKey:@"HOTKEYS"];

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Two parallel axial slices with known marker pixels for inter-slice measure.
+"""Parallel axial slices with known marker pixels for inter-slice measure.
 
 Place a t2DPoint on each bright marker, then run Measure Between Slices.
 With pixel-center conversion the in-plane shift is identical on both slices,
-so the projection is 20 mm and the 3D length is sqrt(20² + spacing²) mm.
+so the endpoint projection is 20 mm and the 3D length is
+sqrt(20² + ((slices - 1) * spacing)²) mm (two slices by default).
 
     python3 tools/generate-interslice-measure-fixture.py <empty dir>
 """
@@ -19,6 +20,7 @@ parser = argparse.ArgumentParser(description=__doc__,
 parser.add_argument('destination', type=Path)
 parser.add_argument('--spacing', type=float, default=5.0, help='mm between slices')
 parser.add_argument('--size', type=int, default=32)
+parser.add_argument('--slices', type=int, default=2, help='number of parallel slices, including endpoints')
 arguments = parser.parse_args()
 
 arguments.destination.mkdir(parents=True, exist_ok=True)
@@ -29,10 +31,14 @@ size = arguments.size
 if size < 22:
     raise SystemExit('size must be at least 22 so both markers fit')
 
+if arguments.slices < 2:
+    raise SystemExit('slices must be at least 2')
+
 study = generate_uid()
+frame_of_reference = generate_uid()
 series = generate_uid()
 AXIAL = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0]
-MARKERS = ((0, (10, 0)), (1, (10, 20)))
+MARKERS = tuple((i, (10, round(20*i/(arguments.slices-1)))) for i in range(arguments.slices))
 
 
 def picture(column, row):
@@ -55,6 +61,7 @@ for index, (column, row) in MARKERS:
     dataset.SOPInstanceUID = sop
     dataset.StudyInstanceUID = study
     dataset.SeriesInstanceUID = series
+    dataset.FrameOfReferenceUID = frame_of_reference
     dataset.PatientName = 'INTERSLICE^MEASURE'
     dataset.PatientID = 'ISL-257'
     dataset.PatientBirthDate = '19700101'
@@ -90,9 +97,10 @@ for index, (column, row) in MARKERS:
                     write_like_original=False)
 
 proj = 20.0
-dist3d = (proj ** 2 + arguments.spacing ** 2) ** 0.5
-print('slices            2 axial, IOP 1,0,0,0,1,0')
-print('markers           (10, 0) at z=0 and (10, 20) at z=%.1f mm' % arguments.spacing)
+end_z = (arguments.slices-1) * arguments.spacing
+dist3d = (proj ** 2 + end_z ** 2) ** 0.5
+print('slices            %d axial, IOP 1,0,0,0,1,0' % arguments.slices)
+print('markers           (10, 0) at z=0 and (10, 20) at z=%.1f mm' % end_z)
 print('projection        %.2f mm' % proj)
 print('distance3D        %.4f mm' % dist3d)
 print('unit              mm')

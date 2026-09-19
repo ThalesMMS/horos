@@ -28,7 +28,7 @@
                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
                     </textFieldCell>
                     <connections>
-                        <binding destination="27" name="displayPatternValue1" keyPath="values.quicktimeExportRateValue" id="31">
+                        <binding destination="-2" name="displayPatternValue1" keyPath="exportFrameRate" id="31">
                             <dictionary key="options">
                                 <string key="NSDisplayPattern">%{value1}@ im/s</string>
                             </dictionary>
@@ -44,7 +44,7 @@
                         <font key="font" size="12" name="Helvetica"/>
                     </sliderCell>
                     <connections>
-                        <binding destination="27" name="value" keyPath="values.quicktimeExportRateValue" id="28"/>
+                        <binding destination="-2" name="value" keyPath="exportFrameRate" id="28"/>
                     </connections>
                 </slider>
                 <textField verticalHuggingPriority="750" horizontalCompressionResistancePriority="976" misplaced="YES" setsMaxLayoutWidthAtFirstLayout="YES" translatesAutoresizingMaskIntoConstraints="NO" id="14">
@@ -102,6 +102,5 @@
                 <constraint firstItem="16" firstAttribute="leading" secondItem="15" secondAttribute="trailing" constant="7" id="vzr-ew-YMu"/>
             </constraints>
         </customView>
-        <userDefaultsController representsSharedInstance="YES" id="27"/>
     </objects>
 </document>

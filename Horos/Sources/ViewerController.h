@@ -48,6 +48,7 @@
 @class ColorTransferView;
 @class MyPoint;
 @class ROI;
+@class HorosVolumeLengthROI;
 @class DCMPix;
 @class ThickSlabController;
 @class StudyView;
@@ -90,6 +91,8 @@ enum
 
 @interface ViewerController : OSIWindowController  <NSWindowDelegate, NSSplitViewDelegate, NSToolbarDelegate>
 {
+    BOOL openingScaleToFitRequested;
+    NSDictionary *openingContentBoundsByPixels;
 	NSRecursiveLock	*roiLock;
 	NSConditionLock *flipDataThread, *convThread;
 	NSThread *loadingThread;
@@ -488,6 +491,10 @@ enum
 - (NSMutableArray*) roiList;
 - (NSMutableArray*) roiList: (long) i;
 - (void) setRoiList: (long) i array:(NSMutableArray*) a;
+/** Register one volumetric Length and expose the same object on all slices of the current phase. Does not add an undo entry. */
+- (void) addVolumeLengthROI:(HorosVolumeLengthROI *)roi;
+- (void) addVolumeLengthROI:(HorosVolumeLengthROI *)roi movieIndex:(long)movieIndex;
+- (NSArray<HorosVolumeLengthROI *> *)volumeLengthROIsForMovieIndex:(long)movieIndex;
 
 /**  Create a new MyPoint object */
 - (MyPoint*) newPoint: (float) x :(float) y;
@@ -660,6 +667,10 @@ enum
 - (BOOL) FullScreenON;
 - (IBAction) setROITool:(id) sender;
 - (void) setROIToolTag:(ToolMode) roitype;
+- (void) adjustThickSlabBySteps:(NSInteger)steps;
+- (void) requestOpeningScaleToFit;
+- (void) finishOpeningScaleToFit;
+- (void) cancelOpeningScaleToFit;
 - (void) changeImageData:(NSMutableArray*)f :(NSMutableArray*)d :(NSData*) v :(BOOL) applyTransition;
 - (ViewerController*) copyViewerWindow;
 - (IBAction) exportCroppedSeries: (id) sender;

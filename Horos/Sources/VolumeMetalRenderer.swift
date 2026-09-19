@@ -138,13 +138,18 @@ public struct VolumeRenderRequest {
     /// Each ray is clipped against them as VTK's ray caster clips it.
     public let clippingPlanes: [SIMD4<Float>]
     public static let maximumClippingPlanes = 6
+    /// width × height floats, top row first: opaque geometry's distance from
+    /// the eye along camera.forward, in millimetres. Infinity leaves a ray whole.
+    public let geometryDepth: Data?
 
     public init(camera: VolumeCamera, transfer: VolumeTransferFunction, mode: VolumeRenderingMode, shading: VolumeShading,
                 crop: (minimum: SIMD3<Float>, maximum: SIMD3<Float>)?, width: Int, height: Int, sampleStep: Float,
                 background: SIMD3<Float> = SIMD3(0, 0, 0), scalarBackground: Float? = nil,
                 viewportSize: SIMD2<Int>? = nil, viewportOrigin: SIMD2<Int> = .zero,
-                anchoredProjection: Bool = false, clippingPlanes: [SIMD4<Float>] = []) throws {
+                anchoredProjection: Bool = false, clippingPlanes: [SIMD4<Float>] = [], geometryDepth: Data? = nil) throws {
         guard width > 0, height > 0, width <= 8192, height <= 8192 else { throw ResliceFailure.geometry("The image has no extent.") }
+        guard geometryDepth == nil || geometryDepth?.count == width * height * MemoryLayout<Float>.stride
+        else { throw ResliceFailure.geometry("The geometry depth does not match the image.") }
         guard sampleStep.isFinite, sampleStep > 0 else { throw ResliceFailure.geometry("The sample step must be positive.") }
         let viewport = viewportSize ?? SIMD2(width, height)
         guard viewport.x > 0, viewport.y > 0, viewport.x <= 8192, viewport.y <= 8192,
@@ -161,6 +166,7 @@ public struct VolumeRenderRequest {
         self.viewportSize = viewport; self.viewportOrigin = viewportOrigin
         self.anchoredProjection = anchoredProjection
         self.clippingPlanes = clippingPlanes
+        self.geometryDepth = geometryDepth
     }
 }
 
@@ -195,7 +201,7 @@ public final class VolumeMetalRenderer {
         uint4 size;          // width, height, maxSteps, anchored projection (#659)
         uint4 viewport;      // full size and top-left origin of the output region
         float4 planes[6];    // crop planes in voxel index space, a·v + d ≥ 0 kept (#664)
-        uint4 clipping;      // x: how many planes
+        uint4 clipping;      // x: how many planes, y: geometry depth is present
     };
     static bool intersectBox(float3 origin, float3 direction, float3 lo, float3 hi, thread float &tNear, thread float &tFar) {
         // A direction component of zero would make (face - origin) * inf a NaN
@@ -261,6 +267,7 @@ public final class VolumeMetalRenderer {
                              constant Params &p [[buffer(3)]],
                              device const float2 *brickRanges [[buffer(4)]],
                              constant uint *opacityPrefix [[buffer(5)]],
+                             device const float *geometryDepth [[buffer(6)]],
                              uint2 gid [[thread_position_in_grid]]) {
         if (gid.x >= p.size.x || gid.y >= p.size.y) return;
         float2 pixel = float2(gid) + float2(p.viewport.zw) + 0.5;
@@ -308,6 +315,10 @@ public final class VolumeMetalRenderer {
         float eyeOffset = dot(origin - p.eye.xyz, p.forward.xyz);
         float tNear = (p.clip.x - eyeOffset) / along, tFar = (p.clip.y - eyeOffset) / along;
         float tStart = max(max(tEntry, tNear), 0.0), tEnd = min(tExit, tFar);
+        // VTK has already drawn opaque ROI/SEG surfaces. Only the volume in
+        // front of that surface belongs over its colour; stop at its depth.
+        if (p.clipping.y != 0)
+            tEnd = min(tEnd, (geometryDepth[gid.y * p.size.x + gid.x] - eyeOffset) / along);
         if (anchored) tStart = tNear + (floor((max(tEntry, tNear) - tNear) / p.clip.w) + 1.0) * p.clip.w;
         float4 acc = float4(0.0);
         float reduced = 0.0; uint counted = 0;
@@ -432,6 +443,7 @@ public final class VolumeMetalRenderer {
     private var volumeResidentResources: Set<ObjectIdentifier> = []
     private var uploaded: ResliceVolume?
     private var outputBuffer: MTLBuffer?, scalarBuffer: MTLBuffer?
+    private var geometryDepthBuffer: MTLBuffer?
     public private(set) var volumeBytes = 0
     // The transfer function on the GPU (#621), kept while its colours or opacities stay the same: a frame that
     // moves only the camera, the window or the crop makes nothing. A change makes new objects rather than
@@ -526,7 +538,7 @@ public final class VolumeMetalRenderer {
 
     public func release() {
         texture = nil; uploaded = nil; volumeBytes = 0; volumeResidency = nil; volumeResidentResources = []
-        outputBuffer = nil; scalarBuffer = nil
+        outputBuffer = nil; scalarBuffer = nil; geometryDepthBuffer = nil
         brickRanges = nil
         colourTable = nil; opacityTable = nil
     }
@@ -583,6 +595,17 @@ public final class VolumeMetalRenderer {
         else { throw ResliceFailure.memory("Metal refused a \(VolumeAllocation.describe(byteCount: count * 8)) image.") }
         let clut = try colourTexture(for: request.transfer.colour)
         let opacity = try opacityBuffers(for: request.transfer.opacity)
+        // A harmless bound buffer when there is no geometry; the shader only
+        // reads it when clipping.y is set. Reuse the allocation between frames.
+        var depthBuffer = opacity.values
+        if let depth = request.geometryDepth {
+            if (geometryDepthBuffer?.length ?? 0) < depth.count {
+                geometryDepthBuffer = device.makeBuffer(length: depth.count, options: .storageModeShared)
+            }
+            guard let buffer = geometryDepthBuffer else { throw ResliceFailure.memory("Metal refused the geometry depth.") }
+            depth.copyBytes(to: buffer.contents().assumingMemoryBound(to: UInt8.self), count: depth.count)
+            depthBuffer = buffer
+        }
         let camera = request.camera
         let aspect = Float(request.viewportSize.x) / Float(request.viewportSize.y)
         let halfHeight: Float = camera.parallel ? camera.parallelScale : tan(camera.viewAngle * Float.pi / 360)
@@ -604,7 +627,7 @@ public final class VolumeMetalRenderer {
             viewport: SIMD4(UInt32(request.viewportSize.x), UInt32(request.viewportSize.y),
                             UInt32(request.viewportOrigin.x), UInt32(request.viewportOrigin.y)),
             planes: (.zero, .zero, .zero, .zero, .zero, .zero),
-            clipping: SIMD4(UInt32(request.clippingPlanes.count), 0, 0, 0))
+            clipping: SIMD4(UInt32(request.clippingPlanes.count), request.geometryDepth == nil ? 0 : 1, 0, 0))
         withUnsafeMutableBytes(of: &params.planes) { raw in
             for (index, plane) in request.clippingPlanes.enumerated() { raw.storeBytes(of: plane, toByteOffset: index * 16, as: SIMD4<Float>.self) }
         }
@@ -615,7 +638,7 @@ public final class VolumeMetalRenderer {
             do {
                 times = try withUnsafeBytes(of: &params) { parameters in
                     try submitter.dispatch(pipeline: pipeline, textures: [texture, clut],
-                                           buffers: [opacity.values, output, scalar, nil, brickRanges, opacity.prefix],
+                                           buffers: [opacity.values, output, scalar, nil, brickRanges, opacity.prefix, depthBuffer],
                                            uniformsIndex: 3, parameters: parameters,
                                            size: MTLSize(width: request.width, height: request.height, depth: 1),
                                            threadsPerThreadgroup: MTLSize(width: 8, height: 8, depth: 1),
@@ -647,6 +670,7 @@ public final class VolumeMetalRenderer {
         encoder.setBytes(&params, length: MemoryLayout<Params>.stride, index: 3)
         encoder.setBuffer(brickRanges, offset: 0, index: 4)
         encoder.setBuffer(opacity.prefix, offset: 0, index: 5)
+        encoder.setBuffer(depthBuffer, offset: 0, index: 6)
         let w = 8, h = 8
         encoder.dispatchThreads(MTLSize(width: request.width, height: request.height, depth: 1),
                                 threadsPerThreadgroup: MTLSize(width: w, height: h, depth: 1))
@@ -791,7 +815,7 @@ public final class VolumeRendererBridge: NSObject {
                              opacityPoints: [NSNumber], mode: Int, shading: [NSNumber], crop: [NSNumber],
                              clippingPlanes: [NSNumber] = [], width: Int, height: Int,
                              sampleStep: Double, scalarBackground: Double, anchoredProjection: Bool = false,
-                             imageRegion: [NSNumber] = [], scalarOut: NSMutableData?) throws -> NSData {
+                             imageRegion: [NSNumber] = [], geometryDepth: Data? = nil, scalarOut: NSMutableData?) throws -> NSData {
         guard camera.count == 12, shading.count == 5, crop.isEmpty || crop.count == 6, clippingPlanes.count % 4 == 0,
               imageRegion.isEmpty || imageRegion.count == 4, let renderingMode = VolumeRenderingMode(rawValue: mode) else {
             throw ResliceFailure.geometry("The render description is incomplete.").nsError
@@ -800,13 +824,13 @@ public final class VolumeRendererBridge: NSObject {
                               clut: clut, opacityPoints: opacityPoints, renderingMode: renderingMode, shading: shading, crop: crop,
                               width: width, height: height, sampleStep: sampleStep, scalarBackground: Float(scalarBackground),
                               anchoredProjection: anchoredProjection, clippingPlanes: clippingPlanes,
-                              imageRegion: imageRegion, scalarOut: scalarOut)
+                              imageRegion: imageRegion, geometryDepth: geometryDepth, scalarOut: scalarOut)
     }
 
     private func renderFull(camera: [NSNumber], level: Double, windowWidth: Double, clut: NSData, opacityPoints: [NSNumber],
                             renderingMode: VolumeRenderingMode, shading: [NSNumber], crop: [NSNumber], width: Int, height: Int,
                             sampleStep: Double, scalarBackground: Float, anchoredProjection: Bool = false,
-                            clippingPlanes: [NSNumber] = [], imageRegion: [NSNumber], scalarOut: NSMutableData?) throws -> NSData {
+                            clippingPlanes: [NSNumber] = [], imageRegion: [NSNumber], geometryDepth: Data?, scalarOut: NSMutableData?) throws -> NSData {
         let c = camera.map { $0.floatValue }
         do {
             let far = c.count > 13 ? c[13] : -1
@@ -838,7 +862,8 @@ public final class VolumeRendererBridge: NSObject {
                                                   viewportOrigin: imageRegion.isEmpty ? .zero : SIMD2(imageRegion[2].intValue, imageRegion[3].intValue),
                                                   anchoredProjection: anchoredProjection,
                                                   clippingPlanes: stride(from: 0, to: clippingPlanes.count, by: 4).map { index in
-                                                      SIMD4((0..<4).map { clippingPlanes[index + $0].floatValue }) })
+                                                      SIMD4((0..<4).map { clippingPlanes[index + $0].floatValue }) },
+                                                  geometryDepth: geometryDepth)
             let result = try engine.render(request)
             lastMilliseconds = result.milliseconds
             if let scalarOut { scalarOut.setData(result.scalar) }

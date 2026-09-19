@@ -41,6 +41,7 @@ public enum ROIAssociationStatus: Int {
     public var image: ROIAssociationImage = ROIAssociationImage()
     public var points: [[Double]] = []
     public var patientPoints: [[Double]] = []
+    public var volumeLength: [String: Any]?
     public var red: Double = 1
     public var green: Double = 0
     public var blue: Double = 0
@@ -122,6 +123,7 @@ public final class ROIAssociation: NSObject {
                 item.image = copyImage(identity)
                 item.points = roi.points.map { [Double($0.pointValue.x), Double($0.pointValue.y)] }
                 item.patientPoints = roi.patientPoints
+                item.volumeLength = roi.volumeLength
                 item.red = roi.red
                 item.green = roi.green
                 item.blue = roi.blue
@@ -164,6 +166,20 @@ public final class ROIAssociation: NSObject {
         binding.sourceIndex = sourceIndex
         binding.points = source.points
 
+        if let volume = source.volumeLength {
+            guard let series = volume["series"] as? String, !series.isEmpty,
+                  let frame = volume["frameOfReference"] as? String, !frame.isEmpty,
+                  let phase = volume["temporalIndex"] as? Int,
+                  let index = targets.firstIndex(where: {
+                      $0.seriesInstanceUID == series && $0.frameOfReferenceUID == frame && $0.temporalIndex == phase
+                  }) else {
+                return fail(binding, .missingReference, "The physical Length belongs to a different series, Frame of Reference, or temporal phase.")
+            }
+            binding.status = .mapped
+            binding.targetIndex = index
+            binding.reason = "Patient-space Length matched to its series and phase."
+            return binding
+        }
         if let key = sopKey(source.image) {
             let hits = targets.indices.filter { sopKey(targets[$0]) == key }
             if hits.count > 1 {

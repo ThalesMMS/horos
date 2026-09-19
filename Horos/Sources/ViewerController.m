@@ -58,6 +58,7 @@
 #import "ViewerController.h"
 #import "ViewerController+ROIInterchange.h"
 #import "HorosCalibration.h"
+#import "HorosContentBounds.h"
 #import "BrowserController.h"
 #import "Wait.h"
 #import "XMLController.h"
@@ -388,7 +389,27 @@ enum
 + (NSColor*)_fusionedItemColor;
 + (NSColor*)_openItemColor;
 - (BOOL)horosPickInterslicePreferred:(ROI *)preferred first:(NSDictionary **)first second:(NSDictionary **)second;
+- (NSMutableDictionary *)volumeLengthStateForMovieIndex:(long)movieIndex create:(BOOL)create;
+- (void)registerVolumeLengthROI:(HorosVolumeLengthROI *)roi movieIndex:(long)movieIndex anchor:(DicomImage *)anchor;
+- (void)attachVolumeLengthROI:(HorosVolumeLengthROI *)roi movieIndex:(long)movieIndex;
+- (void)restoreVolumeLengthSnapshot:(NSDictionary *)snapshot movieIndex:(long)movieIndex;
+- (void)saveVolumeLengthROIs:(long)movieIndex writtenPaths:(NSMutableArray *)paths anchorPaths:(NSDictionary *)anchorPaths;
 @end
+
+static char HorosVolumeLengthStateKey;
+
+// Unlike an absent archive, an unreadable archive must never be replaced by an
+// empty list when a generated view saves its volume measurements.
+static NSArray *HorosVolumeLengthReadArchive(NSString *path)
+{
+    if( path.length == 0 || [[NSFileManager defaultManager] fileExistsAtPath:path] == NO)
+        return @[];
+    NSData *data = [SRAnnotation roiFromDICOM:path];
+    id rois = data ? [NSUnarchiver unarchiveObjectWithData:data] : [NSUnarchiver unarchiveObjectWithFile:path];
+    if( [rois isKindOfClass:[NSArray class]] == NO)
+        [NSException raise:NSInvalidUnarchiveOperationException format:@"The existing ROI archive could not be read."];
+    return rois;
+}
 
 @implementation ViewerController
 
@@ -1202,10 +1223,155 @@ static int hotKeyToolCrossTable[] =
     }
 }
 
+// Volume lengths have one object per UUID. Slice lists contain aliases only;
+// the retained source image remains the persistence anchor after a reslice.
+- (NSMutableDictionary *)volumeLengthStateForMovieIndex:(long)movieIndex create:(BOOL)create
+{
+    if( movieIndex < 0 || movieIndex >= MAX4D) return nil;
+    NSMutableDictionary *states = objc_getAssociatedObject(self, &HorosVolumeLengthStateKey);
+    if( states == nil && create)
+    {
+        states = [NSMutableDictionary dictionary];
+        objc_setAssociatedObject(self, &HorosVolumeLengthStateKey, states, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    NSMutableDictionary *state = states[@(movieIndex)];
+    if( state == nil && create)
+    {
+        state = [NSMutableDictionary dictionaryWithObject:[NSMutableDictionary dictionary] forKey:@"anchors"];
+        id anchor = [fileList[movieIndex] firstObject];
+        if( [anchor isKindOfClass:[DicomImage class]]) state[@"anchor"] = anchor;
+        states[@(movieIndex)] = state;
+    }
+    return state;
+}
+
+- (NSArray<HorosVolumeLengthROI *> *)volumeLengthROIsForMovieIndex:(long)movieIndex
+{
+    if( movieIndex < 0 || movieIndex >= MAX4D) return @[];
+    NSMutableArray *result = [NSMutableArray array];
+    NSMutableSet *seen = [NSMutableSet set];
+    for( NSArray *slice in roiList[movieIndex])
+        for( ROI *roi in slice)
+            if( [roi isKindOfClass:[HorosVolumeLengthROI class]])
+            {
+                HorosVolumeLengthROI *length = (HorosVolumeLengthROI *)roi;
+                if( length.volumeIdentifier.length && [seen containsObject:length.volumeIdentifier] == NO)
+                {
+                    [seen addObject:length.volumeIdentifier];
+                    [result addObject:length];
+                }
+            }
+    return result;
+}
+
+- (void)registerVolumeLengthROI:(HorosVolumeLengthROI *)roi movieIndex:(long)movieIndex anchor:(DicomImage *)anchor
+{
+    if( roi.volumeIdentifier.length == 0) return;
+    NSMutableDictionary *state = [self volumeLengthStateForMovieIndex:movieIndex create:YES];
+    NSMutableDictionary *anchors = state[@"anchors"];
+    if( anchor == nil) anchor = anchors[roi.volumeIdentifier] ?: state[@"anchor"];
+    if( anchor)
+    {
+        anchors[roi.volumeIdentifier] = anchor;
+        NSMutableDictionary *payload = [[roi.volumeLength mutableCopy] autorelease];
+        if( anchor.sopInstanceUID.length) payload[@"storageSOPInstanceUID"] = anchor.sopInstanceUID;
+        payload[@"storageFrame"] = anchor.frameID ?: @0;
+        roi.volumeLength = payload;
+    }
+}
+
+- (void)attachVolumeLengthROI:(HorosVolumeLengthROI *)roi movieIndex:(long)movieIndex
+{
+    if( movieIndex < 0 || movieIndex >= MAX4D || roi.volumeIdentifier.length == 0) return;
+    roi.isAliased = YES;
+    for( NSMutableArray *slice in roiList[movieIndex])
+    {
+        for( NSInteger i = (NSInteger)slice.count - 1; i >= 0; i--)
+        {
+            ROI *existing = slice[i];
+            if( [existing isKindOfClass:[HorosVolumeLengthROI class]] &&
+               [[(HorosVolumeLengthROI *)existing volumeIdentifier] isEqualToString:roi.volumeIdentifier])
+                [slice removeObjectAtIndex:i];
+        }
+        [slice addObject:roi];
+    }
+}
+
+- (void)addVolumeLengthROI:(HorosVolumeLengthROI *)roi
+{
+    [self addVolumeLengthROI:roi movieIndex:curMovieIndex];
+}
+
+- (void)addVolumeLengthROI:(HorosVolumeLengthROI *)roi movieIndex:(long)movieIndex
+{
+    if( movieIndex < 0 || movieIndex >= maxMovieIndex || roi.volumeIdentifier.length == 0) return;
+    [self registerVolumeLengthROI:roi movieIndex:movieIndex anchor:nil];
+    [self attachVolumeLengthROI:roi movieIndex:movieIndex];
+    if( movieIndex == curMovieIndex) roi.curView = imageView;
+    [[NSNotificationCenter defaultCenter] postNotificationName:OsirixAddROINotification object:self
+                                                      userInfo:@{@"ROI":roi, @"sliceNumber":@(movieIndex == curMovieIndex ? [imageView curImage] : 0)}];
+    [imageView setNeedsDisplay:YES];
+}
+
+- (void)restoreVolumeLengthSnapshot:(NSDictionary *)snapshot movieIndex:(long)movieIndex
+{
+    if( movieIndex < 0 || movieIndex >= MAX4D) return;
+    NSMutableDictionary *state = [self volumeLengthStateForMovieIndex:movieIndex create:YES];
+    [state removeAllObjects];
+    [state addEntriesFromDictionary:snapshot[@"state"]];
+    state[@"anchors"] = [[state[@"anchors"] mutableCopy] autorelease] ?: [NSMutableDictionary dictionary];
+    for( NSMutableArray *slice in roiList[movieIndex])
+        for( NSInteger i = (NSInteger)slice.count - 1; i >= 0; i--)
+            if( [slice[i] isKindOfClass:[HorosVolumeLengthROI class]]) [slice removeObjectAtIndex:i];
+    for( HorosVolumeLengthROI *roi in snapshot[@"rois"])
+    {
+        [self registerVolumeLengthROI:roi movieIndex:movieIndex anchor:nil];
+        [self attachVolumeLengthROI:roi movieIndex:movieIndex];
+    }
+}
+
+- (void)saveVolumeLengthROIs:(long)movieIndex writtenPaths:(NSMutableArray *)paths anchorPaths:(NSDictionary *)anchorPaths
+{
+    NSDictionary *anchors = [self volumeLengthStateForMovieIndex:movieIndex create:NO][@"anchors"];
+    if( anchors.count == 0) return;
+    NSArray *current = [self volumeLengthROIsForMovieIndex:movieIndex];
+    NSMutableSet *saved = [NSMutableSet set];
+    for( DicomImage *anchor in anchors.allValues)
+    {
+        if( [saved containsObject:anchor.objectID]) continue;
+        [saved addObject:anchor.objectID];
+        DicomDatabase *database = [DicomDatabase databaseForContext:anchor.managedObjectContext];
+        DicomStudy *study = anchor.series.study;
+        NSString *path = anchorPaths[anchor.objectID] ?: [study roiPathForImage:anchor];
+        NSArray *previous = HorosVolumeLengthReadArchive(path);
+        NSMutableArray *combined = [NSMutableArray array];
+        for( ROI *roi in previous)
+        {
+            DicomImage *owner = [roi isKindOfClass:[HorosVolumeLengthROI class]] ? anchors[[(HorosVolumeLengthROI *)roi volumeIdentifier]] : nil;
+            if( owner == nil || [owner.objectID isEqual:anchor.objectID] == NO) [combined addObject:roi];
+        }
+        for( HorosVolumeLengthROI *roi in current)
+            if( [((DicomImage *)anchors[roi.volumeIdentifier]).objectID isEqual:anchor.objectID]) [combined addObject:roi];
+        if( [ViewerController areROIsArraysIdentical:previous with:combined]) continue;
+        if( path.length == 0 || [[NSFileManager defaultManager] fileExistsAtPath:path] == NO)
+            path = [database uniquePathForNewDataFileWithExtension:@"dcm"];
+        SRAnnotation *annotation = [[[SRAnnotation alloc] initWithROIs:combined path:path forImage:anchor] autorelease];
+        NSString *seriesUID = [[study roiSRSeries] valueForKey:@"seriesDICOMUID"];
+        if( seriesUID.length) [annotation setSeriesInstanceUID:seriesUID];
+        if( [annotation writeToFileAtPath:path])
+        {
+            if( [paths containsObject:path] == NO) [paths addObject:path];
+        }
+        else
+            NSLog(@"Volume Length: could not save the ROI archive.");
+    }
+}
+
 - (void) executeUndo:(NSMutableArray*) u
 {
     if( [u count])
     {
+        [imageView cancelLengthPlacement];
         [imageView stopROIEditing];
         
         if( [[[u lastObject] objectForKey: @"type"] isEqualToString:@"roi"])
@@ -1241,6 +1407,12 @@ static int hotKeyToolCrossTable[] =
                 }
             }
             
+            for( int movie = 0; movie < maxMovieIndex; movie++)
+                for( HorosVolumeLengthROI *roi in [self volumeLengthROIsForMovieIndex:movie])
+                {
+                    [self registerVolumeLengthROI:roi movieIndex:movie anchor:nil];
+                    [self attachVolumeLengthROI:roi movieIndex:movie];
+                }
             [imageView setIndex: [imageView curImage]];
             
             NSLog( @"roi undo");
@@ -1282,14 +1454,22 @@ static int hotKeyToolCrossTable[] =
             for( int i = 0; i < maxMovieIndex; i++)
             {
                 NSMutableArray *array = [NSMutableArray array];
+                NSMutableDictionary *volumeCopies = [NSMutableDictionary dictionary];
                 for( NSArray *ar in roiList[ i])
                 {
-                    NSMutableArray	*a = [NSMutableArray array];
-                    
+                    NSMutableArray *a = [NSMutableArray array];
                     for( ROI *r in ar)
-                        [a addObject: [[r copy] autorelease]];
-                    
-                    [array addObject: a];
+                    {
+                        NSString *identifier = [r isKindOfClass:[HorosVolumeLengthROI class]] ? [(HorosVolumeLengthROI *)r volumeIdentifier] : nil;
+                        ROI *copy = identifier.length ? volumeCopies[identifier] : nil;
+                        if( copy == nil)
+                        {
+                            copy = [[r copy] autorelease];
+                            if( identifier.length) volumeCopies[identifier] = copy;
+                        }
+                        [a addObject:copy];
+                    }
+                    [array addObject:a];
                 }
                 [rois addObject: array];
             }
@@ -1963,7 +2143,15 @@ static volatile int numberOfThreadsForRelisce = 0;
     if( succeed)
     {
         int mx = maxMovieIndex;
-        
+        NSMutableArray *volumeSnapshots = [NSMutableArray arrayWithCapacity:mx];
+        for( int movie = 0; movie < mx; movie++)
+        {
+            NSArray *lengths = [self volumeLengthROIsForMovieIndex:movie];
+            if( newViewer) lengths = [[[NSArray alloc] initWithArray:lengths copyItems:YES] autorelease];
+            NSDictionary *state = [[[self volumeLengthStateForMovieIndex:movie create:YES] copy] autorelease];
+            [volumeSnapshots addObject:@{@"rois":lengths, @"state":state}];
+        }
+        ViewerController *reslicedViewer = self;
         for( int j = 0 ; j < mx; j++)
         {
             if( j == 0)
@@ -1974,6 +2162,7 @@ static volatile int numberOfThreadsForRelisce = 0;
                     
                     // CREATE A SERIES
                     new2DViewer = [self newWindow: [xPix objectAtIndex: j] :[xFiles objectAtIndex: j] :[xData objectAtIndex: j]];
+                    reslicedViewer = new2DViewer;
                     [new2DViewer setImageIndex: [[xPix objectAtIndex: j] count] /2];
                     [[new2DViewer window] makeKeyAndOrderFront: self];
                 }
@@ -1984,20 +2173,21 @@ static volatile int numberOfThreadsForRelisce = 0;
             }
             else
             {
-                [self addMovieSerie: [xPix objectAtIndex: j] :[xFiles objectAtIndex: j] :[xData objectAtIndex: j]];
+                [reslicedViewer addMovieSerie: [xPix objectAtIndex: j] :[xFiles objectAtIndex: j] :[xData objectAtIndex: j]];
             }
+            [reslicedViewer restoreVolumeLengthSnapshot:volumeSnapshots[j] movieIndex:j];
         }
         
-        [self setPostprocessed: YES];
+        [reslicedViewer setPostprocessed: YES];
         
-        [self computeInterval];
-        [self setWindowTitle:self];
-        [imageView setIndex: [[xPix objectAtIndex: 0] count]/2];
-        [imageView sendSyncMessage:0];
-        [self adjustSlider];
+        [reslicedViewer computeInterval];
+        [reslicedViewer setWindowTitle:self];
+        [[reslicedViewer imageView] setIndex: [[xPix objectAtIndex: 0] count]/2];
+        [[reslicedViewer imageView] sendSyncMessage:0];
+        [reslicedViewer adjustSlider];
         
-        [self ApplyCLUTString: previousCLUT];
-        [self ApplyOpacityString: previousOpacity];
+        [reslicedViewer ApplyCLUTString: previousCLUT];
+        [reslicedViewer ApplyOpacityString: previousOpacity];
     }
     
     [previousCLUT release];
@@ -2324,6 +2514,7 @@ static volatile int numberOfThreadsForRelisce = 0;
         
         int previousFusion = [popFusion selectedTag];
         int previousFusionActivated = [activatedFusion state];
+        NSInteger previousSlabCount = sliderFusion.integerValue;
         
         BOOL volumicData = [self isDataVolumicIn4D: NO];
         
@@ -2473,7 +2664,12 @@ static volatile int numberOfThreadsForRelisce = 0;
             [self checkEverythingLoaded];
             [self computeInterval];
             if( previousFusionActivated == NSOnState)
-                [self setFusionMode: previousFusion];
+            {
+                NSInteger maximum = MIN((NSInteger)sliderFusion.maxValue, (NSInteger)[pixList[curMovieIndex] count]);
+                [sliderFusion setIntegerValue:MAX(2, MIN(previousSlabCount, maximum))];
+                [stacksFusion setIntegerValue:sliderFusion.integerValue];
+                [self setFusionMode: maximum >= 2 ? previousFusion : 0];
+            }
             [popFusion selectItemWithTag:previousFusion];
         }
         
@@ -3438,6 +3634,7 @@ static volatile int numberOfThreadsForRelisce = 0;
 
 - (void)windowWillClose:(NSNotification *)notification
 {
+    [self cancelOpeningScaleToFit];
     [ViewerController clearFrontMost2DViewerCache];
     
 #ifndef OSIRIX_LIGHT
@@ -8390,6 +8587,7 @@ static char HorosRefreshCoalescerKey;
     
     [undoQueue removeAllObjects];
     [redoQueue removeAllObjects];
+    objc_setAssociatedObject(self, &HorosVolumeLengthStateKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     
     if( thickSlab)
     {
@@ -8401,6 +8599,7 @@ static char HorosRefreshCoalescerKey;
 - (void) dealloc
 {
     [ViewerController clearFrontMost2DViewerCache];
+    [openingContentBoundsByPixels release];
     
     if( [NSThread isMainThread] == NO)
         N2LogStackTrace( @"dealloc NOT on main thread");
@@ -8678,6 +8877,7 @@ static char HorosRefreshCoalescerKey;
 -(void) changeImageData:(NSMutableArray*)f :(NSMutableArray*)d :(NSData*) v :(BOOL) newViewerWindow
 {
     if( windowWillClose) return;
+    [self cancelOpeningScaleToFit];
     
 #ifndef OSIRIX_LIGHT
     [[OSIEnvironment sharedEnvironment] viewerControllerWillChangeData:self];
@@ -9267,6 +9467,9 @@ static char HorosRefreshCoalescerKey;
                     
                     if( newRows != 1 || newColumns != 1)
                         [self setImageRows: newRows columns: newColumns rescale: YES];
+
+                    if (!sameSeries)
+                        [self requestOpeningScaleToFit];
                 }
                 @catch( NSException *e)
                 {
@@ -9312,6 +9515,55 @@ static char HorosRefreshCoalescerKey;
 #ifndef OSIRIX_LIGHT
     [[OSIEnvironment sharedEnvironment] viewerControllerDidChangeData:self];
 #endif
+}
+
+- (void) cancelOpeningScaleToFit
+{
+    openingScaleToFitRequested = NO;
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(finishOpeningScaleToFit) object:nil];
+}
+
+- (void) requestOpeningScaleToFit
+{
+    [self cancelOpeningScaleToFit];
+    if (![[NSUserDefaults standardUserDefaults] boolForKey:@"ScaleToFitOnOpen"])
+        return;
+    openingScaleToFitRequested = YES;
+    // Open safely before the worker finishes the series envelope. Only this
+    // pending request authorizes its later application, never a load callback.
+    [self performSelector:@selector(finishOpeningScaleToFit) withObject:nil afterDelay:0.1];
+}
+
+- (void) finishOpeningScaleToFit
+{
+    if (!openingScaleToFitRequested || windowWillClose)
+        return;
+    if (delayedTileWindows)
+    {
+        // setImageRows and window tiling already have a deferred layout path.
+        [self performSelector:@selector(finishOpeningScaleToFit) withObject:nil afterDelay:0.1];
+        return;
+    }
+    if (![[NSUserDefaults standardUserDefaults] boolForKey:@"ScaleToFitOnOpen"])
+    { [self cancelOpeningScaleToFit]; return; }
+    BOOL pendingContent = loadingThread != nil;
+    if (!pendingContent) openingScaleToFitRequested = NO;
+    [self.window.contentView layoutSubtreeIfNeeded];
+    BOOL wasUpdating = [self updateTilingViewsValue];
+    [self setUpdateTilingViewsValue:YES];
+    @try
+    {
+        for (DCMView *view in seriesView.imageViews)
+            if (view.curDCM.isLoaded && !NSIsEmptyRect(view.bounds))
+            {
+                NSValue *value = pendingContent ? nil : openingContentBoundsByPixels[[NSValue valueWithNonretainedObject:view.dcmPixList]];
+                [view applyOpeningScaleToFit:value ? value.rectValue : NSZeroRect];
+            }
+    }
+    @finally
+    {
+        [self setUpdateTilingViewsValue:wasUpdating];
+    }
 }
 
 - (void) showWindowTransition
@@ -9361,12 +9613,64 @@ static char HorosRefreshCoalescerKey;
     }
 }
 
++ (NSDictionary*) openingContentBoundsForPixLists: (NSArray*) lists loadThread: (NSThread*) loadThread
+{
+    NSAssert(![NSThread isMainThread], @"Opening content analysis requires a worker thread");
+    NSMutableDictionary *results = [NSMutableDictionary dictionary];
+    NSOperationQueue *queue = [[[NSOperationQueue alloc] init] autorelease];
+    queue.maxConcurrentOperationCount = MAX(1, MIN(4, NSProcessInfo.processInfo.processorCount - 1));
+    for (NSArray *pixels in lists)
+    {
+        if (loadThread.isCancelled) return nil;
+        DCMPix *first = pixels.firstObject;
+        if (!first.isLoaded) continue;
+        long width = first.pwidth, height = first.pheight;
+        double ratio = first.pixelRatio;
+        __block NSRect envelope = NSZeroRect;
+        __block BOOL compatible = YES;
+        NSObject *lock = [[[NSObject alloc] init] autorelease];
+        for (DCMPix *pix in pixels)
+        {
+            if (loadThread.isCancelled) break;
+            [queue addOperationWithBlock:^{
+                @autoreleasepool
+                {
+                    if (loadThread.isCancelled) return;
+                    if (!pix.isLoaded || pix.pwidth != width || pix.pheight != height ||
+                        !isfinite(pix.pixelRatio) || fabs(pix.pixelRatio - ratio) > 1e-6)
+                    {
+                        @synchronized(lock) { compatible = NO; }
+                        return;
+                    }
+                    BOOL hu = [pix.modalityString isEqualToString:@"CT"] && [pix.rescaleType isEqualToString:@"HU"];
+                    HorosContentRect bounds;
+                    // Unknown/empty content contributes the full frame; it
+                    // must not let a small positive slice over-zoom the stack.
+                    NSRect rect = NSMakeRect(0, 0, width, height);
+                    if (HorosFindContentBounds(pix.fImage, pix.isRGB, hu, width, height, &bounds))
+                        rect = NSMakeRect(bounds.x, bounds.y, bounds.width, bounds.height);
+                    @synchronized(lock) { envelope = NSUnionRect(envelope, rect); }
+                }
+            }];
+        }
+        // Retained volume storage must outlive in-flight reads, including
+        // close/replacement cancellation.
+        [queue waitUntilAllOperationsAreFinished];
+        if (loadThread.isCancelled) return nil;
+        if (compatible)
+            results[[NSValue valueWithNonretainedObject:pixels]] = [NSValue valueWithRect:envelope];
+    }
+    return results;
+}
+
 - (void) startLoadImageThread
 {
     NSAssert([NSThread isMainThread], @"Viewer loading must start on the main thread");
     if( windowWillClose) return;
     
     originalOrientation = -1;
+    [openingContentBoundsByPixels release];
+    openingContentBoundsByPixels = nil;
     
     @synchronized( loadingThread)
     {
@@ -9388,6 +9692,7 @@ static char HorosRefreshCoalescerKey;
     [d setObject: volumeDataArray forKey: @"volumeDataArray"];
     [d setObject: pixListArray forKey: @"pixListArray"];
     [d setObject: self forKey: @"viewerController"];
+    d[@"computeOpeningContentBounds"] = @([[NSUserDefaults standardUserDefaults] boolForKey:@"ScaleToFitOnOpen"]);
     
     NSThread *tempThread = [[NSThread alloc] initWithTarget: [ViewerController class] selector: @selector(loadImageData:) object: d];
     @synchronized( tempThread)
@@ -9509,6 +9814,9 @@ static char HorosRefreshCoalescerKey;
     for (NSUInteger index = 0; index < pixListArray.count; ++index)
         if (pixListArray[index] != pixList[index]) return;
 
+    [openingContentBoundsByPixels release];
+    openingContentBoundsByPixels = [[dict objectForKey:@"openingContentBounds"] copy];
+
     // Retire this request before notifying consumers: a plugin/observer may
     // synchronously start the next load from DidLoadImagesNotification.
     [loadingThread autorelease];
@@ -9580,6 +9888,13 @@ static char HorosRefreshCoalescerKey;
 
     originalOrientation = -1;
     [self computeIntervalAsync];
+
+    // Complete only a request that survived interaction/workspace changes.
+    if (openingScaleToFitRequested)
+    {
+        [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(finishOpeningScaleToFit) object:nil];
+        [self performSelector:@selector(finishOpeningScaleToFit) withObject:nil afterDelay:0.1];
+    }
 
     [[NSNotificationCenter defaultCenter] postNotification:[NSNotification notificationWithName:OsirixViewerControllerDidLoadImagesNotification object:self]];
 
@@ -9755,6 +10070,12 @@ static char HorosRefreshCoalescerKey;
         // in the NSThread's input dictionary would create a retain cycle.
         NSMutableDictionary *completion = [[dict mutableCopy] autorelease];
         completion[@"loadThread"] = loadThread;
+        if ([dict[@"computeOpeningContentBounds"] boolValue])
+        {
+            NSDictionary *bounds = [self openingContentBoundsForPixLists:pixListArray loadThread:loadThread];
+            if (loadThread.isCancelled) return;
+            if (bounds) completion[@"openingContentBounds"] = bounds;
+        }
         [viewer performSelectorOnMainThread: @selector(finishLoadImageData:) withObject: completion waitUntilDone: NO];
     }
     NSLog( @"end loading: %f [s]", [NSDate timeIntervalSinceReferenceDate] - start);
@@ -12894,6 +13215,45 @@ static float oldsetww, oldsetwl;
     [[NSNotificationCenter defaultCenter] postNotificationName: OsirixRecomputeROINotification object:self userInfo: nil];
 }
 
+- (void) adjustThickSlabBySteps:(NSInteger)steps
+{
+    if (!steps || windowWillClose) return;
+    NSInteger maximum = (NSInteger)sliderFusion.maxValue;
+    for (int movie = 0; movie < maxMovieIndex; ++movie)
+        maximum = MIN(maximum, (NSInteger)[pixList[movie] count]);
+    if (maximum < 2) return;
+
+    BOOL active = activatedFusion.state == NSOnState;
+    NSInteger current = active ? sliderFusion.integerValue : 1;
+    // Activating always starts at two, regardless of saved thickness or the
+    // amplitude of this first event. Clamp before adding to avoid overflow.
+    NSInteger next = active ? MAX(1, MIN(maximum, current + MAX(-128, MIN(128, steps)))) : (steps > 0 ? 2 : 1);
+    if (next == current) return;
+    if (next == 1)
+    {
+        [self setFusionMode:0];
+        [stacksFusion setIntValue:1];
+        [imageView sendSyncMessage:0];
+        return; // The disabled slider retains a valid value >= 2.
+    }
+
+    [sliderFusion setIntegerValue:next];
+    if (!active)
+    {
+        [self popFusionAction:popFusion]; // Existing preparation, mode and refusal checks.
+        if (activatedFusion.state != NSOnState)
+        {
+            [stacksFusion setIntValue:1];
+            return;
+        }
+        // setFusionMode already updated all phases; do not project twice.
+        [stacksFusion setIntegerValue:next];
+        [[NSUserDefaults standardUserDefaults] setInteger:next forKey:@"stackThickness"];
+    }
+    else
+        [self sliderFusionAction:sliderFusion];
+}
+
 - (void) activateFusion:(id) sender
 {
     if( [sender state] == NSOffState)
@@ -13548,10 +13908,18 @@ static float oldsetww, oldsetwl;
                         
                         if( array)
                         {
+                            NSMutableArray *phaseROIs = [NSMutableArray array];
+                            for( ROI *roi in array)
+                                if( [roi isKindOfClass:[HorosVolumeLengthROI class]] == NO ||
+                                   [[(HorosVolumeLengthROI *)roi volumeLength][@"temporalIndex"] integerValue] == mIndex)
+                                    [phaseROIs addObject:roi];
+                            array = phaseROIs;
                             [[roiList[ mIndex] objectAtIndex:i] addObjectsFromArray:array];
                             
                             for( ROI *r in array)
                             {
+                                if( [r isKindOfClass:[HorosVolumeLengthROI class]])
+                                    [self registerVolumeLengthROI:(HorosVolumeLengthROI *)r movieIndex:mIndex anchor:fileList[mIndex][i]];
                                 if( r.isAliased)
                                 {
                                     r.originalIndexForAlias = i;
@@ -13573,6 +13941,20 @@ static float oldsetww, oldsetwl;
                                 [imageView roiSet: r];
                         }
                     }
+                }
+                for( HorosVolumeLengthROI *roi in [self volumeLengthROIsForMovieIndex:mIndex])
+                    [self attachVolumeLengthROI:roi movieIndex:mIndex];
+                if( [[pixList[mIndex] firstObject] generated])
+                {
+                    DicomImage *anchor = [self volumeLengthStateForMovieIndex:mIndex create:YES][@"anchor"];
+                    NSArray *stored = anchor ? HorosVolumeLengthReadArchive([anchor.series.study roiPathForImage:anchor]) : @[];
+                    for( ROI *roi in stored)
+                        if( [roi isKindOfClass:[HorosVolumeLengthROI class]] &&
+                           [[(HorosVolumeLengthROI *)roi volumeLength][@"temporalIndex"] integerValue] == mIndex)
+                        {
+                            [self registerVolumeLengthROI:(HorosVolumeLengthROI *)roi movieIndex:mIndex anchor:anchor];
+                            [self attachVolumeLengthROI:(HorosVolumeLengthROI *)roi movieIndex:mIndex];
+                        }
                 }
             }
         }
@@ -13637,6 +14019,7 @@ static float oldsetww, oldsetwl;
         @try
         {
             NSMutableArray *allDICOMSR = [NSMutableArray array];
+            NSMutableDictionary *volumeAnchorPaths = [NSMutableDictionary dictionary];
             
             for( int i = 0; i < [fileList[ mIndex] count]; i++)
             {
@@ -13670,14 +14053,21 @@ static float oldsetww, oldsetwl;
                                 
                                 for( ROI *r in roisArray)
                                 {
-                                    [r setPix: [pixList[mIndex] objectAtIndex:i]];
-                                    
-                                    if( r.isAliased && i != r.originalIndexForAlias)
-                                        [aliasROIs addObject: r];
+                                    if( [r isKindOfClass:[HorosVolumeLengthROI class]])
+                                        [aliasROIs addObject:r];
+                                    else
+                                    {
+                                        [r setPix: [pixList[mIndex] objectAtIndex:i]];
+                                        if( r.isAliased && i != r.originalIndexForAlias)
+                                            [aliasROIs addObject:r];
+                                    }
                                 }
                                 
                                 [roisArray removeObjectsInArray: aliasROIs];
                             }
+                            if( [[self volumeLengthStateForMovieIndex:mIndex create:NO][@"anchors"] count])
+                                for( ROI *stored in HorosVolumeLengthReadArchive(str))
+                                    if( [stored isKindOfClass:[HorosVolumeLengthROI class]]) [roisArray addObject:stored];
                             
                             if( [roisArray count])
                             {
@@ -13685,6 +14075,7 @@ static float oldsetww, oldsetwl;
                                 {
                                     [SRAnnotation archiveROIsAsDICOM: roisArray toPath: str forImage: image];
                                     [allDICOMSR addObject: str];
+                                    volumeAnchorPaths[image.objectID] = str;
                                 }
                             }
                             else
@@ -13695,6 +14086,7 @@ static float oldsetww, oldsetwl;
                                     {
                                         [SRAnnotation archiveROIsAsDICOM: roisArray toPath: str forImage: image];
                                         [allDICOMSR addObject: str];
+                                        volumeAnchorPaths[image.objectID] = str;
                                     }
                                 }
                             }
@@ -13711,6 +14103,7 @@ static float oldsetww, oldsetwl;
                 }
             }
             
+            [self saveVolumeLengthROIs:mIndex writtenPaths:allDICOMSR anchorPaths:volumeAnchorPaths];
             if (allDICOMSR.count)
                 [database addFilesAtPaths:allDICOMSR postNotifications:YES dicomOnly:YES rereadExistingItems:YES generatedByOsiriX:YES];
         }
@@ -20953,7 +21346,12 @@ static float oldsetww, oldsetwl;
     // Explicit interpolation only. Occupied-only volume is HorosROIVolumeGeometry.
     if( generateMissingROIs)
     {
-        [self roiDeleteGeneratedROIsForName: [selectedRoi name]];
+        // Surface preparation tracks temporary additions in generatedROIs.
+        // Keep existing interpolated contours: deleting them here and then
+        // removing their replacements changes the source ROI and its volume.
+        // The explicit Generate Missing ROIs command still regenerates them.
+        if( generatedROIs == nil)
+            [self roiDeleteGeneratedROIsForName: [selectedRoi name]];
         
         for( int x = 0; x < [pixList[curMovieIndex] count]; x++)
         {

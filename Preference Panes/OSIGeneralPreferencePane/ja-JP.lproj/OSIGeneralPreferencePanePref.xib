@@ -398,14 +398,14 @@ Gw
                             <action selector="endEditCompressionSettings:" target="-2" id="282"/>
                         </connections>
                     </button>
-                    <scrollView focusRingType="none" horizontalLineScroll="19" horizontalPageScroll="10" verticalLineScroll="19" verticalPageScroll="10" hasHorizontalScroller="NO" hasVerticalScroller="NO" usesPredominantAxisScrolling="NO" id="215">
+                    <scrollView focusRingType="none" horizontalLineScroll="19" horizontalPageScroll="10" verticalLineScroll="19" verticalPageScroll="10" hasHorizontalScroller="NO" hasVerticalScroller="YES" usesPredominantAxisScrolling="NO" id="215">
                         <rect key="frame" x="483" y="49" width="457" height="341"/>
                         <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
                         <clipView key="contentView" id="EK6-dZ-HuA">
                             <rect key="frame" x="1" y="0.0" width="455" height="340"/>
                             <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                             <subviews>
-                                <tableView focusRingType="none" verticalHuggingPriority="750" allowsExpansionToolTips="YES" alternatingRowBackgroundColors="YES" columnSelection="YES" multipleSelection="NO" autosaveColumns="NO" headerView="219" id="218">
+                                <tableView viewBased="YES" rowHeight="22" focusRingType="none" verticalHuggingPriority="750" allowsExpansionToolTips="YES" alternatingRowBackgroundColors="YES" columnSelection="NO" multipleSelection="NO" autosaveColumns="NO" headerView="219" id="218">
                                     <rect key="frame" x="0.0" y="0.0" width="455" height="19"/>
                                     <autoresizingMask key="autoresizingMask"/>
                                     <size key="intercellSpacing" width="3" height="2"/>
@@ -425,13 +425,6 @@ Gw
                                                 <color key="backgroundColor" name="controlBackgroundColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
                                             <tableColumnResizingMask key="resizingMask" resizeWithTable="YES"/>
-                                            <connections>
-                                                <binding destination="233" name="value" keyPath="arrangedObjects.modality" id="244">
-                                                    <dictionary key="options">
-                                                        <integer key="NSConditionallySetsEditable" value="1"/>
-                                                    </dictionary>
-                                                </binding>
-                                            </connections>
                                         </tableColumn>
                                         <tableColumn identifier="compression" width="170" minWidth="170" maxWidth="170" id="221">
                                             <tableHeaderCell key="headerCell" lineBreakMode="truncatingTail" borderStyle="border" alignment="left" title="Compression">
@@ -451,15 +444,9 @@ Gw
                                                         <menuItem title="JPEG2000 Lossless/Lossy" state="on" tag="3" id="231"/>
                                                         <menuItem title="JPEG-LS Lossless/Lossy" tag="4" id="396"/>
                                                     </items>
-                                                    <connections>
-                                                        <outlet property="delegate" destination="-2" id="287"/>
-                                                    </connections>
                                                 </menu>
                                             </popUpButtonCell>
                                             <tableColumnResizingMask key="resizingMask" resizeWithTable="YES" userResizable="YES"/>
-                                            <connections>
-                                                <binding destination="233" name="selectedTag" keyPath="arrangedObjects.compression" id="253"/>
-                                            </connections>
                                         </tableColumn>
                                         <tableColumn identifier="quality" width="177" minWidth="150" maxWidth="180" id="224">
                                             <tableHeaderCell key="headerCell" lineBreakMode="truncatingTail" borderStyle="border" alignment="left" title="Quality (Lossless to Poor)">
@@ -471,18 +458,11 @@ Gw
                                                 <font key="font" metaFont="system"/>
                                             </sliderCell>
                                             <tableColumnResizingMask key="resizingMask" resizeWithTable="YES" userResizable="YES"/>
-                                            <connections>
-                                                <binding destination="233" name="enabled" keyPath="arrangedObjects.compression" id="264">
-                                                    <dictionary key="options">
-                                                        <string key="NSValueTransformerName">IsQualityEnabled</string>
-                                                    </dictionary>
-                                                </binding>
-                                                <binding destination="233" name="value" keyPath="arrangedObjects.quality" id="254"/>
-                                            </connections>
                                         </tableColumn>
                                     </tableColumns>
                                     <connections>
                                         <binding destination="233" name="content" keyPath="arrangedObjects" id="234"/>
+                                        <outlet property="delegate" destination="-2" id="compression-delegate-regular"/>
                                     </connections>
                                 </tableView>
                             </subviews>
@@ -501,14 +481,14 @@ Gw
                             <autoresizingMask key="autoresizingMask"/>
                         </tableHeaderView>
                     </scrollView>
-                    <scrollView focusRingType="none" horizontalLineScroll="19" horizontalPageScroll="10" verticalLineScroll="19" verticalPageScroll="10" hasHorizontalScroller="NO" hasVerticalScroller="NO" usesPredominantAxisScrolling="NO" id="288">
+                    <scrollView focusRingType="none" horizontalLineScroll="19" horizontalPageScroll="10" verticalLineScroll="19" verticalPageScroll="10" hasHorizontalScroller="NO" hasVerticalScroller="YES" usesPredominantAxisScrolling="NO" id="288">
                         <rect key="frame" x="20" y="49" width="457" height="341"/>
                         <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
                         <clipView key="contentView" id="FNE-Eu-X4N">
                             <rect key="frame" x="1" y="0.0" width="455" height="340"/>
                             <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                             <subviews>
-                                <tableView focusRingType="none" verticalHuggingPriority="750" allowsExpansionToolTips="YES" alternatingRowBackgroundColors="YES" columnSelection="YES" multipleSelection="NO" autosaveColumns="NO" headerView="289" id="290">
+                                <tableView viewBased="YES" rowHeight="22" focusRingType="none" verticalHuggingPriority="750" allowsExpansionToolTips="YES" alternatingRowBackgroundColors="YES" columnSelection="NO" multipleSelection="NO" autosaveColumns="NO" headerView="289" id="290">
                                     <rect key="frame" x="0.0" y="0.0" width="455" height="19"/>
                                     <autoresizingMask key="autoresizingMask"/>
                                     <size key="intercellSpacing" width="3" height="2"/>
@@ -528,13 +508,6 @@ Gw
                                                 <color key="backgroundColor" name="controlBackgroundColor" catalog="System" colorSpace="catalog"/>
                                             </textFieldCell>
                                             <tableColumnResizingMask key="resizingMask" resizeWithTable="YES"/>
-                                            <connections>
-                                                <binding destination="320" name="value" keyPath="arrangedObjects.modality" id="328">
-                                                    <dictionary key="options">
-                                                        <integer key="NSConditionallySetsEditable" value="1"/>
-                                                    </dictionary>
-                                                </binding>
-                                            </connections>
                                         </tableColumn>
                                         <tableColumn identifier="compression" width="170" minWidth="170" maxWidth="170" id="294">
                                             <tableHeaderCell key="headerCell" lineBreakMode="truncatingTail" borderStyle="border" alignment="left" title="Compression">
@@ -557,9 +530,6 @@ Gw
                                                 </menu>
                                             </popUpButtonCell>
                                             <tableColumnResizingMask key="resizingMask" resizeWithTable="YES" userResizable="YES"/>
-                                            <connections>
-                                                <binding destination="320" name="selectedTag" keyPath="arrangedObjects.compression" id="329"/>
-                                            </connections>
                                         </tableColumn>
                                         <tableColumn identifier="quality" width="177" minWidth="150" maxWidth="180" id="293">
                                             <tableHeaderCell key="headerCell" lineBreakMode="truncatingTail" borderStyle="border" alignment="left" title="Quality (Lossless to Poor)">
@@ -571,18 +541,11 @@ Gw
                                                 <font key="font" metaFont="system"/>
                                             </sliderCell>
                                             <tableColumnResizingMask key="resizingMask" resizeWithTable="YES" userResizable="YES"/>
-                                            <connections>
-                                                <binding destination="320" name="enabled" keyPath="arrangedObjects.compression" id="333">
-                                                    <dictionary key="options">
-                                                        <string key="NSValueTransformerName">IsQualityEnabled</string>
-                                                    </dictionary>
-                                                </binding>
-                                                <binding destination="320" name="value" keyPath="arrangedObjects.quality" id="330"/>
-                                            </connections>
                                         </tableColumn>
                                     </tableColumns>
                                     <connections>
                                         <binding destination="320" name="content" keyPath="arrangedObjects" id="327"/>
+                                        <outlet property="delegate" destination="-2" id="compression-delegate-lowres"/>
                                     </connections>
                                 </tableView>
                             </subviews>

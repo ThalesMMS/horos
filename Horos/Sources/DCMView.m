@@ -40,6 +40,7 @@
 #import "DCMView.h"
 #import "Horos-Swift.h"
 #import "PlanarHostBridge.h"
+#import "ScrollPositionPreview.h"
 #import "PatientCrosshairBridge.h"
 #import "StringTexture.h"
 #import "DCMPix.h"
@@ -1578,8 +1579,24 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
         // Unselect all ROIs
         for( ROI *r in curRoiList) [r setROIMode: ROI_sleep];
         
+        NSMutableArray *planarROIs = [NSMutableArray array];
         for( ROI *r in roiArray)
         {
+            if ([r isKindOfClass:HorosVolumeLengthROI.class])
+            {
+                NSDictionary *endpoint = [self lengthEndpointAt:NSZeroPoint];
+                HorosVolumeLengthROI *physical = (HorosVolumeLengthROI*)r;
+                if (![physical.volumeLength[@"series"] isEqual:endpoint[@"series"]] ||
+                    ![physical.volumeLength[@"frameOfReference"] isEqual:endpoint[@"frameOfReference"]]) { NSBeep(); continue; }
+                NSMutableDictionary *payload = [[physical.volumeLength mutableCopy] autorelease];
+                payload[@"id"] = NSUUID.UUID.UUIDString;
+                payload[@"temporalIndex"] = endpoint[@"temporalIndex"];
+                physical.volumeLength = payload;
+                [[self windowController] addVolumeLengthROI:physical];
+                [physical setROIMode:ROI_selected];
+                continue;
+            }
+            [planarROIs addObject:r];
             r.isAliased = NO;
             
             //Correct the origin only if the orientation is the same
@@ -1596,7 +1613,7 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
                 [[self windowController] setKeyImage: self];
         }
         
-        [curRoiList addObjectsFromArray: roiArray];
+        [curRoiList addObjectsFromArray:planarROIs];
         
         for( long i = 0 ; i < [roiArray count] ; i++) {
             NSDictionary *userInfo = [NSDictionary dictionaryWithObjectsAndKeys:[roiArray objectAtIndex: i], @"ROI",
@@ -1689,7 +1706,7 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
             {
                 groupID = [r groupID];
                 [[NSNotificationCenter defaultCenter] postNotificationName:OsirixRemoveROINotification object:r userInfo: nil];
-                [rArray removeObjectAtIndex:i];
+                [self removeROIFromSliceOrVolume:r];
                 i--;
                 if(groupID!=0.0)
                     [self deleteROIGroupID:groupID];
@@ -1966,6 +1983,7 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
 
 -(void) setCurrentTool:(ToolMode) i
 {
+    if (i != currentTool) [self cancelLengthPlacement];
     BOOL keepROITool = (i == tROISelector || i == tRepulsor || currentTool == tROISelector || currentTool == tRepulsor);
     
     keepROITool = keepROITool || [self roiTool:currentTool] || [self roiTool:i];
@@ -2076,8 +2094,8 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
 {
     NSRect  sizeView = [self convertRectToBacking: [self bounds]]; // Retina
     
-    int w = d.pwidth;
-    int h = d.pheight;
+    double w = d.pwidth;
+    double h = d.pheight;
     
     if( d.shutterEnabled)
     {
@@ -2085,10 +2103,15 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
         h = d.shutterRect.size.height;
     }
     
-    if( sizeView.size.width / w < sizeView.size.height / h / d.pixelRatio )
-        return sizeView.size.width / w;
-    else
-        return sizeView.size.height / h / d.pixelRatio;
+    h *= d.pixelRatio;
+    double radians = self.rotation * M_PI / 180.0;
+    double rotatedWidth = fabs(cos(radians)) * w + fabs(sin(radians)) * h;
+    double rotatedHeight = fabs(sin(radians)) * w + fabs(cos(radians)) * h;
+    if (!isfinite(rotatedWidth) || !isfinite(rotatedHeight) ||
+        rotatedWidth <= 0 || rotatedHeight <= 0 ||
+        sizeView.size.width <= 0 || sizeView.size.height <= 0)
+        return self.scaleValue > 0 ? self.scaleValue : 1;
+    return MIN(sizeView.size.width / rotatedWidth, sizeView.size.height / rotatedHeight);
 }
 
 - (void) scaleToFit
@@ -2101,7 +2124,7 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
     if (self.curDCM.shutterEnabled)
     {
         origin.x = ((self.curDCM.pwidth  * 0.5f ) - (self.curDCM.shutterRect.origin.x + (self.curDCM.shutterRect.size.width  * 0.5f ))) * scaleValue;
-        origin.y = -((self.curDCM.pheight * 0.5f ) - (self.curDCM.shutterRect.origin.y + (self.curDCM.shutterRect.size.height * 0.5f ))) * scaleValue;
+        origin.y = -((self.curDCM.pheight * 0.5f ) - (self.curDCM.shutterRect.origin.y + (self.curDCM.shutterRect.size.height * 0.5f ))) * scaleValue * self.curDCM.pixelRatio;
     }
     else
         origin.x = origin.y = 0;
@@ -2109,6 +2132,49 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
     [self setNeedsDisplay:YES];
     
     scaleToFitNoReentry = NO;
+}
+
+- (void) prepareForWorkspacePresentation
+{
+    // First draw also restores presentation. Restore it now so it cannot
+    // overwrite the fit; retain its rotation, flips and WL/WW.
+    if (!firstTimeDisplay)
+    {
+        firstTimeDisplay = YES;
+        [self updatePresentationStateFromSeries];
+    }
+}
+
+- (void) applyOpeningScaleToFit: (NSRect) content
+{
+    [self prepareForWorkspacePresentation];
+    DCMPix *pix = self.curDCM;
+    // Pixel analysis belongs to the loading worker. An empty result means
+    // pending/uncertain series content, so opening uses the complete matrix.
+    if (pix.shutterEnabled || NSIsEmptyRect(content))
+    { [self scaleToFit]; return; }
+    NSRect viewport = [self convertRectToBacking:self.bounds];
+    double radians = self.rotation * M_PI / 180.0;
+    double w = content.size.width, h = content.size.height * pix.pixelRatio;
+    double rw = fabs(cos(radians)) * w + fabs(sin(radians)) * h;
+    double rh = fabs(sin(radians)) * w + fabs(cos(radians)) * h;
+    double fullFit = [self scaleToFitForDCMPix:pix];
+    double zoom = fmin(viewport.size.width / rw, viewport.size.height / rh);
+    // Avoid extreme zoom on a tiny island and insignificant changes on images
+    // already occupying their matrix. All margins above stay inside the image.
+    zoom = fmin(zoom, fullFit * 3);
+    if (!isfinite(zoom) || rw <= 0 || rh <= 0 || zoom <= fullFit * 1.05)
+    { [self scaleToFit]; return; }
+    self.scaleValue = zoom;
+    origin.x = (pix.pwidth * .5 - NSMidX(content)) * scaleValue;
+    origin.y = (NSMidY(content) - pix.pheight * .5) * scaleValue * pix.pixelRatio;
+    [self setNeedsDisplay:YES];
+}
+
+- (void) cancelOpeningScaleToFitForInteraction
+{
+    if ([self is2DViewer])
+        [[self windowController] cancelOpeningScaleToFit];
 }
 
 - (void) setIndexWithReset:(short) index :(BOOL) sizeToFit
@@ -2194,6 +2260,7 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
 
 - (void) setPixels: (NSMutableArray*) pixels files: (NSArray*) files rois: (NSMutableArray*) rois firstImage: (short) firstImage level: (char) level reset: (BOOL) reset
 {
+    [self horosDiscardScrollPreview];
     [drawLock lock];
     
     @try
@@ -2215,6 +2282,9 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
         
         if( dcmPixList != pixels)
         {
+            [self cancelLengthPlacement];
+            slabScrollRemainder = 0;
+            slabScrollTimestamp = 0;
             [dcmPixList release];
             dcmPixList = [pixels retain];
             
@@ -2282,6 +2352,8 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
 
 - (void) dealloc
 {
+    [self horosDiscardScrollPreview];
+    [self cancelLengthPlacement];
     [self horosInvalidatePlanar];
     NSLog(@"DCMView released");
     
@@ -2738,6 +2810,9 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
 
 - (void) keyDown:(NSEvent *)event
 {
+    if (event.keyCode == 53 && (lengthFirstEndpoint || lengthClickEvent))
+    { [self cancelLengthPlacement]; return; }
+    [self cancelOpeningScaleToFitForInteraction];
     if ([self eventToPlugins:event]) return;
     if( [[event characters] length] == 0) return;
     
@@ -2831,7 +2906,7 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
                             }
                             groupID = [r groupID];
                             [[NSNotificationCenter defaultCenter] postNotificationName: OsirixRemoveROINotification object:r userInfo: nil];
-                            [rArray removeObjectAtIndex:i];
+                            [self removeROIFromSliceOrVolume:r];
                             i--;
                             if( groupID != 0.0)
                                 [self deleteROIGroupID:groupID];
@@ -2847,7 +2922,7 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
                     {
                         groupID = [r groupID];
                         [[NSNotificationCenter defaultCenter] postNotificationName: OsirixRemoveROINotification object:r userInfo: nil];
-                        [rArray removeObjectAtIndex:i];
+                        [self removeROIFromSliceOrVolume:r];
                         i--;
                         if( groupID != 0.0)
                             [self deleteROIGroupID:groupID];
@@ -3099,6 +3174,18 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
     return YES;
 }
 
+// A physical Length is one object shared by slice lists. Removing only the
+// visible alias would resurrect it on the next slice and at the next save.
+- (void)removeROIFromSliceOrVolume:(ROI*)roi
+{
+    [roi retain];
+    if ([self is2DViewer] && [roi isKindOfClass:HorosVolumeLengthROI.class])
+        for (NSMutableArray *slice in dcmRoiList) [slice removeObjectIdenticalTo:roi];
+    else
+        [curRoiList removeObjectIdenticalTo:roi];
+    [roi release];
+}
+
 - (void)deleteROIGroupID:(NSTimeInterval)groupID
 {
     [drawLock lock];
@@ -3114,7 +3201,7 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
             if([[rArray objectAtIndex:i] groupID] == groupID)
             {
                 [[NSNotificationCenter defaultCenter] postNotificationName:OsirixRemoveROINotification object:[rArray objectAtIndex:i] userInfo:nil];
-                [rArray removeObjectAtIndex:i];
+                [self removeROIFromSliceOrVolume:[rArray objectAtIndex:i]];
                 i--;
                 
                 [[NSNotificationCenter defaultCenter] postNotificationName:OsirixROIRemovedFromArrayNotification object:NULL userInfo:NULL];
@@ -3347,6 +3434,7 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
 
 - (void)mouseUp:(NSEvent *)event
 {
+    if (lengthClickEvent) { [self finishLengthClick:event]; return; }
     if( [self shouldIgnoreHiddenCursorEvent:event]) return;
     if ([self eventToPlugins:event]) return;
     
@@ -3759,6 +3847,7 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
 
 -(void) mouseMovedInView: (NSPoint) eventLocationInWindow
 {
+    [self horosMoveScrollPreviewAtWindowPoint:eventLocationInWindow];
     NSUInteger modifierFlags = [[[NSApplication sharedApplication] currentEvent] modifierFlags];
     NSPoint eventLocationInView = [self convertPoint: eventLocationInWindow fromView: nil];
     
@@ -4189,6 +4278,7 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
 
 -(void) magnifyWithEvent:(NSEvent *)anEvent
 {
+    [self cancelOpeningScaleToFitForInteraction];
     [self setScaleValue: scaleValue + anEvent.deltaZ / 60.];
     
     [self setNeedsDisplay:YES];
@@ -4196,6 +4286,7 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
 
 -(void) rotateWithEvent:(NSEvent *)anEvent
 {
+    [self cancelOpeningScaleToFitForInteraction];
     [self setRotation: rotation - anEvent.rotation * 1.5];
     
     [self setNeedsDisplay:YES];
@@ -4263,8 +4354,108 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
     }
 }
 
+- (void)cancelLengthPlacement
+{
+    [lengthClickEvent release]; lengthClickEvent = nil;
+    [lengthFirstEndpoint release]; lengthFirstEndpoint = nil;
+    [lengthPendingMarker release]; lengthPendingMarker = nil;
+    [self setNeedsDisplay:YES];
+}
+
+- (BOOL)beginLengthClick:(NSEvent*)event
+{
+    if (replayingLengthDrag || ![self is2DViewer] || event.type != NSEventTypeLeftMouseDown ||
+        drawingROI || [self getTool:event] != tMesure ||
+        (event.modifierFlags & (NSEventModifierFlagCommand | NSEventModifierFlagShift | NSEventModifierFlagOption | NSEventModifierFlagControl))) return NO;
+    NSPoint point = [self ConvertFromNSView2GL:[self convertPoint:event.locationInWindow fromView:nil]];
+    // Existing ROI/handle selection keeps the established mouse-down path.
+    for (ROI *roi in curRoiList)
+    {
+        roi.curView = self;
+        if ([roi clickInROI:point :self.curDCM.pwidth/2. :self.curDCM.pheight/2. :scaleValue :NO]) return NO;
+    }
+    [self deleteMouseDownTimer];
+    [lengthClickEvent release]; lengthClickEvent = [event retain];
+    currentMouseEventTool = tMesure;
+    return YES;
+}
+
+- (NSDictionary*)lengthEndpointAt:(NSPoint)point
+{
+    NSArray *patient = [HorosVolumeLengthROI patientPoint:point pix:self.curDCM];
+    if (!patient) return nil;
+    id image = self.curDCM.imageObj;
+    NSString *series = [image valueForKeyPath:@"series.seriesDICOMUID"];
+    if (!series.length) return nil;
+    NSDictionary *reference = [HorosVolumeLengthROI referenceForPix:self.curDCM];
+    return @{@"point":patient, @"series":series, @"frameOfReference":self.curDCM.frameofReferenceUID,
+             @"temporalIndex":@([[self windowController] curMovieIndex]), @"reference":reference};
+}
+
+- (void)finishLengthClick:(NSEvent*)event
+{
+    [lengthClickEvent release]; lengthClickEvent = nil;
+    if (self.curDCM.stack > 1)
+    {
+        NSBeep(); [self setNeedsDisplay:YES]; return; // Keep A until thin slices return.
+    }
+    NSPoint point = [self ConvertFromNSView2GL:[self convertPoint:event.locationInWindow fromView:nil]];
+    NSDictionary *endpoint = [self lengthEndpointAt:point];
+    if (!endpoint)
+    {
+        NSRunInformationalAlertPanel(NSLocalizedString(@"Length", nil),
+            NSLocalizedString(@"Measuring between slices requires valid patient geometry. Click and drag remains available for a 2D length.", nil), NSLocalizedString(@"OK", nil), nil, nil);
+        return;
+    }
+    if (lengthFirstEndpoint)
+    {
+        if (![lengthFirstEndpoint[@"series"] isEqual:endpoint[@"series"]] ||
+            ![lengthFirstEndpoint[@"frameOfReference"] isEqual:endpoint[@"frameOfReference"]] ||
+            ![lengthFirstEndpoint[@"temporalIndex"] isEqual:endpoint[@"temporalIndex"]])
+            [self cancelLengthPlacement];
+    }
+    if (!lengthFirstEndpoint)
+    {
+        lengthFirstEndpoint = [endpoint copy];
+        lengthPendingMarker = [[ROI alloc] initWithType:t2DPoint :self.curDCM.pixelSpacingX :self.curDCM.pixelSpacingY :[DCMPix originCorrectedAccordingToOrientation:self.curDCM]];
+    }
+    else
+    {
+        NSDictionary *payload = @{@"version":@1, @"id":NSUUID.UUID.UUIDString,
+            @"a":lengthFirstEndpoint[@"point"], @"b":endpoint[@"point"],
+            @"referenceA":lengthFirstEndpoint[@"reference"], @"referenceB":endpoint[@"reference"],
+            @"series":endpoint[@"series"], @"frameOfReference":endpoint[@"frameOfReference"],
+            @"temporalIndex":endpoint[@"temporalIndex"]};
+        if (![HorosVolumeLengthROI validPayload:payload]) { NSBeep(); return; }
+        HorosVolumeLengthROI *roi = [[[HorosVolumeLengthROI alloc] initWithType:tMesure :self.curDCM.pixelSpacingX :self.curDCM.pixelSpacingY :[DCMPix originCorrectedAccordingToOrientation:self.curDCM]] autorelease];
+        roi.volumeLength = payload;
+        roi.name = NSLocalizedString(@"Length", nil);
+        for (ROI *other in curRoiList) [other setROIMode:ROI_sleep];
+        [[self windowController] addToUndoQueue:@"roi"];
+        [[self windowController] addVolumeLengthROI:roi];
+        [roi setROIMode:ROI_selected];
+        [self cancelLengthPlacement];
+    }
+    [self setNeedsDisplay:YES];
+}
+
+- (void)drawPendingLength
+{
+    if (!lengthFirstEndpoint || ![HorosVolumeLengthROI validGeometry:self.curDCM]) return;
+    NSPoint point = [HorosVolumeLengthROI projectPoint:lengthFirstEndpoint[@"point"] pix:self.curDCM depth:NULL];
+    lengthPendingMarker.curView = self;
+    lengthPendingMarker.pix = self.curDCM;
+    [lengthPendingMarker setROIRect:NSMakeRect(point.x, point.y, 0, 0)];
+    lengthPendingMarker.name = self.curDCM.stack > 1 ?
+        NSLocalizedString(@"Length: return to thin slices to place the second point", nil) :
+        NSLocalizedString(@"Length: select the second point (Esc to cancel)", nil);
+    [lengthPendingMarker drawROI:scaleValue :self.curDCM.pwidth/2. :self.curDCM.pheight/2. :self.curDCM.pixelSpacingX :self.curDCM.pixelSpacingY];
+    lengthPendingMarker.textualBoxLine2 = lengthPendingMarker.textualBoxLine3 = lengthPendingMarker.textualBoxLine4 = lengthPendingMarker.textualBoxLine5 = lengthPendingMarker.textualBoxLine6 = nil;
+}
+
 - (void) mouseDown:(NSEvent *)event
 {
+    [self cancelOpeningScaleToFitForInteraction];
     if( [self shouldIgnoreHiddenCursorEvent:event]) return;
     if ([self eventToPlugins:event]) return;
     
@@ -4293,6 +4484,8 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
         }
     }
     
+    if ([self beginLengthClick:event]) return;
+
     if (_mouseDownTimer)
         [self deleteMouseDownTimer];
     
@@ -4955,6 +5148,52 @@ static NSInteger HorosMovieIndexForScroll(NSInteger current, NSInteger count, do
         if( [[self windowController] windowWillClose]) return;
     }
     
+    if ([self is2DViewer] && dcmPixList && ![stringID isEqualToString:@"previewDatabase"])
+    {
+        NSEventPhase phase = theEvent.phase, momentum = theEvent.momentumPhase;
+        NSEventModifierFlags flags = theEvent.modifierFlags;
+        BOOL slabGesture = (flags & NSEventModifierFlagOption) &&
+                           !(flags & (NSEventModifierFlagCommand | NSEventModifierFlagShift));
+        if (phase & (NSEventPhaseBegan | NSEventPhaseMayBegin))
+        {
+            consumeSlabScrollTail = NO;
+            slabScrollRemainder = 0;
+        }
+        if (consumeSlabScrollTail && !slabGesture)
+        {
+            // Releasing Option in the same gesture must not turn its remaining
+            // finger or momentum events into slice, phase, zoom or blend input.
+            if (momentum != NSEventPhaseNone || phase != NSEventPhaseNone)
+                return;
+            consumeSlabScrollTail = NO; // A fresh discrete wheel event.
+        }
+        if (slabGesture)
+        {
+            if (momentum != NSEventPhaseNone) return;
+            consumeSlabScrollTail = theEvent.hasPreciseScrollingDeltas || phase != NSEventPhaseNone;
+            if (theEvent.timestamp - slabScrollTimestamp > 0.3)
+                slabScrollRemainder = 0;
+            slabScrollTimestamp = theEvent.timestamp;
+            // The series' backing order has no bearing on slab thickness.
+            double change = [HorosScrollDirection wheelSignForFlippedData:NO] * deltaY / 2.5;
+            if (change == 0) return;
+            change = fmax(-128, fmin(128, change));
+            NSInteger steps;
+            if (theEvent.hasPreciseScrollingDeltas)
+            {
+                slabScrollRemainder += change;
+                steps = (NSInteger)trunc(slabScrollRemainder);
+                slabScrollRemainder -= steps;
+            }
+            else
+                steps = change > 0 ? (NSInteger)ceil(change) : (NSInteger)floor(change);
+            if (steps)
+                [[self windowController] adjustThickSlabBySteps:steps];
+            return;
+        }
+        slabScrollRemainder = 0;
+    }
+
     BOOL SelectWindowScrollWheel = [[NSUserDefaults standardUserDefaults] boolForKey: @"SelectWindowScrollWheel"];
     
     if( [theEvent modifierFlags] & NSAlphaShiftKeyMask) // Caps Lock
@@ -5003,7 +5242,7 @@ static NSInteger HorosMovieIndexForScroll(NSInteger current, NSInteger count, do
                         [self setBlendingFactor: blendingFactor];
                     }
                 }
-                else if( [theEvent modifierFlags]  & NSAlternateKeyMask)
+                else if( ([theEvent modifierFlags] & (NSAlternateKeyMask | NSShiftKeyMask)) == (NSAlternateKeyMask | NSShiftKeyMask))
                 {
                     if( [self is2DViewer] && [[self windowController] maxMovieIndex] > 1)
                     {
@@ -5058,6 +5297,10 @@ static NSInteger HorosMovieIndexForScroll(NSInteger current, NSInteger count, do
             }
             else if( fabs( deltaX) > 0.7 )
             {
+                // Slice navigation must not cancel the pending series fit.
+                // Only a gesture that actually changes the user's zoom wins
+                // over the asynchronous opening result.
+                [self cancelOpeningScaleToFitForInteraction];
                 [self mouseMoved: theEvent];	// Update some variables...
                 
                 float sScaleValue = scaleValue;
@@ -5103,6 +5346,9 @@ static NSInteger HorosMovieIndexForScroll(NSInteger current, NSInteger count, do
                 [[self windowController] propagateSettings];
             
             //[self setNeedsDisplay:YES];
+            if (fabs(deltaY) > 0 && fabs(deltaY)*2 > fabs(deltaX) &&
+                !(theEvent.modifierFlags & (NSEventModifierFlagCommand | NSEventModifierFlagOption)))
+                [self horosShowScrollPreviewAtWindowPoint:theEvent.locationInWindow];
             
             //[self displayIfNeeded];
         }
@@ -5114,6 +5360,7 @@ static NSInteger HorosMovieIndexForScroll(NSInteger current, NSInteger count, do
 
 - (void) otherMouseDown:(NSEvent *)event
 {
+    [self cancelOpeningScaleToFitForInteraction];
     if ([self eventToPlugins:event]) return;
     
     if( curImage < 0) return;
@@ -5127,6 +5374,7 @@ static NSInteger HorosMovieIndexForScroll(NSInteger current, NSInteger count, do
 
 - (void) rightMouseDown:(NSEvent *)event
 {
+    [self cancelOpeningScaleToFitForInteraction];
     if ([self eventToPlugins:event]) return;
     
     if( curImage < 0) return;
@@ -5275,6 +5523,20 @@ static NSInteger HorosMovieIndexForScroll(NSInteger current, NSInteger count, do
 #pragma mark Mouse dragging methods
 - (void)mouseDragged:(NSEvent *)event
 {
+    if (lengthClickEvent)
+    {
+        NSPoint down = [self convertPoint:lengthClickEvent.locationInWindow fromView:nil];
+        NSPoint now = [self convertPoint:event.locationInWindow fromView:nil];
+        // The synthetic mouseDragged from mouseDown is not a drag. AppKit view
+        // points make this threshold independent of Retina backing and zoom.
+        if (hypot(now.x-down.x, now.y-down.y) < 3.0) return;
+        NSEvent *downEvent = [lengthClickEvent retain];
+        [self cancelLengthPlacement];
+        replayingLengthDrag = YES;
+        [self mouseDown:downEvent];
+        replayingLengthDrag = NO;
+        [downEvent release];
+    }
     if( curImage < 0)
         return;
     
@@ -5741,6 +6003,7 @@ static NSInteger HorosMovieIndexForScroll(NSInteger current, NSInteger count, do
             
             // SYNCRO
             [self sendSyncMessage: curImage - previmage];
+            [self horosShowScrollPreviewAtWindowPoint:event.locationInWindow];
         }
     }
 }
@@ -8254,31 +8517,19 @@ static NSInteger HorosMovieIndexForScroll(NSInteger current, NSInteger count, do
 {
     *thickness = self.curDCM.sliceThickness;
     *location = self.curDCM.sliceLocation;
-    
-    if( self.curDCM.sliceThickness != 0 && self.curDCM.sliceLocation != 0)
+    if (curImage < 0 || curImage >= dcmPixList.count || self.curDCM.stack <= 1)
+        return;
+
+    // Location zero is a valid physical plane. Clip the slab to available
+    // slices in its actual projection direction, including both end slices.
+    NSInteger available = flippedData ? curImage + 1 : dcmPixList.count - curImage;
+    NSInteger count = MIN((NSInteger)self.curDCM.stack, available);
+    NSInteger last = curImage + (flippedData ? -1 : 1) * (count - 1);
+    double endLocation = [(DCMPix*)[dcmPixList objectAtIndex:last] sliceLocation];
+    if (isfinite(*location) && isfinite(endLocation))
     {
-        if( self.curDCM.stack > 1)
-        {
-            long maxVal = flippedData? maxVal = curImage-self.curDCM.stack : curImage+self.curDCM.stack;
-            
-            if( maxVal < 0) maxVal = curImage;
-            else if( maxVal > [dcmPixList count]) maxVal = [dcmPixList count] - curImage;
-            else maxVal = self.curDCM.stack;
-            
-            float vv = fabs( (maxVal-1) * [[dcmPixList objectAtIndex:0] sliceInterval]);
-            
-            vv += self.curDCM.sliceThickness;
-            
-            float pp;
-            
-            if( flippedData)
-                pp = ([(DCMPix*)[dcmPixList objectAtIndex: curImage] sliceLocation] + [(DCMPix*)[dcmPixList objectAtIndex: curImage - maxVal+1] sliceLocation])/2.;
-            else
-                pp = ([(DCMPix*)[dcmPixList objectAtIndex: curImage] sliceLocation] + [(DCMPix*)[dcmPixList objectAtIndex: curImage + maxVal-1] sliceLocation])/2.;
-            
-            *thickness = vv;
-            *location = pp;
-        }
+        *thickness += fabs(endLocation - *location);
+        *location = (*location + endLocation) / 2.0;
     }
 }
 
@@ -8402,7 +8653,7 @@ static NSInteger HorosMovieIndexForScroll(NSInteger current, NSInteger count, do
         NSDictionary *annotationsDictionary = self.curDCM.annotationsDictionary;
         
         NSMutableDictionary *xRasterInit = [NSMutableDictionary dictionary];
-        [xRasterInit setObject:[NSNumber numberWithInt:size.origin.x + 6*sf] forKey:@"TopLeft"];
+        [xRasterInit setObject:[NSNumber numberWithInt:size.origin.x + (6 + [self horosScrollPreviewAnnotationInset])*sf] forKey:@"TopLeft"];
         [xRasterInit setObject:[NSNumber numberWithInt:size.origin.x + 6*sf] forKey:@"MiddleLeft"];
         [xRasterInit setObject:[NSNumber numberWithInt:size.origin.x + 6*sf] forKey:@"LowerLeft"];
         [xRasterInit setObject:[NSNumber numberWithInt:size.origin.x + size.size.width-2*sf] forKey:@"TopRight"];
@@ -9671,6 +9922,8 @@ static NSInteger HorosMovieIndexForScroll(NSInteger current, NSInteger count, do
                         [r release];
                     }
                     
+                    [self drawPendingLength];
+
                     // let the pluginSDK draw anything it needs to draw, we use a notification for now, but that is nasty style, we really should be calling a method
 #ifndef OSIRIX_LIGHT
                     [[OSIEnvironment sharedEnvironment] drawDCMView:self];
@@ -9948,7 +10201,9 @@ static NSInteger HorosMovieIndexForScroll(NSInteger current, NSInteger count, do
                     NSSortDescriptor *roiSorting = [NSSortDescriptor sortDescriptorWithKey:@"uniqueID" ascending:NO];
                     if ( !suppress_labels)
                     {
-                        NSArray	*sortedROIs = [curRoiList sortedArrayUsingDescriptors: [NSArray arrayWithObject: roiSorting]];
+                        NSMutableArray *labelROIs = [NSMutableArray arrayWithArray:curRoiList];
+                        if (lengthPendingMarker) [labelROIs addObject:lengthPendingMarker];
+                        NSArray *sortedROIs = [labelROIs sortedArrayUsingDescriptors:@[roiSorting]];
 
                         BOOL drawingRoiMode = NO;
                         for( ROI *r in sortedROIs)
@@ -10095,6 +10350,9 @@ static NSInteger HorosMovieIndexForScroll(NSInteger current, NSInteger count, do
                 glPopMatrix(); // GL_MODELVIEW
                 glMatrixMode (GL_PROJECTION);
                 glPopMatrix();
+                // Metal preserves the incoming mode; host overlays on the
+                // next frame must still transform the model-view matrix.
+                glMatrixMode (GL_MODELVIEW);
             }
         }
         else
@@ -13184,6 +13442,7 @@ static NSInteger HorosMovieIndexForScroll(NSInteger current, NSInteger count, do
 
 - (void)mouseExited:(NSEvent *)theEvent
 {
+    [self horosHideScrollPreview];
     [self eventToPlugins: theEvent];
     
     [self mouseMoved: theEvent];
@@ -14017,6 +14276,21 @@ static NSString * const O2PasteboardTypeEventModifierFlags = @"com.opensource.os
                             [self sync3DPosition];
                     }
                     break;
+                case ResliceAxialHotKeyAction:
+                case ResliceCoronalHotKeyAction:
+                case ResliceSagittalHotKeyAction:
+                {
+                    // Hot Keys are unmodified keys owned by the focused 2D canvas.
+                    // Text editors and menu shortcuts must not reconstruct a series.
+                    NSEvent *event = [NSApp currentEvent];
+                    if (![self is2DViewer] || !self.window.isKeyWindow ||
+                        self.window.firstResponder != self || event.type != NSEventTypeKeyDown ||
+                        (event.modifierFlags & (NSEventModifierFlagCommand | NSEventModifierFlagControl |
+                                                NSEventModifierFlagOption | NSEventModifierFlagShift)))
+                        return NO;
+                    [[self windowController] setOrientation:key - ResliceAxialHotKeyAction];
+                    break;
+                }
                 case SetKeyImageAction:
                     if( [self is2DViewer] == YES)
                         [[self windowController] setKeyImage: self];

@@ -55,6 +55,8 @@
 #define CIRCLERESOLUTION 200
 #define ROIVERSION 11
 
+// See the subclass implementation below: no change to the legacy archive.
+
 static		float					deg2rad = M_PI / 180.0f;
 static		float					fontHeight = 0;
 static		NSString				*defaultName;
@@ -7443,4 +7445,238 @@ NSInteger sortPointArrayAlongX(id point1, id point2, void *context)
 }
 
 
+@end
+
+#pragma mark - Patient-space Length (2D Viewer)
+
+typedef struct {
+    NSPoint a, b, intersection;
+    BOOL visible, handleA, handleB, crossesPlane;
+} HorosLengthProjection;
+
+@implementation HorosVolumeLengthROI {
+    NSDictionary *_volumeLength;
+    NSInteger _dragEndpoint;
+}
+@synthesize volumeLength = _volumeLength;
+
++ (NSDictionary*)referenceForPix:(DCMPix*)p
+{
+    id image = p.imageObj;
+    double orientation[9]; [p orientationDouble:orientation];
+    return @{@"sopInstanceUID":[image valueForKey:@"sopInstanceUID"] ?: @"",
+        @"frame":[image valueForKey:@"frameID"] ?: @0, @"generated":@(p.generated),
+        @"imagePositionPatient":@[@(p.originX),@(p.originY),@(p.originZ)],
+        @"imageOrientationPatient":@[@(orientation[0]),@(orientation[1]),@(orientation[2]),@(orientation[3]),@(orientation[4]),@(orientation[5])],
+        @"pixelSpacing":@[@(p.pixelSpacingX),@(p.pixelSpacingY)]};
+}
++ (BOOL)validGeometry:(DCMPix*)p
+{
+    if (!p || !isfinite(p.pixelSpacingX) || !isfinite(p.pixelSpacingY) ||
+        p.pixelSpacingX <= 0 || p.pixelSpacingY <= 0 || !p.frameofReferenceUID.length)
+        return NO;
+    double o[9]; [p orientationDouble:o];
+    double row = 0, col = 0, dot = 0;
+    for (int i = 0; i < 9; ++i) if (!isfinite(o[i])) return NO;
+    for (int i = 0; i < 3; ++i) { row += o[i]*o[i]; col += o[i+3]*o[i+3]; dot += o[i]*o[i+3]; }
+    return fabs(row-1) < 1e-4 && fabs(col-1) < 1e-4 && fabs(dot) < 1e-4 &&
+        isfinite(p.originX) && isfinite(p.originY) && isfinite(p.originZ);
+}
++ (NSArray*)patientPoint:(NSPoint)pt pix:(DCMPix*)p
+{
+    if (![self validGeometry:p] || !isfinite(pt.x) || !isfinite(pt.y)) return nil;
+    double o[9]; [p orientationDouble:o];
+    return @[@(p.originX + pt.x*p.pixelSpacingX*o[0] + pt.y*p.pixelSpacingY*o[3]),
+             @(p.originY + pt.x*p.pixelSpacingX*o[1] + pt.y*p.pixelSpacingY*o[4]),
+             @(p.originZ + pt.x*p.pixelSpacingX*o[2] + pt.y*p.pixelSpacingY*o[5])];
+}
++ (NSPoint)projectPoint:(NSArray*)pt pix:(DCMPix*)p depth:(double*)depth
+{
+    double o[9]; [p orientationDouble:o];
+    double d[3] = {[pt[0] doubleValue]-p.originX, [pt[1] doubleValue]-p.originY, [pt[2] doubleValue]-p.originZ};
+    // Derive the normal from validated IOP, not a possibly stale cached normal.
+    double n[3] = {o[1]*o[5]-o[2]*o[4], o[2]*o[3]-o[0]*o[5], o[0]*o[4]-o[1]*o[3]};
+    if (depth) *depth = d[0]*n[0]+d[1]*n[1]+d[2]*n[2];
+    return NSMakePoint((d[0]*o[0]+d[1]*o[1]+d[2]*o[2])/p.pixelSpacingX,
+                       (d[0]*o[3]+d[1]*o[4]+d[2]*o[5])/p.pixelSpacingY);
+}
++ (BOOL)validPayload:(NSDictionary*)payload
+{
+    if (![payload isKindOfClass:NSDictionary.class] || [payload[@"version"] integerValue] != 1) return NO;
+    for (NSString *key in @[@"id", @"series", @"frameOfReference"])
+        if (![payload[key] isKindOfClass:NSString.class] || ![payload[key] length]) return NO;
+    for (NSString *key in @[@"a", @"b"])
+    {
+        NSArray *p = payload[key];
+        if (![p isKindOfClass:NSArray.class] || p.count != 3) return NO;
+        for (id v in p) if (![v isKindOfClass:NSNumber.class] || !isfinite([v doubleValue])) return NO;
+    }
+    double sum = 0;
+    for (int i = 0; i < 3; ++i) { double d = [payload[@"a"][i] doubleValue]-[payload[@"b"][i] doubleValue]; sum += d*d; }
+    return isfinite(sum) && sum > 1e-12;
+}
+- (NSString*)volumeIdentifier { return _volumeLength[@"id"]; }
+- (double)distanceMM
+{
+    double sum = 0;
+    for (int i = 0; i < 3; ++i) { double d = [_volumeLength[@"a"][i] doubleValue]-[_volumeLength[@"b"][i] doubleValue]; sum += d*d; }
+    return sqrt(sum);
+}
+- (BOOL)valid { return [HorosVolumeLengthROI validPayload:_volumeLength]; }
+- (float)MesureLength:(float*)pixels
+{
+    if (pixels) *pixels = 0; // A 3D distance has no single-plane pixel length.
+    return self.distanceMM / 10.0;
+}
+- (void)encodeWithCoder:(NSCoder*)coder
+{
+    [super encodeWithCoder:coder];
+    [coder encodeObject:_volumeLength];
+}
+- (id)initWithCoder:(NSCoder*)coder
+{
+    if ((self = [super initWithCoder:coder]))
+    {
+        self.volumeLength = [coder decodeObject];
+        if (![self valid]) { [self release]; return nil; }
+        self.isAliased = YES;
+        _dragEndpoint = -1;
+    }
+    return self;
+}
+- (id)copyWithZone:(NSZone*)zone
+{
+    HorosVolumeLengthROI *copy = [super copyWithZone:zone];
+    copy.volumeLength = _volumeLength;
+    copy.originalIndexForAlias = self.originalIndexForAlias;
+    copy->_dragEndpoint = -1;
+    return copy;
+}
+- (void)dealloc { [_volumeLength release]; [super dealloc]; }
+
+- (HorosLengthProjection)volumeProjection
+{
+    HorosLengthProjection result = {0};
+    DCMPix *p = curView.curDCM;
+    if (![curView is2DViewer] || ![self valid] || ![HorosVolumeLengthROI validGeometry:p] ||
+        ![p.frameofReferenceUID isEqualToString:_volumeLength[@"frameOfReference"]]) return result;
+    double da, db;
+    NSPoint a = [HorosVolumeLengthROI projectPoint:_volumeLength[@"a"] pix:p depth:&da];
+    NSPoint b = [HorosVolumeLengthROI projectPoint:_volumeLength[@"b"] pix:p depth:&db];
+    // A slice occupies its physical thickness. With missing thickness only the
+    // plane tolerance is used; never invent spacing for measurement itself.
+    double half = isfinite(p.sliceThickness) ? fmax(0.01, fabs(p.sliceThickness)/2) : 0.01;
+    double lo = -half, hi = half;
+    if (p.stack > 1)
+    {
+        NSInteger index = curView.curImage, count = curView.dcmPixList.count;
+        NSInteger end = MAX(0, MIN(count-1, index + (curView.flippedData ? -1 : 1) * (p.stack-1)));
+        DCMPix *last = curView.dcmPixList[end];
+        double dz;
+        [HorosVolumeLengthROI projectPoint:@[@(last.originX), @(last.originY), @(last.originZ)] pix:p depth:&dz];
+        double endHalf = isfinite(last.sliceThickness) ? fmax(0.01, fabs(last.sliceThickness)/2) : 0.01;
+        lo = fmin(lo, dz-endHalf); hi = fmax(hi, dz+endHalf);
+    }
+    if (fmax(da, db) < lo || fmin(da, db) > hi) return result;
+    result.visible = YES;
+    result.a = a; result.b = b;
+    result.handleA = p.stack <= 1 && fabs(da) <= half;
+    result.handleB = p.stack <= 1 && fabs(db) <= half;
+    if (fabs(db-da) > 1e-9)
+    {
+        double t = -da/(db-da);
+        result.crossesPlane = t >= 0 && t <= 1;
+        result.intersection = NSMakePoint(a.x+t*(b.x-a.x), a.y+t*(b.y-a.y));
+        if (p.stack > 1)
+        {
+            double t0 = (lo-da)/(db-da), t1 = (hi-da)/(db-da);
+            double start = fmax(0, fmin(t0,t1)), end = fmin(1, fmax(t0,t1));
+            result.a = NSMakePoint(a.x+start*(b.x-a.x), a.y+start*(b.y-a.y));
+            result.b = NSMakePoint(a.x+end*(b.x-a.x), a.y+end*(b.y-a.y));
+        }
+    }
+    // points are transient drawing coordinates. The archived patient endpoints
+    // remain authoritative, including when their projection is a single point.
+    [points removeAllObjects];
+    [points addObject:[MyPoint point:result.a]];
+    [points addObject:[MyPoint point:result.b]];
+    return result;
+}
+- (long)clickInROI:(NSPoint)pt :(float)ox :(float)oy :(float)scale :(BOOL)textOnly
+{
+    if (!self.selectable || self.hidden || textOnly) return ROI_sleep;
+    HorosLengthProjection p = [self volumeProjection];
+    if (!p.visible) return ROI_sleep;
+    double ratio = curView.curDCM.pixelRatio, tolerance = 7.0 * curView.window.backingScaleFactor / fmax(scale, 0.001);
+    double da = hypot(pt.x-p.a.x, (pt.y-p.a.y)*ratio), db = hypot(pt.x-p.b.x, (pt.y-p.b.y)*ratio);
+    if (!self.locked && (p.handleA || p.handleB))
+    {
+        if (p.handleA && da <= tolerance) { _dragEndpoint = 0; return ROI_selectedModify; }
+        if (p.handleB && db <= tolerance) { _dragEndpoint = 1; return ROI_selectedModify; }
+    }
+    double dx = p.b.x-p.a.x, dy = (p.b.y-p.a.y)*ratio;
+    double denom = dx*dx+dy*dy;
+    double t = denom > 0 ? ((pt.x-p.a.x)*dx+(pt.y-p.a.y)*ratio*dy)/denom : 0;
+    t = fmax(0, fmin(1,t));
+    return hypot(pt.x-p.a.x-t*dx, (pt.y-p.a.y)*ratio-t*dy) <= tolerance ? ROI_selected : ROI_sleep;
+}
+- (BOOL)mouseRoiDragged:(NSPoint)pt :(unsigned int)modifiers :(float)scale
+{
+    if (mode != ROI_selectedModify || _dragEndpoint < 0 || self.locked || curView.curDCM.stack > 1) return NO;
+    NSArray *point = [HorosVolumeLengthROI patientPoint:pt pix:curView.curDCM];
+    if (!point) return NO;
+    NSMutableDictionary *updated = [[_volumeLength mutableCopy] autorelease];
+    updated[_dragEndpoint == 0 ? @"a" : @"b"] = point;
+    updated[_dragEndpoint == 0 ? @"referenceA" : @"referenceB"] = [HorosVolumeLengthROI referenceForPix:curView.curDCM];
+    if (![HorosVolumeLengthROI validPayload:updated]) return NO;
+    self.volumeLength = updated;
+    [self recompute];
+    [[NSNotificationCenter defaultCenter] postNotificationName:OsirixROIChangeNotification object:self];
+    return YES;
+}
+- (BOOL)mouseRoiUp:(NSPoint)pt scaleValue:(float)scale
+{
+    _dragEndpoint = -1;
+    if (mode == ROI_selectedModify) mode = ROI_selected;
+    return NO;
+}
+- (BOOL)deleteSelectedPoint { return NO; }
+- (void)roiMove:(NSPoint)offset { /* Moving a projected line cannot choose depth. Drag its endpoint handle. */ }
+- (void)roiMove:(NSPoint)offset :(BOOL)notify { }
+- (NSMutableDictionary*)dataString
+{
+    return [NSMutableDictionary dictionaryWithDictionary:@{@"Length3DMM":@(self.distanceMM),
+        @"PatientEndpoints":@[_volumeLength[@"a"], _volumeLength[@"b"]],
+        @"Geometry":@"Patient-space Length; use ROI archive or JSON v2 to preserve geometry"}];
+}
+- (void)drawROIWithScaleValue:(float)scale offsetX:(float)ox offsetY:(float)oy pixelSpacingX:(float)sx pixelSpacingY:(float)sy highlightIfSelected:(BOOL)highlight thickness:(float)thick prepareTextualData:(BOOL)prepare
+{
+    self.textualBoxLine1 = self.textualBoxLine2 = self.textualBoxLine3 = self.textualBoxLine4 = self.textualBoxLine5 = self.textualBoxLine6 = nil;
+    if (self.hidden) return;
+    HorosLengthProjection p = [self volumeProjection];
+    if (!p.visible) return;
+    CGLContextObj cgl_ctx = [[NSOpenGLContext currentContext] CGLContextObj];
+    if (!cgl_ctx) return;
+    float sf = curView.window.backingScaleFactor;
+    glPushAttrib(GL_ENABLE_BIT | GL_LINE_BIT | GL_POINT_BIT | GL_CURRENT_BIT | GL_COLOR_BUFFER_BIT);
+    glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glColor4f(color.red/65535.0, color.green/65535.0, color.blue/65535.0, opacity);
+    glLineWidth(fmax(1, thick*sf));
+    glEnable(GL_LINE_STIPPLE); glLineStipple(1, 0x0F0F);
+    glBegin(GL_LINES);
+    glVertex2f((p.a.x-ox)*scale, (p.a.y-oy)*scale);
+    glVertex2f((p.b.x-ox)*scale, (p.b.y-oy)*scale);
+    glEnd(); glDisable(GL_LINE_STIPPLE);
+    glPointSize((highlight && mode != ROI_sleep ? 8 : 5)*sf);
+    glBegin(GL_POINTS);
+    if (p.handleA) glVertex2f((p.a.x-ox)*scale, (p.a.y-oy)*scale);
+    if (p.handleB) glVertex2f((p.b.x-ox)*scale, (p.b.y-oy)*scale);
+    if (p.crossesPlane) glVertex2f((p.intersection.x-ox)*scale, (p.intersection.y-oy)*scale);
+    glEnd(); glPopAttrib();
+    if (prepare && self.isTextualDataDisplayed)
+    {
+        self.textualBoxLine1 = [NSString stringWithFormat:NSLocalizedString(@"Length 3D: %.3f mm", nil), self.distanceMM];
+        [self prepareTextualData:self.lowerRightPoint];
+    }
+}
 @end

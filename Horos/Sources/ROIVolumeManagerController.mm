@@ -85,111 +85,141 @@
 	return self;
 }
 
-- (void) tableView:(NSTableView *)aTableView setObjectValue:(id)anObject forTableColumn:(NSTableColumn *)aTableColumn row:(NSInteger)rowIndex
+- (void)windowDidLoad
 {
-//NSLog(@"tableView:setObjectValue:forTableColumn:row:");
-
-	if( [[aTableColumn identifier] isEqualToString:@"display"])
-	{
-		//[[roiVolumes objectAtIndex:rowIndex] setVisible:[anObject boolValue]];
-		[[[roiVolumesController arrangedObjects] objectAtIndex:rowIndex] setVisible:[anObject boolValue]];
-		if([anObject boolValue])
-		{
-			//[viewer displayROIVolumeAtIndex: rowIndex];
-			[viewer displayROIVolume: [[roiVolumesController arrangedObjects] objectAtIndex:rowIndex]];
-		}
-		else
-		{
-			//[viewer hideROIVolumeAtIndex: rowIndex];
-			[viewer hideROIVolume: [[roiVolumesController arrangedObjects] objectAtIndex:rowIndex]];
-		}
-		[[viewer view] display];
-	}
-	else if( [[aTableColumn identifier] isEqualToString:@"name"])
-	{
-	}
-	else if( [[aTableColumn identifier] isEqualToString:@"volume"])
-	{
-	}
-	else if( [[aTableColumn identifier] isEqualToString:@"red"])
-	{
-		[[[roiVolumesController arrangedObjects] objectAtIndex:rowIndex] setRed:[anObject floatValue]];
-		[[viewer view] display];
-	}
-	else if( [[aTableColumn identifier] isEqualToString:@"green"])
-	{
-		[[[roiVolumesController arrangedObjects] objectAtIndex:rowIndex] setGreen:[anObject floatValue]];
-		[[viewer view] display];
-	}
-	else if( [[aTableColumn identifier] isEqualToString:@"blue"])
-	{
-		[[[roiVolumesController arrangedObjects] objectAtIndex:rowIndex] setBlue:[anObject floatValue]];
-		[[viewer view] display];
-	}
-	else if( [[aTableColumn identifier] isEqualToString:@"opacity"])
-	{
-		[[[roiVolumesController arrangedObjects] objectAtIndex:rowIndex] setOpacity:[anObject floatValue]];
-		[[viewer view] display];
-	}
-	else if( [[aTableColumn identifier] isEqualToString:@"texture"])
-	{
-		[[[roiVolumesController arrangedObjects] objectAtIndex:rowIndex] setTexture:[anObject boolValue]];
-		[[viewer view] display];
-	}
-//	else if( [aTableColumn isEqualTo:columnColor])
-//	{
-//		[[roiVolumes objectAtIndex:rowIndex] setColor:anObject];
-//		[[viewer view] display];
-//	}
-	[tableView reloadData];
+    [super windowDidLoad];
+    [tableView setDelegate:self];
+    [tableView setRowHeight:26.0];
+    for (NSTableColumn *column in [tableView tableColumns])
+    {
+        NSString *key = [[column identifier] isEqualToString:@"display"] ? @"visible" : [column identifier];
+        [column setSortDescriptorPrototype:[NSSortDescriptor sortDescriptorWithKey:
+            [@"properties." stringByAppendingString:key] ascending:YES]];
+    }
 }
 
-- (NSInteger) numberOfRowsInTableView:(NSTableView *)tableView
+- (ROIVolume *)volumeAtRow:(NSInteger)row
 {
-//	NSLog(@"numberOfRowsInTableView : [[self roiVolumes] count] : %d", [[self roiVolumes] count]);
-//	NSLog(@"numberOfRowsInTableView : [roiVolumes count] : %d", [roiVolumes count]);
-    return [[self roiVolumes] count];
+    NSArray *volumes = [roiVolumesController arrangedObjects];
+    return row >= 0 && row < (NSInteger)[volumes count] ? [volumes objectAtIndex:row] : nil;
 }
 
-//- (id) tableView:(NSTableView *)tableView objectValueForTableColumn:(NSTableColumn *)tableColumn row:(NSInteger)row
-//{
-////NSLog(@"tableView:objectValueForTableColumn:row:");
-//	if( viewer == nil) return nil;
-//	
-//	if( [tableColumn isEqualTo:columnDisplay])
-//	{
-//		return [NSNumber numberWithBool:[[roiVolumes objectAtIndex:row] visible]];
-//	}
-//	else if( [tableColumn isEqualTo:columnName])
-//	{
-//		return [[roiVolumes objectAtIndex:row] name];
-//	}
-//	else if( [tableColumn isEqualTo:columnVolume])
-//	{
-//		return [NSNumber numberWithFloat:[[roiVolumes objectAtIndex:row] volume]];
-//	}
-//	else if( [tableColumn isEqualTo:columnRed])
-//	{
-//		return [NSNumber numberWithFloat:[[roiVolumes objectAtIndex:row] red]];
-//	}
-//	else if( [tableColumn isEqualTo:columnGreen])
-//	{
-//		return [NSNumber numberWithFloat:[[roiVolumes objectAtIndex:row] green]];
-//	}
-//	else if( [tableColumn isEqualTo:columnBlue])
-//	{
-//		return [NSNumber numberWithFloat:[[roiVolumes objectAtIndex:row] blue]];
-//	}
-//	else if( [tableColumn isEqualTo:columnOpacity])
-//	{
-//		return [NSNumber numberWithFloat:[[roiVolumes objectAtIndex:row] opacity]];
-//	}
-////	else if( [tableColumn isEqualTo:columnColor])
-////	{
-////		return [[roiVolumes objectAtIndex:row] color];
-////	}
-//	return nil;
-//}
+- (NSInteger)numberOfRowsInTableView:(NSTableView *)aTableView
+{
+    return [[roiVolumesController arrangedObjects] count];
+}
+
+- (NSView *)tableView:(NSTableView *)aTableView viewForTableColumn:(NSTableColumn *)column row:(NSInteger)row
+{
+    ROIVolume *volume = [self volumeAtRow:row];
+    if (!volume) return nil;
+
+    NSString *identifier = [column identifier];
+    BOOL checkbox = [identifier isEqualToString:@"display"] || [identifier isEqualToString:@"texture"];
+    BOOL slider = [identifier isEqualToString:@"red"] || [identifier isEqualToString:@"green"] ||
+                  [identifier isEqualToString:@"blue"] || [identifier isEqualToString:@"opacity"];
+    NSTableCellView *cell = [aTableView makeViewWithIdentifier:identifier owner:self];
+    NSControl *control = (NSControl *)[cell viewWithTag:1];
+    if (!cell)
+    {
+        cell = [[[NSTableCellView alloc] initWithFrame:NSMakeRect(0, 0, [column width], [aTableView rowHeight])] autorelease];
+        [cell setIdentifier:identifier];
+        if (slider)
+        {
+            // A cell-only slider uses the entire NSTableView as its controlView.
+            // Give each slider its own view so drawing and tracking share bounds.
+            NSSlider *valueSlider = [NSSlider sliderWithValue:0 minValue:0 maxValue:1
+                                                    target:self action:@selector(changeROIVolume:)];
+            [valueSlider setContinuous:YES];
+            control = valueSlider;
+        }
+        else if (checkbox)
+            control = [NSButton checkboxWithTitle:@"" target:self action:@selector(changeROIVolume:)];
+        else
+        {
+            NSTextField *text = [[[NSTextField alloc] initWithFrame:NSZeroRect] autorelease];
+            [text setBordered:NO];
+            [text setDrawsBackground:NO];
+            [text setEditable:[[column dataCell] isEditable]];
+            [text setSelectable:YES];
+            [text setFont:[NSFont systemFontOfSize:[NSFont smallSystemFontSize]]];
+            [text setLineBreakMode:NSLineBreakByTruncatingTail];
+            [cell setTextField:text];
+            control = text;
+        }
+        [control setTag:1];
+        [control setControlSize:NSControlSizeSmall];
+        [control setTarget:self];
+        [control setAction:@selector(changeROIVolume:)];
+        [control setTranslatesAutoresizingMaskIntoConstraints:NO];
+        [cell addSubview:control];
+        [NSLayoutConstraint activateConstraints:@[
+            [[control centerYAnchor] constraintEqualToAnchor:[cell centerYAnchor]],
+            [[control heightAnchor] constraintEqualToConstant:20.0]
+        ]];
+        if (checkbox)
+            [NSLayoutConstraint activateConstraints:@[
+                [[control centerXAnchor] constraintEqualToAnchor:[cell centerXAnchor]]
+            ]];
+        else
+            [NSLayoutConstraint activateConstraints:@[
+                [[control leadingAnchor] constraintEqualToAnchor:[cell leadingAnchor] constant:4.0],
+                [[control trailingAnchor] constraintEqualToAnchor:[cell trailingAnchor] constant:-4.0]
+            ]];
+    }
+    NSString *key = [identifier isEqualToString:@"display"] ? @"visible" : identifier;
+    [control setObjectValue:[[volume properties] objectForKey:key]];
+    NSString *label = [[column headerCell] stringValue];
+    if (![label length]) label = NSLocalizedString(@"Visible", nil);
+    [control setAccessibilityLabel:[NSString stringWithFormat:@"%@, %@", label,
+                                   [[volume properties] objectForKey:@"name"]]];
+    return cell;
+}
+
+- (void)changeROIVolume:(NSControl *)sender
+{
+    NSInteger row = [tableView rowForView:sender];
+    NSInteger column = [tableView columnForView:sender];
+    if (row < 0 || column < 0) return;
+    [self tableView:tableView setObjectValue:[sender objectValue]
+        forTableColumn:[[tableView tableColumns] objectAtIndex:column] row:row];
+}
+
+- (void)tableView:(NSTableView *)aTableView setObjectValue:(id)value forTableColumn:(NSTableColumn *)column row:(NSInteger)row
+{
+    ROIVolume *volume = [self volumeAtRow:row];
+    if (!volume) return;
+    NSString *identifier = [column identifier];
+    if ([identifier isEqualToString:@"display"])
+    {
+        [volume setVisible:[value boolValue]];
+        if ([value boolValue]) [viewer displayROIVolume:volume];
+        else [viewer hideROIVolume:volume];
+    }
+    else if ([identifier isEqualToString:@"red"]) [volume setRed:[value floatValue]];
+    else if ([identifier isEqualToString:@"green"]) [volume setGreen:[value floatValue]];
+    else if ([identifier isEqualToString:@"blue"]) [volume setBlue:[value floatValue]];
+    else if ([identifier isEqualToString:@"opacity"]) [volume setOpacity:[value floatValue]];
+    else if ([identifier isEqualToString:@"texture"]) [volume setTexture:[value boolValue]];
+    else
+    {
+        // Preserve the name/volume fields' former properties-dictionary bindings.
+        [[volume properties] setValue:value forKey:identifier];
+        return;
+    }
+    [[viewer view] display];
+    // Reloading here would replace a continuous slider while it is tracking.
+}
+
+- (void)tableView:(NSTableView *)aTableView sortDescriptorsDidChange:(NSArray *)oldDescriptors
+{
+    ROIVolume *selected = [self volumeAtRow:[aTableView selectedRow]];
+    [roiVolumesController setSortDescriptors:[aTableView sortDescriptors]];
+    [aTableView reloadData];
+    NSUInteger row = selected ? [[roiVolumesController arrangedObjects] indexOfObjectIdenticalTo:selected] : NSNotFound;
+    if (row != NSNotFound)
+        [aTableView selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
+}
 
 // delegate method
 
@@ -208,6 +238,7 @@
 	
 	[[NSNotificationCenter defaultCenter] removeObserver: self];
 	NSLog( @"ROIVolumeManager windowWillClose");
+	[tableView setDelegate:nil];
 	[tableView setDataSource: nil];
 	[controllerAlias setContent: nil];	// To allow the dealloc of MPRController ! otherwise memory leak
     
@@ -234,28 +265,6 @@
 - (NSMutableArray*) roiVolumes
 {
 	return roiVolumes;
-}
-
-- (IBAction) showWindow:(id)sender
-{
-	[super showWindow:sender];
-	NSButtonCell *cDisplay = [columnDisplay dataCell];
-	[cDisplay setControlSize:NSMiniControlSize];
-	[columnDisplay setDataCell:cDisplay];
-	
-	NSSliderCell *smallSliderCell = [[NSSliderCell alloc] init];
-	[smallSliderCell setControlSize:NSMiniControlSize];
-	[smallSliderCell setMinValue:0.0];
-	[smallSliderCell setMaxValue:1.0];
-	
-	[columnRed setDataCell:[[smallSliderCell copy] autorelease]];
-	[columnGreen setDataCell:[[smallSliderCell copy] autorelease]];
-	[columnBlue setDataCell:[[smallSliderCell copy] autorelease]];
-	[columnOpacity setDataCell:[[smallSliderCell copy] autorelease]];
-	
-	[smallSliderCell release];
-	
-	//[tableView removeTableColumn:columnColor];
 }
 
 @end

@@ -17,6 +17,7 @@ code=r'''
 -(BOOL)is2DViewer;-(id)windowController;-(void)adjustSlider;-(void)sendSyncMessage:(NSInteger)i;
 @end
 @implementation DCMView
+-(void)horosShowScrollPreviewAtWindowPoint:(NSPoint)point{}
 -(NSPoint)currentPointInView:(NSEvent*)e{return current;}
 -(void)setIndex:(short)i{curImage=i;}-(void)setIndexWithReset:(short)i :(BOOL)b{curImage=i;}
 -(BOOL)is2DViewer{return NO;}-(id)windowController{return nil;}-(void)adjustSlider{}

@@ -137,6 +137,7 @@
 /* End PBXAggregateTarget section */
 
 /* Begin PBXBuildFile section */
+		A37308000000000000000002 /* ScrollPositionPreview.m in Sources */ = {isa = PBXBuildFile; fileRef = A37308000000000000000001 /* ScrollPositionPreview.m */; };
 		A37305000000000000000002 /* PlanarPerformanceTrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = A37305000000000000000001 /* PlanarPerformanceTrace.swift */; };
 		A37307000000000000000002 /* PatientCrosshairController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A37307000000000000000001 /* PatientCrosshairController.swift */; };
 		A37307000000000000000004 /* PatientCrosshairBridge.m in Sources */ = {isa = PBXBuildFile; fileRef = A37307000000000000000003 /* PatientCrosshairBridge.m */; };
@@ -2076,6 +2077,9 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		A37308000000000000000001 /* ScrollPositionPreview.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = ScrollPositionPreview.m; sourceTree = "<group>"; };
+		A37308000000000000000003 /* ScrollPositionPreview.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ScrollPositionPreview.h; sourceTree = "<group>"; };
+		A37308000000000000000004 /* ScrollPositionPreviewGeometry.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ScrollPositionPreviewGeometry.h; sourceTree = "<group>"; };
 		A37305000000000000000001 /* PlanarPerformanceTrace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanarPerformanceTrace.swift; sourceTree = "<group>"; };
 		A37307000000000000000001 /* PatientCrosshairController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PatientCrosshairController.swift; sourceTree = "<group>"; };
 		A37307000000000000000003 /* PatientCrosshairBridge.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = PatientCrosshairBridge.m; sourceTree = "<group>"; };
@@ -5805,6 +5809,9 @@
 				A37302000000000000000009 /* ViewerVolumeSession.h */,
 				A37305000000000000000001 /* PlanarPerformanceTrace.swift */,
 				A37307000000000000000001 /* PatientCrosshairController.swift */,
+				A37308000000000000000001 /* ScrollPositionPreview.m */,
+				A37308000000000000000003 /* ScrollPositionPreview.h */,
+				A37308000000000000000004 /* ScrollPositionPreviewGeometry.h */,
 				A37307000000000000000003 /* PatientCrosshairBridge.m */,
 				A37307000000000000000005 /* PatientCrosshairBridge.h */,
 				A37306000000000000000001 /* SeriesListLayout.swift */,
@@ -8073,6 +8080,7 @@
 				A37300000000000000000002 /* VolumeSession.swift in Sources */,
 				A37305000000000000000002 /* PlanarPerformanceTrace.swift in Sources */,
 				A37307000000000000000002 /* PatientCrosshairController.swift in Sources */,
+				A37308000000000000000002 /* ScrollPositionPreview.m in Sources */,
 				A37307000000000000000004 /* PatientCrosshairBridge.m in Sources */,
 				A37306000000000000000002 /* SeriesListLayout.swift in Sources */,
 				A37304000000000000000002 /* LegacyScalarCLUT.swift in Sources */,

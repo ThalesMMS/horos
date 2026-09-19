@@ -34,6 +34,8 @@ DELETE
 @end
 @implementation View
 -(void)deleteROIGroupID:(double)group{}
+// The alias-removal helper is exercised with real slice lists by test-roi-volumetric-length.
+-(void)removeROIFromSliceOrVolume:(ROI*)r{[rArray removeObjectIdenticalTo:r];}
 -(void)erase:(ROI*)r {long i=[rArray indexOfObjectIdenticalTo:r];double groupID;
 BRANCH
 }

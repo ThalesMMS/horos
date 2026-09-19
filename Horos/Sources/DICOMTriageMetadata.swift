@@ -98,8 +98,13 @@ struct DICOMTriageMetadata {
                 if depth == 0 { values[key] = Value(vr: "SQ", bytes: Data(), littleEndian: littleEndian) }
                 let sequenceEnd = undefined ? end : offset + min(length, end - offset)
                 guard undefined || length <= end - offset else { return false }
-                guard readItems(data, &offset, end: sequenceEnd, implicit: implicit,
-                                littleEndian: littleEndian, depth: depth + 1, undefined: undefined) else { return false }
+                // PS3.5 6.2.2 (CP-246): an explicit UN with undefined length
+                // contains Implicit VR Little Endian items, regardless of the
+                // enclosing transfer syntax. Keep that change local to its value.
+                let unknownSequence = !implicit && vr == "UN" && undefined
+                guard readItems(data, &offset, end: sequenceEnd, implicit: implicit || unknownSequence,
+                                littleEndian: littleEndian || unknownSequence,
+                                depth: depth + 1, undefined: undefined) else { return false }
             } else {
                 guard length <= end - offset else { return false }
                 // Image identity/dimensions belong to the root. An embedded icon

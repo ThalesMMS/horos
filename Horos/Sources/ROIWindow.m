@@ -501,6 +501,19 @@
 
 - (IBAction) exportData:(id) sender
 {
+    BOOL physicalLength = [curROI isKindOfClass:HorosVolumeLengthROI.class];
+    if ([self allWithSameName])
+        for (NSArray *slice in [curController roiList])
+            for (ROI *roi in slice)
+                if ([roi.name isEqualToString:curROI.name] && [roi isKindOfClass:HorosVolumeLengthROI.class]) physicalLength = YES;
+    if (physicalLength)
+    {
+        NSRunAlertPanel(NSLocalizedString(@"Export to XML", nil),
+            NSLocalizedString(@"XML cannot preserve a Length between slices. Use Export ROIs as JSON or save the ROI archive instead.", nil),
+            NSLocalizedString(@"OK", nil), nil, nil);
+        return;
+    }
+
 	if([curROI type]==tPlain)
 	{
 		NSInteger confirm = NSRunInformationalAlertPanel(NSLocalizedString(@"Export to XML", @""), NSLocalizedString(@"Exporting this kind of ROI to XML will only export the contour line.", @""), NSLocalizedString(@"OK", @""), NSLocalizedString(@"Cancel", @""), nil);

@@ -41,6 +41,7 @@ HELPER
 -(short)legacyDragStepFrom:(short)from verticalMove:(CGFloat)dy;
 @end
 @implementation DCMView
+-(void)horosShowScrollPreviewAtWindowPoint:(NSPoint)point{}
 -(NSPoint)currentPointInView:(NSEvent*)e{return pointer;}
 -(void)setIndex:(short)i{curImage=i;}-(void)setIndexWithReset:(short)i :(BOOL)b{curImage=i;}
 -(BOOL)is2DViewer{return NO;}-(id)windowController{return nil;}-(void)adjustSlider{}

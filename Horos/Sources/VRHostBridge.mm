@@ -138,9 +138,11 @@ static NSString *HorosGeometryRefusalReason(vtkHorosFixedPointVolumeRayCastMappe
 - (NSArray *)horosVolumePixList;
 - (NSData *)horosVolumeMetalRenderWithCamera:(NSArray *)camera near:(double)near far:(double)far
                                      width:(NSInteger)width height:(NSInteger)height imageRegion:(NSArray *)imageRegion
+                             geometryDepth:(NSData *)geometryDepth
                                  scalarOut:(NSMutableData *)scalarOut error:(NSError **)error;
 - (NSData *)horosFusedVolumeMetalRenderSnapshot:(NSDictionary *)snapshot width:(NSInteger)width height:(NSInteger)height
-                                    imageRegion:(NSArray *)imageRegion scalarOut:(NSMutableData *)scalarOut error:(NSError **)error;
+                                    imageRegion:(NSArray *)imageRegion geometryDepth:(NSData *)geometryDepth
+                                      scalarOut:(NSMutableData *)scalarOut error:(NSError **)error;
 - (void)horosFusedVolumeMetalRelease;
 @end
 
@@ -178,11 +180,15 @@ static NSString *HorosGeometryRefusalReason(vtkHorosFixedPointVolumeRayCastMappe
         int *size = image->GetImageInUseSize();
         if (!reason) {
             NSArray *region = [HorosRayCastImageRegion(mapper) subarrayWithRange:NSMakeRange(0, 4)];
+            // As in VTK's CPU pass, stop each ray at already drawn geometry.
+            // Without this, ribs behind an ROI are painted over it too.
+            std::vector<float> depth = mapper->CaptureGeometryDepth(renderer, factor);
+            NSData *geometryDepth = depth.empty() ? nil : [NSData dataWithBytes:depth.data() length:depth.size() * sizeof(float)];
             NSError *error = nil;
             pixels = fused ? [controller horosFusedVolumeMetalRenderSnapshot:snapshot width:size[0] height:size[1]
-                                                                 imageRegion:region scalarOut:opacity error:&error]
+                                                                 imageRegion:region geometryDepth:geometryDepth scalarOut:opacity error:&error]
                            : [controller horosVolumeMetalRenderWithCamera:nil near:0 far:-1 width:size[0] height:size[1]
-                                                             imageRegion:region scalarOut:opacity error:&error];
+                                                             imageRegion:region geometryDepth:geometryDepth scalarOut:opacity error:&error];
             if (!pixels) reason = error.localizedDescription ?: @"Metal could not render this volume.";
         }
         NSUInteger count = (NSUInteger)size[0] * size[1];
@@ -550,7 +556,7 @@ static NSArray *HorosCuttingPlanes(vtkHorosFixedPointVolumeRayCastMapper *mapper
         NSDictionary *image = [self horosVolumeSnapshot], *snapshot = [[self view] horosFusedVolumeSnapshot];
         NSMutableData *fusedScalar = [NSMutableData data];
         NSData *fused = snapshot[@"error"] ? nil : [self horosFusedVolumeMetalRenderSnapshot:snapshot width:width height:height
-                                                                                 imageRegion:@[] scalarOut:fusedScalar error:&error];
+                                                                                 imageRegion:@[] geometryDepth:nil scalarOut:fusedScalar error:&error];
         NSInteger mode = [image[@"mode"] integerValue];
         bytes = fused ? HorosComposedBGRA(HorosVolumePicture(bytes, scalar, mode ? image : nil),
                                           HorosVolumePicture(fused, fusedScalar, mode ? snapshot : nil)) : nil;
@@ -577,6 +583,14 @@ static NSArray *HorosCuttingPlanes(vtkHorosFixedPointVolumeRayCastMapper *mapper
 - (NSData *)horosVolumeMetalRenderWithCamera:(NSArray *)camera near:(double)near far:(double)far
                                      width:(NSInteger)width height:(NSInteger)height imageRegion:(NSArray *)imageRegion
                                  scalarOut:(NSMutableData *)scalarOut error:(NSError **)error {
+    return [self horosVolumeMetalRenderWithCamera:camera near:near far:far width:width height:height
+                                     imageRegion:imageRegion geometryDepth:nil scalarOut:scalarOut error:error];
+}
+
+- (NSData *)horosVolumeMetalRenderWithCamera:(NSArray *)camera near:(double)near far:(double)far
+                                     width:(NSInteger)width height:(NSInteger)height imageRegion:(NSArray *)imageRegion
+                             geometryDepth:(NSData *)geometryDepth
+                                 scalarOut:(NSMutableData *)scalarOut error:(NSError **)error {
     NSAssert([NSThread isMainThread], @"Volume rendering requires the main thread");
     double snapshotFrom = [HorosMetalPerformanceTrace now];
     NSDictionary *snapshot = [self horosVolumeSnapshot];
@@ -586,19 +600,23 @@ static NSArray *HorosCuttingPlanes(vtkHorosFixedPointVolumeRayCastMapper *mapper
         overridden[@"camera"] = camera; overridden[@"near"] = @(near); overridden[@"far"] = @(far);
         snapshot = overridden;
     }
-    return [self horosVolumeMetalRender:snapshot fused:NO width:width height:height imageRegion:imageRegion scalarOut:scalarOut error:error];
+    return [self horosVolumeMetalRender:snapshot fused:NO width:width height:height imageRegion:imageRegion
+                        geometryDepth:geometryDepth scalarOut:scalarOut error:error];
 }
 
 - (NSData *)horosFusedVolumeMetalRenderSnapshot:(NSDictionary *)snapshot width:(NSInteger)width height:(NSInteger)height
-                                    imageRegion:(NSArray *)imageRegion scalarOut:(NSMutableData *)scalarOut error:(NSError **)error {
+                                    imageRegion:(NSArray *)imageRegion geometryDepth:(NSData *)geometryDepth
+                                      scalarOut:(NSMutableData *)scalarOut error:(NSError **)error {
     NSAssert([NSThread isMainThread], @"Volume rendering requires the main thread");
-    return [self horosVolumeMetalRender:snapshot fused:YES width:width height:height imageRegion:imageRegion scalarOut:scalarOut error:error];
+    return [self horosVolumeMetalRender:snapshot fused:YES width:width height:height imageRegion:imageRegion
+                        geometryDepth:geometryDepth scalarOut:scalarOut error:error];
 }
 
 /// Renders one volume's snapshot with its own renderer: the image's, or the
 /// fused series', each holding its own volume on the GPU (#671).
 - (NSData *)horosVolumeMetalRender:(NSDictionary *)snapshot fused:(BOOL)fused width:(NSInteger)width height:(NSInteger)height
-                       imageRegion:(NSArray *)imageRegion scalarOut:(NSMutableData *)scalarOut error:(NSError **)error {
+                       imageRegion:(NSArray *)imageRegion geometryDepth:(NSData *)geometryDepth
+                         scalarOut:(NSMutableData *)scalarOut error:(NSError **)error {
     const void *rendererSlot = fused ? &fusedRendererKey : &rendererKey, *uploadedSlot = fused ? &fusedUploadedKey : &uploadedKey;
     NSString *reason = snapshot[@"error"];
     HorosVolumeRenderer *renderer = objc_getAssociatedObject(self, rendererSlot);
@@ -637,7 +655,8 @@ static NSArray *HorosCuttingPlanes(vtkHorosFixedPointVolumeRayCastMapper *mapper
                                       crop:@[] clippingPlanes:snapshot[@"clippingPlanes"] width:width height:height
                                 sampleStep:[snapshot[@"sampleStep"] doubleValue]
                           scalarBackground:[snapshot[@"scalarBackground"] doubleValue]
-                        anchoredProjection:[snapshot[@"anchoredProjection"] boolValue] imageRegion:imageRegion scalarOut:scalarOut error:&failure];
+                        anchoredProjection:[snapshot[@"anchoredProjection"] boolValue] imageRegion:imageRegion
+                             geometryDepth:geometryDepth scalarOut:scalarOut error:&failure];
         if (bytes) objc_setAssociatedObject(self, fused ? &fusedMillisecondsKey : &millisecondsKey, @(renderer.lastMilliseconds), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         else reason = failure.localizedDescription ?: @"The render produced no image.";
     }
