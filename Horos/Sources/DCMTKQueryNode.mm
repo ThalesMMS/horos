@@ -2039,11 +2039,13 @@ subOpCallback(void * /*subOpCallbackData*/ ,
         if (localRetrieve && _retrieveInventory) {
             // What the retrieve received is indexed by the importer's timer, after the transfer has
             // returned: the inventory is judged once those instances are in the index, or when the
-            // indexing stops progressing (#646). Not on the main thread, whose run loop drives that timer.
+            // indexing stops progressing while the import/conversion workers are idle.
+            // Not on the main thread, whose run loop drives that timer.
             BOOL receivedIndexed = YES;
             if (!NSThread.isMainThread) {
                 NSTimeInterval patience = MAX(10, 3 * [[NSUserDefaults standardUserDefaults] integerForKey:@"LISTENERCHECKINTERVAL"]);
                 receivedIndexed = [_retrieveInventory waitForReceivedImportsRefreshing:^{ [self refreshRetrieveInventory]; }
+                                                                      importInProgress:^BOOL{ return [DicomDatabase activeLocalDatabase].incomingImportInProgress; }
                                                                               patience:patience
                                                                              cancelled:^BOOL{ return NSThread.currentThread.isCancelled; }];
             }

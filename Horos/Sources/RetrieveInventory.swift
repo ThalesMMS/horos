@@ -189,10 +189,12 @@ public final class RetrieveInventory: NSObject {
     /// Waits for what this attempt received to be in the index, refreshing the imported identities
     /// with `refresh`. Received files are indexed by the importer's timer, after the transfer has
     /// returned: judged at once, a retrieve that brought every instance was recorded as incomplete
-    /// (#646). Gives up when the count has not dropped for `patience` seconds, and at once when
-    /// `cancelled`. Returns whether nothing is left waiting.
-    @objc(waitForReceivedImportsRefreshing:patience:cancelled:)
-    public func waitForReceivedImports(refreshing refresh: () -> Void, patience: TimeInterval,
+    /// (#646). An import or conversion can take longer than `patience` without committing
+    /// any images. Count inactivity only while those workers are idle; cancellation still
+    /// interrupts the wait immediately. Returns whether nothing is left waiting.
+    @objc(waitForReceivedImportsRefreshing:importInProgress:patience:cancelled:)
+    public func waitForReceivedImports(refreshing refresh: () -> Void,
+                                       importInProgress: () -> Bool = { false }, patience: TimeInterval,
                                        cancelled: () -> Bool) -> Bool {
         var awaiting = Int.max
         var lastProgress = ProcessInfo.processInfo.systemUptime
@@ -202,7 +204,7 @@ public final class RetrieveInventory: NSObject {
             if count == 0 { return true }
             if cancelled() { return false }
             let now = ProcessInfo.processInfo.systemUptime
-            if count < awaiting {
+            if count < awaiting || importInProgress() {
                 awaiting = count
                 lastProgress = now
             } else if now - lastProgress >= patience {

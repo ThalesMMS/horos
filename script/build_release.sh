@@ -18,7 +18,7 @@ cd "$ROOT_DIR"
 
 echo "Compilando Horos Release. Log: $BUILD_LOG"
 if ! xcodebuild -project Horos.xcodeproj -scheme Horos -configuration Release \
-    -derivedDataPath build CODE_SIGNING_ALLOWED=NO > "$BUILD_LOG" 2>&1; then
+    -derivedDataPath build SYMROOT="$ROOT_DIR/build/Build/Products" CODE_SIGNING_ALLOWED=NO > "$BUILD_LOG" 2>&1; then
     tail -n 60 "$BUILD_LOG" >&2
     exit 1
 fi

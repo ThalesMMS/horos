@@ -10,6 +10,8 @@
 //                            button does, as soon as its first image has arrived (optional)
 //   HOROS_RETRIEVE_CANCEL_AFTER  seconds; cancel the retrieve as the activity
 //                            window's button does (optional)
+//   HOROS_RETRIEVE_IMPORT_DELAY  delay the first received batch while it holds
+//                            the real import lock (seconds, optional)
 //
 // Lines: {"started": {...}}, then {"retrieve": {...}} once the retrieve thread has
 // finished and 8 s more have passed: when it finished, the study's local instance count
@@ -19,6 +21,8 @@
 //
 //   xcrun clang -dynamiclib -fobjc-arc -framework Cocoa tools/probe-image-level-retrieve.m -o probe.dylib
 #import <Cocoa/Cocoa.h>
+#import <objc/runtime.h>
+#include <stdatomic.h>
 
 @interface NSObject (ImageLevelRetrieveProbe)
 + (id)activeLocalDatabase;
@@ -44,6 +48,22 @@
 @end
 
 static NSString *logPath;
+static NSString *retrieveTrigger;
+static double importDelay;
+static atomic_bool delayedImport;
+static NSArray *(*originalAddFiles)(id, SEL, NSArray *, BOOL, BOOL, BOOL, BOOL, BOOL);
+
+static NSArray *delayedAddFiles(id database, SEL selector, NSArray *files, BOOL notifications,
+                               BOOL reread, BOOL generated, BOOL imported, BOOL returnArray) {
+    if ([NSFileManager.defaultManager fileExistsAtPath:retrieveTrigger]) {
+        static dispatch_once_t once;
+        dispatch_once(&once, ^{
+            atomic_store(&delayedImport, true);
+            [NSThread sleepForTimeInterval:importDelay];
+        });
+    }
+    return originalAddFiles(database, selector, files, notifications, reread, generated, imported, returnArray);
+}
 
 static void writeLine(NSDictionary *object) {
     NSData *data = [NSJSONSerialization dataWithJSONObject:object options:0 error:NULL];
@@ -80,11 +100,18 @@ __attribute__((constructor)) static void installImageLevelRetrieveProbe(void) {
     logPath = environment[@"HOROS_RETRIEVE_LOG"];
     double cancelAfter = [environment[@"HOROS_RETRIEVE_CANCEL_AFTER"] doubleValue];
     BOOL cancelAfterArrival = environment[@"HOROS_RETRIEVE_CANCEL_AFTER_ARRIVAL"] != nil;
+    importDelay = [environment[@"HOROS_RETRIEVE_IMPORT_DELAY"] doubleValue];
+    retrieveTrigger = trigger;
     if (!serversPath || !trigger || !logPath) return;
     unsetenv("DYLD_INSERT_LIBRARIES");
     writeLine(@{@"probe": @"loaded"});
     [NSNotificationCenter.defaultCenter addObserverForName:NSApplicationDidFinishLaunchingNotification object:nil
                                                      queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
+        if (importDelay > 0) {
+            Method method = class_getInstanceMethod(NSClassFromString(@"DicomDatabase"),
+                NSSelectorFromString(@"addFilesDescribedInDictionaries:postNotifications:rereadExistingItems:generatedByOsiriX:importedFiles:returnArray:"));
+            if (method) originalAddFiles = (void *)method_setImplementation(method, (IMP)delayedAddFiles);
+        }
         [NSThread detachNewThreadWithBlock:^{
             @autoreleasepool {
                 while (![NSFileManager.defaultManager fileExistsAtPath:trigger]) usleep(50000);
@@ -147,6 +174,7 @@ __attribute__((constructor)) static void installImageLevelRetrieveProbe(void) {
                                                  @"cancelled_at": @(cancelledAt >= 0 ? cancelledAt - start : -1),
                                                  @"finish_after_cancel": @(cancelledAt >= 0 && finishedAt >= 0 ? finishedAt - cancelledAt : -1),
                                                  @"received": @([study countOfSuccessfulSuboperations]),
+                                                 @"import_delay_applied": @(atomic_load(&delayedImport)),
                                                  @"expected": @([study countOfSuboperations])} mutableCopy];
                 if (inventory) {
                     // needsAttention is what raises «Retrieve Incomplete» when error messages are shown (#646).

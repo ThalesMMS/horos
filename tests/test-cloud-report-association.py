@@ -235,6 +235,37 @@ if !fixture.isEmpty {
 results = {}
 fixture_dir = None
 with tempfile.TemporaryDirectory(prefix='horos-cloud-report-') as directory:
+    # Exercise the Objective-C gate before it faults every study's SOPs. Swift's
+    # optional strings do not reproduce Objective-C's nil comparison semantics.
+    gate = database[database.index('static BOOL HorosIncomingLooksLikeCloudReport('):]
+    gate = gate[:gate.index('\n}\n') + 3]
+    gate_source = Path(directory) / 'gate.m'
+    gate_source.write_text('#import "DCMAbstractSyntaxUID.h"\n' + gate + r'''
+int main(void) { @autoreleasepool {
+    NSDictionary *ct = @{ @"SOPClassUID": @"1.2.840.10008.5.1.4.1.1.2",
+        @"modality": @"CT", @"seriesDescription": @"Axial", @"manufacturer": @"Siemens" };
+    NSCAssert(!HorosIncomingLooksLikeCloudReport(@{}), @"absent metadata is not a report");
+    NSCAssert(!HorosIncomingLooksLikeCloudReport(ct), @"ordinary CT is not a report");
+    for (NSString *key in ct) {
+        NSMutableDictionary *missing = [ct mutableCopy];
+        [missing removeObjectForKey:key];
+        NSCAssert(!HorosIncomingLooksLikeCloudReport(missing), @"missing %@ triggered a catalog scan", key);
+        missing[key] = @"";
+        NSCAssert(!HorosIncomingLooksLikeCloudReport(missing), @"empty %@ triggered a catalog scan", key);
+    }
+    for (NSDictionary *report in @[
+        @{ @"SOPClassUID": @"1.2.840.10008.5.1.4.1.1.104.1" },
+        @{ @"SOPClassUID": @"1.2.840.10008.5.1.4.1.1.88.11" },
+        @{ @"modality": @"doc" }, @{ @"seriesDescription": @"Horos CLOUD report" },
+        @{ @"manufacturer": @"Horos Cloud" }])
+        NSCAssert(HorosIncomingLooksLikeCloudReport(report), @"report was skipped: %@", report);
+} return 0; }
+''')
+    gate_binary = Path(directory) / 'gate'
+    subprocess.run(['xcrun', 'clang', '-framework', 'Cocoa', '-I', str(root / 'DCM Framework'),
+                    str(root / 'DCM Framework/DCMAbstractSyntaxUID.m'), str(gate_source), '-o', str(gate_binary)],
+                   check=True, capture_output=True)
+    subprocess.run([str(gate_binary)], check=True, capture_output=True, timeout=10)
     fixture = Path(directory) / 'fixture'
     try:
         subprocess.run([sys.executable, str(generator), str(fixture)], check=True,

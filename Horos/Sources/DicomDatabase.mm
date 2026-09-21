@@ -1898,11 +1898,13 @@ static BOOL HorosIncomingLooksLikeCloudReport(NSDictionary *dict)
     NSString *mfr = [dict objectForKey:@"manufacturer"];
     if ([DCMAbstractSyntaxUID isPDF:sop] || [DCMAbstractSyntaxUID isStructuredReport:sop])
         return YES;
-    if ([mod caseInsensitiveCompare:@"DOC"] == NSOrderedSame)
+    // Messaging nil returns zero, which also means NSOrderedSame or a match at
+    // location 0. Missing metadata must not trigger the full study/SOP scan.
+    if (mod.length && [mod caseInsensitiveCompare:@"DOC"] == NSOrderedSame)
         return YES;
-    if ([desc rangeOfString:@"Cloud" options:NSCaseInsensitiveSearch].location != NSNotFound)
+    if (desc.length && [desc rangeOfString:@"Cloud" options:NSCaseInsensitiveSearch].location != NSNotFound)
         return YES;
-    if ([mfr rangeOfString:@"Cloud" options:NSCaseInsensitiveSearch].location != NSNotFound)
+    if (mfr.length && [mfr rangeOfString:@"Cloud" options:NSCaseInsensitiveSearch].location != NSNotFound)
         return YES;
     return NO;
 }
@@ -3208,6 +3210,25 @@ static void HorosAssociateCloudReports(NSArray *dicomFilesArray, NSArray *studie
         return YES;
     
     return NO;
+}
+
+-(BOOL)incomingImportInProgress
+{
+    // Shared with the independent databases that do the work. Observe without
+    // waiting: the retrieve must remain cancellable during a long import.
+    if (![_importFilesFromIncomingDirLock tryLock])
+        return YES;
+    [_importFilesFromIncomingDirLock unlock];
+    if (![_processFilesLock tryLock])
+        return YES;
+    [_processFilesLock unlock];
+    @synchronized (_compressQueue) {
+        @synchronized (_decompressQueue) {
+            DicomDatabase *mdb = self.isMainDatabase ? self : self.mainDatabase;
+            // The worker also covers the fallback import after conversion.
+            return _compressQueue.count || _decompressQueue.count || mdb.compressDecompressThread.isExecuting;
+        }
+    }
 }
 
 // Two archives can each hold a readme.txt, and two senders can each send a file

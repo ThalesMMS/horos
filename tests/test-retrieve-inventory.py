@@ -17,6 +17,7 @@ assert 'waitForReceivedImportsRefreshing:' in final, 'the move judges its invent
 assert final.index('waitForReceivedImportsRefreshing:') < final.index('[_retrieveInventory finish];'), 'the wait comes after the inventory is finished'
 assert 'if (!NSThread.isMainThread)' in final, 'the wait may block the main thread, whose run loop drives the importer'
 assert '|| !receivedIndexed' in final, 'received instances the index never took do not raise the warning'
+assert 'importInProgress:^BOOL{ return [DicomDatabase activeLocalDatabase].incomingImportInProgress; }' in final
 driver=r'''
 import Foundation
 import CoreData
@@ -90,6 +91,17 @@ var waited=Date().timeIntervalSince(started)
 assert(waited>=0.8 && waited<2.5, "waited \(waited) s for an index that took 0.9 s")
 assert(delayed.isComplete && delayed.importedCount==30 && delayed.receivedAwaitingImportCount==0 && !delayed.needsAttention)
 delayed.finish()
+// A single batch can work longer than the idle timeout without committing a UID.
+let busy=RetrieveInventory.begin(study:"7.4",series:"",endpoint:"PACS",database:directory,instances:delayedRows,confirmed:true)
+busy.updateImportedUIDs([])
+for row in delayedRows { busy.record(uid:row["uid"]!,status:0) }
+started=Date()
+let busyRefresh: () -> Void = {
+ if Date().timeIntervalSince(started)>=1.2 { busy.updateImportedUIDs(delayedRows.map { $0["uid"]! }) }
+}
+assert(busy.waitForReceivedImports(refreshing:busyRefresh,importInProgress:{ true },patience:0.4,cancelled:{ false }))
+assert(Date().timeIntervalSince(started)>=1.2 && busy.isComplete)
+busy.finish()
 // Really incomplete: one instance never sent. Nothing received is left to wait for, and it still needs attention.
 let omitted=RetrieveInventory.begin(study:"8.1",series:"",endpoint:"PACS",database:directory,instances:delayedRows,confirmed:true)
 omitted.updateImportedUIDs([])
@@ -111,6 +123,17 @@ assert(waited>=0.5 && waited<1.5 && rejected.receivedAwaitingImportCount==2, "ga
 // Cancelled: no wait at all.
 started=Date()
 assert(!rejected.waitForReceivedImports(refreshing:{},patience:5,cancelled:{ true }) && Date().timeIntervalSince(started)<0.5)
+// Work ends without indexing the received files: the idle timeout still fires.
+started=Date()
+assert(!rejected.waitForReceivedImports(refreshing:{},importInProgress:{ Date().timeIntervalSince(started)<0.8 },
+                                      patience:0.5,cancelled:{ false }))
+waited=Date().timeIntervalSince(started)
+assert(waited>=1.1 && waited<2, "busy worker suppressed the idle timeout: \(waited)")
+// Cancellation interrupts even a worker that remains busy.
+started=Date()
+assert(!rejected.waitForReceivedImports(refreshing:{},importInProgress:{ true },patience:5,
+                                      cancelled:{ Date().timeIntervalSince(started)>=0.3 }))
+assert(Date().timeIntervalSince(started)<0.8)
 rejected.finish()
 print("ok: exact UID reconciliation, duplicate/rejection history, pending import, unknown inventory, concurrent store events and the wait for received instances to be indexed")
 '''
@@ -118,3 +141,53 @@ with tempfile.TemporaryDirectory(prefix='horos-inventory-') as d:
  p=Path(d);(p/'main.swift').write_text(driver)
  subprocess.run(['xcrun','swiftc',str(root/'Horos/Sources/RetrieveInventory.swift'),str(p/'main.swift'),'-o',str(p/'test')],check=True)
  subprocess.run([str(p/'test'),d],check=True,timeout=20)
+ # Compile the real database activity getter against its lock/queue collaborators.
+ database=(root/'Horos/Sources/DicomDatabase.mm').read_text()
+ activity=database[database.index('-(BOOL)incomingImportInProgress'):]
+ activity=activity[:activity.index('\n}\n')+3]
+ (p/'activity.m').write_text(r'''
+#import <Cocoa/Cocoa.h>
+@interface DicomDatabase : NSObject {
+@public NSRecursiveLock *_importFilesFromIncomingDirLock, *_processFilesLock;
+NSMutableArray *_compressQueue, *_decompressQueue;
+}
+@property BOOL isMainDatabase;
+@property DicomDatabase *mainDatabase;
+@property NSThread *compressDecompressThread;
+@end
+@implementation DicomDatabase
+''' + activity + r'''
+@end
+int main(void) { @autoreleasepool {
+ DicomDatabase *db=[DicomDatabase new]; db.isMainDatabase=YES;
+ db->_importFilesFromIncomingDirLock=[NSRecursiveLock new]; db->_processFilesLock=[NSRecursiveLock new];
+ db->_compressQueue=[NSMutableArray new]; db->_decompressQueue=[NSMutableArray new];
+ NSCAssert(![db incomingImportInProgress], @"idle database reported busy");
+ for (NSRecursiveLock *lock in @[db->_importFilesFromIncomingDirLock, db->_processFilesLock]) {
+  dispatch_semaphore_t locked=dispatch_semaphore_create(0), release=dispatch_semaphore_create(0), done=dispatch_semaphore_create(0);
+  [NSThread detachNewThreadWithBlock:^{
+   [lock lock]; dispatch_semaphore_signal(locked);
+   dispatch_semaphore_wait(release, DISPATCH_TIME_FOREVER); [lock unlock]; dispatch_semaphore_signal(done);
+  }];
+  dispatch_semaphore_wait(locked, DISPATCH_TIME_FOREVER);
+  NSCAssert([db incomingImportInProgress], @"active import/conversion was missed");
+  dispatch_semaphore_signal(release); dispatch_semaphore_wait(done, DISPATCH_TIME_FOREVER);
+  NSCAssert(![db incomingImportInProgress], @"completed work stayed busy");
+ }
+ for (NSMutableArray *queue in @[db->_compressQueue, db->_decompressQueue]) {
+  [queue addObject:@"queued.dcm"]; NSCAssert([db incomingImportInProgress], @"queued conversion missed");
+  [queue removeAllObjects]; NSCAssert(![db incomingImportInProgress], @"empty queue stayed busy");
+ }
+ dispatch_semaphore_t active=dispatch_semaphore_create(0), finish=dispatch_semaphore_create(0);
+ db.compressDecompressThread=[[NSThread alloc] initWithBlock:^{
+  dispatch_semaphore_signal(active); dispatch_semaphore_wait(finish, DISPATCH_TIME_FOREVER);
+ }];
+ [db.compressDecompressThread start]; dispatch_semaphore_wait(active, DISPATCH_TIME_FOREVER);
+ NSCAssert([db incomingImportInProgress], @"conversion fallback missed");
+ dispatch_semaphore_signal(finish);
+ while (!db.compressDecompressThread.isFinished) [NSThread sleepForTimeInterval:0.001];
+ NSCAssert(![db incomingImportInProgress], @"finished conversion stayed busy");
+} return 0; }
+''')
+ subprocess.run(['xcrun','clang','-fobjc-arc','-framework','Cocoa',str(p/'activity.m'),'-o',str(p/'activity')],check=True)
+ subprocess.run([str(p/'activity')],check=True,timeout=10)

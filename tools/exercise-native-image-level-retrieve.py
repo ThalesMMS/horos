@@ -13,6 +13,8 @@ local images until 8 s after the retrieve thread has finished.
   cancel    the retrieve is cancelled as soon as its first image arrives, as the
             activity window's button does
   incomplete  the peer never sends one of the missing instances (#646)
+  slow-import  the first received batch takes 15 s without committing, exceeding
+               the retrieve's 10 s idle timeout while the import lock is held
 
 Checks: complete and failure end with all 30 instances local, none arriving after
 the retrieve thread finished, and (failure) the peer saw the IMAGE-level refusal
@@ -89,6 +91,8 @@ def run_scenario(app: Path, folder: Path, dylib: Path, scenario: str) -> dict:
                        "HOROS_RETRIEVE_TRIGGER": str(trigger), "HOROS_RETRIEVE_LOG": str(log)}
         if scenario == "cancel":
             environment["HOROS_RETRIEVE_CANCEL_AFTER_ARRIVAL"] = "1"
+        if scenario == "slow-import":
+            environment["HOROS_RETRIEVE_IMPORT_DELAY"] = "15"
         launch_arguments = ["-STORESCP", "NO", "-USESTORESCP", "NO", "-TLSStoreSCP", "NO", "-hideListenerError", "YES",
                             "-syncDICOMNodes", "NO", "-publishDICOMBonjour", "NO", "-searchDICOMBonjour", "NO",
                             "-AETITLE", "HOROSDEV", "-AEPORT", str(free_port()), "-DICOMTimeout", "8",
@@ -144,12 +148,14 @@ def check(result: dict) -> list:
                         f"(the last {retrieve['last_arrival_after_finish']:.2f} s later)")
     # The retrieve inventory is judged while the last files may still wait in INCOMING (#646); the
     # study's images counted locally (the SR objects the app archives for it left out) are not.
-    if scenario in ("complete", "failure") and retrieve["local_after"] != INSTANCES:
+    if scenario in ("complete", "failure", "slow-import") and retrieve["local_after"] != INSTANCES:
         problems.append(f"{retrieve['local_after']} of {INSTANCES} instances local at the end")
     inventory = retrieve.get("inventory") or {}
-    if scenario in ("complete", "failure") and (not inventory.get("isComplete") or inventory.get("needsAttention")):
+    if scenario in ("complete", "failure", "slow-import") and (not inventory.get("isComplete") or inventory.get("needsAttention")):
         problems.append(f"the inventory left is not complete, or warns: {inventory.get('summary')} "
                         f"(needs attention {inventory.get('needsAttention')})")
+    if scenario == "slow-import" and not retrieve.get("import_delay_applied"):
+        problems.append("the delayed batch was not exercised")
     if scenario == "incomplete":
         if retrieve["local_after"] != INSTANCES - 1:
             problems.append(f"{retrieve['local_after']} of {INSTANCES} instances local, {INSTANCES - 1} expected")
@@ -175,7 +181,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--app", type=Path, default=native_app.DEVELOPMENT_APP)
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--scenario", action="append", choices=["complete", "failure", "cancel", "incomplete"])
+    parser.add_argument("--scenario", action="append", choices=["complete", "failure", "cancel", "incomplete", "slow-import"])
     arguments = parser.parse_args()
     out = arguments.out.resolve()
     if "local-validation" not in out.parts:
@@ -192,7 +198,7 @@ def main():
                     str(ROOT / "tools/probe-image-level-retrieve.m"), "-o", str(dylib)], check=True)
     summary = {"app": str(app), "scenarios": {}}
     failed = False
-    for scenario in arguments.scenario or ["complete", "failure", "cancel", "incomplete"]:
+    for scenario in arguments.scenario or ["complete", "failure", "cancel", "incomplete", "slow-import"]:
         result = run_scenario(app, out / scenario, dylib, scenario)
         problems = check(result)
         summary["scenarios"][scenario] = {"result": result, "problems": problems}

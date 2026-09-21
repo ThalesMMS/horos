@@ -169,6 +169,7 @@ extern NSString* const DicomDatabaseLogEntryEntityName;
 #pragma mark Incoming
 -(BOOL)isFileSystemFreeSizeLimitReached;
 -(BOOL) hasFilesToImport;
+@property(readonly) BOOL incomingImportInProgress;
 -(NSInteger)importFilesFromIncomingDir;
 -(NSInteger)importFilesFromIncomingDir: (NSNumber*) showGUI;
 -(NSInteger)importFilesFromIncomingDir: (NSNumber*) showGUI listenerCompressionSettings: (int) listenerCompressionSettings;

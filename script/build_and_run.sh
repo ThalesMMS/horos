@@ -36,7 +36,8 @@ for line in subprocess.check_output(['/bin/ps','-axo','pid=,comm='],text=True).s
 PYTHON
 BUILD_LOG="$ROOT_DIR/build/logs/build-and-run.log"
 echo "Building Horos ($DEV_CONFIGURATION). Log: $BUILD_LOG"
-if xcodebuild -project Horos.xcodeproj -scheme Horos -configuration "$DEV_CONFIGURATION" -derivedDataPath build CODE_SIGNING_ALLOWED=NO > "$BUILD_LOG" 2>&1; then
+# Explicit products location also works when Xcode has a custom global location.
+if xcodebuild -project Horos.xcodeproj -scheme Horos -configuration "$DEV_CONFIGURATION" -derivedDataPath build SYMROOT="$ROOT_DIR/build/Build/Products" CODE_SIGNING_ALLOWED=NO > "$BUILD_LOG" 2>&1; then
     echo "Build succeeded. Preparing $DEV_APP"
 else
     build_status=$?

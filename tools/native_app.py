@@ -23,7 +23,8 @@ DEVELOPMENT_APP = ROOT / "build/Development/HorosDevelopment.app"
 def isolation_arguments(test_root: Path) -> list[str]:
     """The arguments build_and_run.sh passes, so a direct launch is equally isolated."""
     root = str(test_root)
-    return ["-hideListenerError", "NO", "-DATABASELOCATION", "1", "-DATABASELOCATIONURL", root,
+    return ["-hideListenerError", "NO", "-moveToApplicationsFolderAlertSuppress", "YES",
+            "-DATABASELOCATION", "1", "-DATABASELOCATIONURL", root,
             "-DEFAULT_DATABASELOCATION", "1", "-DEFAULT_DATABASELOCATIONURL", root,
             "-WebPortalDatabasePath", f"{root}/WebUsers.sql", "-AUTOCLEANINGSPACE", "NO",
             "-AUTOCLEANINGDATE", "NO", "-AUTOROUTINGACTIVATED", "NO", "-STORESCP", "NO", "-USESTORESCP", "NO",
