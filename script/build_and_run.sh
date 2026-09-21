@@ -34,7 +34,16 @@ for line in subprocess.check_output(['/bin/ps','-axo','pid=,comm='],text=True).s
             time.sleep(0.1)
         else: raise SystemExit('Development process did not stop; build not started.')
 PYTHON
-xcodebuild -project Horos.xcodeproj -scheme Horos -configuration "$DEV_CONFIGURATION" -derivedDataPath build CODE_SIGNING_ALLOWED=NO > "$ROOT_DIR/build/logs/build-and-run.log" 2>&1
+BUILD_LOG="$ROOT_DIR/build/logs/build-and-run.log"
+echo "Building Horos ($DEV_CONFIGURATION). Log: $BUILD_LOG"
+if xcodebuild -project Horos.xcodeproj -scheme Horos -configuration "$DEV_CONFIGURATION" -derivedDataPath build CODE_SIGNING_ALLOWED=NO > "$BUILD_LOG" 2>&1; then
+    echo "Build succeeded. Preparing $DEV_APP"
+else
+    build_status=$?
+    tail -n 60 "$BUILD_LOG" >&2
+    echo "Build failed (exit $build_status). Full log: $BUILD_LOG" >&2
+    exit "$build_status"
+fi
 rm -rf "$DEV_APP"
 /usr/bin/ditto "$ROOT_DIR/build/Build/Products/$DEV_CONFIGURATION/Horos.app" "$DEV_APP"
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $DEV_ID" "$DEV_APP/Contents/Info.plist"
