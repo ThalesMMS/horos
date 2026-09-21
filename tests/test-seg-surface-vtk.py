@@ -27,7 +27,8 @@ let out = URL(fileURLWithPath: CommandLine.arguments[1])
 var expected = ""
 for (name, size, expectedCount, components, euler) in [
     ("solid", 4, 64, 1, 2), ("tube", 4, 48, 1, 0),
-    ("cavity", 4, 56, 2, 4), ("separate", 5, 16, 2, 4)] {
+    ("cavity", 4, 56, 2, 4), ("separate", 5, 16, 2, 4),
+    ("edge-contact", 4, 32, 1, 3)] {
     var frames: [Data] = []
     for z in 0..<size {
         var plane = Data(repeating: 0, count: size * size)
@@ -37,6 +38,7 @@ for (name, size, expectedCount, components, euler) in [
             case "tube": inside = x == 0 || y == 0 || x == size - 1 || y == size - 1
             case "cavity": inside = x == 0 || y == 0 || z == 0 || x == size - 1 || y == size - 1 || z == size - 1
             case "separate": inside = (x < 2 && y < 2 && z < 2) || (x >= 3 && y >= 3 && z >= 3)
+            case "edge-contact": inside = (x < 2 && y < 2) || (x >= 2 && y >= 2)
             default: inside = true
             }
             if inside { plane[y * size + x] = 1 }
@@ -46,9 +48,11 @@ for (name, size, expectedCount, components, euler) in [
     let offsets = (0..<size).map { NSNumber(value: Double($0) * 3) }
     let surface = HorosSEGSurface.mesh(binaryFrames: frames, rows: size, columns: size,
         spacingX: 1.5, spacingY: 2, frameOffsets: offsets, singleFrameThickness: 3)!
-    expect(surface.closed, "closed \(name)")
+    // Diagonally touching regions have a valid voxel boundary for display,
+    // but their shared edge is non-manifold, so mesh volume is unavailable.
+    expect(surface.closed == (name != "edge-contact"), "topology \(name)")
     let volume = Double(expectedCount) * 1.5 * 2 * 3 / 1000
-    expect(abs(surface.meshVolumeCm3 - volume) < 1e-12, "Swift volume \(name)")
+    expect(abs(surface.meshVolumeCm3 - (surface.closed ? volume : 0)) < 1e-12, "Swift volume \(name)")
     expect(abs(surface.maskVolumeCm3 - volume) < 1e-12, "mask volume \(name)")
     try surface.vertices.write(to: out.appendingPathComponent(name + ".points"))
     try surface.triangles.write(to: out.appendingPathComponent(name + ".faces"))
@@ -103,7 +107,9 @@ int main(int argc, char **argv) { @autoreleasepool {
         auto edges=vtkSmartPointer<vtkFeatureEdges>::New();
         edges->SetInputData(data);edges->BoundaryEdgesOn();edges->NonManifoldEdgesOn();
         edges->FeatureEdgesOff();edges->ManifoldEdgesOff();edges->Update();
-        assert(edges->GetOutput()->GetNumberOfCells()==0);
+        assert((edges->GetOutput()->GetNumberOfCells()==0) == (name!="edge-contact"));
+        edges->NonManifoldEdgesOff();edges->Update();
+        assert(edges->GetOutput()->GetNumberOfCells()==0); // no missing voxel faces
         auto connectivity=vtkSmartPointer<vtkPolyDataConnectivityFilter>::New();
         connectivity->SetInputData(data);connectivity->SetExtractionModeToAllRegions();connectivity->Update();
         assert(connectivity->GetNumberOfExtractedRegions()==components);
@@ -120,7 +126,7 @@ int main(int argc, char **argv) { @autoreleasepool {
         assert(fabs(bounds[0]+0.75)<1e-12 && fabs(bounds[1]-(size-0.5)*1.5)<1e-12);
         assert(fabs(bounds[2]+1)<1e-12 && fabs(bounds[3]-(size-0.5)*2)<1e-12);
         assert(fabs(bounds[4]+1.5)<1e-12 && fabs(bounds[5]-(size-0.5)*3)<1e-12);
-        printf("PASS: VTK %s closed, components=%d, Euler=%d, volume=%.6f mm3\n",name.c_str(),components,euler,mass->GetVolume());
+        printf("PASS: VTK %s complete boundary, components=%d, Euler=%d, volume=%.6f mm3\n",name.c_str(),components,euler,mass->GetVolume());
         auto plane=vtkSmartPointer<vtkPlane>::New();plane->SetOrigin(0,0,3);plane->SetNormal(0,0,1);
         auto cut=vtkSmartPointer<vtkCutter>::New();cut->SetInputData(data);cut->SetCutFunction(plane);cut->Update();
         auto contour=cut->GetOutput();contour->GetLines()->InitTraversal();double length=0;
@@ -129,7 +135,7 @@ int main(int argc, char **argv) { @autoreleasepool {
             assert(fabs(a[2]-3)<1e-12 && fabs(b[2]-3)<1e-12);
             length+=hypot(hypot(a[0]-b[0],a[1]-b[1]),a[2]-b[2]);
         }
-        double expectedLength=name=="solid"?28:(name=="separate"?14:42);
+        double expectedLength=(name=="solid" || name=="edge-contact")?28:(name=="separate"?14:42);
         assert(fabs(length-expectedLength)<1e-9);
         // The MPR's default planes sit on voxel faces (z=1.5 here); the shared cut
         // must still return the section of the row just past the face.
@@ -171,6 +177,9 @@ assert '// Iso Contour:' in source, 'legacy border-erasing Iso Contour must use 
 iso = source.split('// Iso Contour:')[1].split('// Delaunay')[0]
 assert 'HorosSEGSurface meshForBinaryFrames:' in iso
 assert 'HorosSEGSurfacePolyData(surface.vertices, surface.triangles)' in iso
+gate = iso[iso.index('if (surface'):iso.index('vtkSmartPointer<vtkPolyData>')]
+assert 'surface.closed' not in gate, 'non-manifold voxel contacts must not suppress the ROI volume window'
+assert 'surface.vertices.length' in gate and 'surface.triangles.length' in gate
 assert 'z = 1;' not in iso and 'count]-1' not in iso
 assert 'clipMin:NSMakePoint(0, 0) clipMax:NSMakePoint(p.pwidth, p.pheight)' in iso
 assert 'vtkTextureMapToSphere' not in iso and 'vtkDelaunay' not in iso

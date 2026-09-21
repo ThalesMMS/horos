@@ -20,7 +20,7 @@ directories themselves.
 ## Getting the source
 
 ```sh
-git clone https://github.com/ThalesMMS/horos-workbench.git
+git clone https://github.com/ThalesMMS/horos.git
 ```
 
 That is all. **This fork has no git submodules to initialise.** `.gitmodules`

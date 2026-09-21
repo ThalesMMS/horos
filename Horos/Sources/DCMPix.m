@@ -2293,8 +2293,10 @@ void erase_outside_circle(char *buf, int width, int height, int cx, int cy, int 
                         if( locations)
                             *locations = ilocations = (float*) malloc( size * 2 * sizeof(float));
                         
+                        // Measurement reads this 2D buffer at slice zero. MPR
+                        // planes have pixels without an owning pixArray.
                         if( values)
-                            ras_FillPolygon( pts, no, computedfImage, width, height, pixArray.count, 0, 0, NO, 0, NO, isComputefImageRGB, YES, nil, nil, &count, nil, nil, 0, 2, 0, NO, values, ilocations);
+                            ras_FillPolygon( pts, no, computedfImage, width, height, 1, 0, 0, NO, 0, NO, isComputefImageRGB, YES, nil, nil, &count, nil, nil, 0, 2, 0, NO, values, ilocations);
                     }
                 }
                 

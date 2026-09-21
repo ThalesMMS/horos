@@ -419,7 +419,10 @@
                 rows:first.pheight columns:first.pwidth
                 spacingX:factor * first.pixelSpacingX spacingY:factor * first.pixelSpacingY
                 frameOffsets:offsets singleFrameThickness:factor * MAX(fabs(first.sliceThickness), fabs(first.sliceInterval))];
-            if (surface && surface.closed)
+            // Voxel faces may meet at an edge in a valid mask. That is not a
+            // manifold mesh, but VTK can still display it; the reported ROI
+            // volume was computed from the contours, not from this mesh.
+            if (surface.vertices.length && surface.triangles.length)
             {
                 vtkSmartPointer<vtkPolyData> data = HorosSEGSurfacePolyData(surface.vertices, surface.triangles);
                 vtkPolyDataMapper *isoMapper = vtkPolyDataMapper::New();
@@ -429,7 +432,8 @@
                 mapper = isoMapper;
                 // Keep the existing planimetric statistic distinct from voxel volume.
                 [statistics setObject:@(surface.maskVolumeCm3 / pow(factor, 3)) forKey:@"surfaceMaskVolumeCm3"];
-                [statistics setObject:@(surface.meshVolumeCm3 / pow(factor, 3)) forKey:@"surfaceMeshVolumeCm3"];
+                if (surface.closed)
+                    [statistics setObject:@(surface.meshVolumeCm3 / pow(factor, 3)) forKey:@"surfaceMeshVolumeCm3"];
             }
         }
             break;
@@ -761,8 +765,10 @@
             NSLog(@"ROI surface reconstruction failed; keeping UseDelaunayFor3DRoi");
         }
     }
-    
-	[splash close];
+    @finally
+    {
+        [splash close];
+    }
 
 	return statistics;
 }

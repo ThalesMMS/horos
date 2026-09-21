@@ -1548,8 +1548,8 @@ extern "C"
 
 - (void) executeRefresh: (id) sender
 {
-    if (currentQueryController.DatabaseIsEdited == NO) [currentQueryController.outlineView reloadData];
-	if (currentAutoQueryController.DatabaseIsEdited == NO) [currentAutoQueryController.outlineView reloadData];
+    if (currentQueryController.DatabaseIsEdited == NO) [currentQueryController reloadResultsAfterLocalChange];
+	if (currentAutoQueryController.DatabaseIsEdited == NO) [currentAutoQueryController reloadResultsAfterLocalChange];
 	
     [NSThread detachNewThreadSelector:@selector(computeStudyArrayInstanceUID:) toTarget:self withObject:nil];
 }
@@ -1699,6 +1699,15 @@ extern "C"
                             [item setChildren: [NSMutableArray array]];
 					}
                 }
+                if( [item isKindOfClass: [DCMTKStudyQueryNode class]])
+                {
+                    // Sort before the outline asks for its rows, including the
+                    // first expansion when parentForItem: is not available yet.
+                    NSArray *descriptors = [NSArray arrayWithObject: [NSSortDescriptor sortDescriptorWithKey: @"time" ascending: YES]];
+                    if( [[[[outlineView sortDescriptors] firstObject] key] isEqualToString: @"localCompleteness"])
+                        descriptors = [@[[[self sortArray] firstObject]] arrayByAddingObjectsFromArray: descriptors];
+                    [item setChildren: [[item children] sortedArrayUsingDescriptors: descriptors]];
+                }
             }
             return  (item == nil) ? [resultArray count] : [[item children] count];
         }
@@ -1719,7 +1728,7 @@ extern "C"
 - (NSArray*) localSeries:(id) item context: (NSManagedObjectContext*) context
 {
 	NSArray *seriesArray = nil;
-	NSManagedObject *study = [[self localStudy: [outlineView parentForItem: item] context: context] lastObject];
+	NSManagedObject *study = [[self localStudy: item context: context] lastObject];
 	
 	if( study == nil) return seriesArray;
 	
@@ -1757,10 +1766,10 @@ extern "C"
 	@synchronized (studyArrayInstanceUID)
 	{
 		if( currentQueryController.DatabaseIsEdited == NO)
-			[currentQueryController.outlineView reloadData];
+			[currentQueryController reloadResultsAfterLocalChange];
 			
 		if( currentAutoQueryController.DatabaseIsEdited == NO)
-			[currentAutoQueryController.outlineView reloadData];
+			[currentAutoQueryController reloadResultsAfterLocalChange];
 	}
 	
 	[pool release];
@@ -1855,7 +1864,7 @@ extern "C"
 
 - (NSArray*) localStudy:(id) item context: (NSManagedObjectContext*) context
 {
-	if( [item isMemberOfClass:[DCMTKStudyQueryNode class]] == YES)
+	if( [item isMemberOfClass:[DCMTKStudyQueryNode class]] || [item isMemberOfClass:[DCMTKSeriesQueryNode class]])
 	{
 		@try
 		{
@@ -1866,7 +1875,7 @@ extern "C"
                 if (studyArrayInstanceUID.count == 0)
                     [self computeStudyArrayInstanceUID: nil];
 
-                NSUInteger index = [studyArrayInstanceUID indexOfObject:[item valueForKey: @"uid"]];
+                NSUInteger index = [studyArrayInstanceUID indexOfObject:[item studyInstanceUID]];
                 
                 if( index != NSNotFound)
                 {
@@ -2157,79 +2166,83 @@ extern "C"
 
 - (NSArray*) sortArray
 {
-	NSArray *s = [outlineView sortDescriptors];
-	
-	if( [s count])
-	{
-		// Completeness is not a property of the node - it is the node compared
-		// against the local database - so it is sorted by comparing the rows
-		// themselves rather than a key on them.
-		if( [[[s objectAtIndex: 0] key] isEqualToString: @"localCompleteness"])
-		{
-			BOOL ascending = [[s objectAtIndex: 0] ascending];
-			NSSortDescriptor *byCompleteness = [[[NSSortDescriptor alloc] initWithKey: @"self"
-																		   ascending: ascending
-																		  comparator: ^NSComparisonResult( id a, id b)
-			{
-				HorosLocalCompleteness *first = [self localCompletenessForItem: a];
-				HorosLocalCompleteness *second = [self localCompletenessForItem: b];
-				
-				if( first == nil || second == nil)
-					return NSOrderedSame;
-				
-				return [first compare: second];
-			}] autorelease];
-			
-			NSMutableArray *sortArray = [NSMutableArray arrayWithObject: byCompleteness];
-			if( [s count] > 1)
-			{
-				NSMutableArray *lastObjects = [NSMutableArray arrayWithArray: s];
-				[lastObjects removeObjectAtIndex: 0];
-				[sortArray addObjectsFromArray: lastObjects];
-			}
-			return sortArray;
-		}
-		
-		if( [[[s objectAtIndex: 0] key] isEqualToString:@"date"])
-		{
-			NSMutableArray *sortArray = [NSMutableArray arrayWithObject: [s objectAtIndex: 0]];
-			
-			[sortArray addObject: [[[NSSortDescriptor alloc] initWithKey:@"time" ascending: [[s objectAtIndex: 0] ascending]] autorelease]];
-			
-			if( [s count] > 1)
-			{
-				NSMutableArray *lastObjects = [NSMutableArray arrayWithArray: s];
-				[lastObjects removeObjectAtIndex: 0];
-				[sortArray addObjectsFromArray: lastObjects];
-			}
-			
-			return sortArray;
-		}
-	}
-	
-	return s;
+    NSMutableArray *descriptors = [NSMutableArray array];
+    for( NSSortDescriptor *descriptor in [outlineView sortDescriptors])
+    {
+        // AppKit keeps previous columns as tie breakers. Translate Local at
+        // every position: it is a database comparison, not a query-node key.
+        if( [[descriptor key] isEqualToString: @"localCompleteness"])
+        {
+            // Freeze each row's value for this sort, avoiding repeated database
+            // and inventory lookups inside the O(n log n) comparisons.
+            NSMapTable *values = [NSMapTable strongToStrongObjectsMapTable];
+            [descriptors addObject: [[[NSSortDescriptor alloc] initWithKey: @"self"
+                ascending: [descriptor ascending] comparator: ^NSComparisonResult(id a, id b)
+            {
+                HorosLocalCompleteness *first = [values objectForKey: a];
+                if( first == nil)
+                {
+                    first = [self localCompletenessForItem: a];
+                    if( first) [values setObject: first forKey: a];
+                }
+                HorosLocalCompleteness *second = [values objectForKey: b];
+                if( second == nil)
+                {
+                    second = [self localCompletenessForItem: b];
+                    if( second) [values setObject: second forKey: b];
+                }
+                return first && second ? [first compare: second] : NSOrderedSame;
+            }] autorelease]];
+        }
+        else
+        {
+            [descriptors addObject: descriptor];
+            if( [[descriptor key] isEqualToString: @"date"])
+                [descriptors addObject: [NSSortDescriptor sortDescriptorWithKey: @"time" ascending: [descriptor ascending]]];
+        }
+    }
+    return descriptors;
+}
+
+- (void) sortResultsPreservingSelection
+{
+    NSMutableArray *selectedItems = [NSMutableArray array];
+    [[outlineView selectedRowIndexes] enumerateIndexesUsingBlock: ^(NSUInteger row, BOOL *stop)
+    {
+        id item = [outlineView itemAtRow: row];
+        if( item) [selectedItems addObject: item];
+    }];
+
+    [resultArray sortUsingDescriptors: [self sortArray]];
+    [outlineView reloadData];
+
+    NSMutableIndexSet *selection = [NSMutableIndexSet indexSet];
+    for( id item in selectedItems)
+    {
+        NSInteger row = [outlineView rowForItem: item];
+        if( row >= 0) [selection addIndex: row];
+    }
+    [outlineView selectRowIndexes: selection byExtendingSelection: NO];
+}
+
+- (void) reloadResultsAfterLocalChange
+{
+    for( NSSortDescriptor *descriptor in [outlineView sortDescriptors])
+    {
+        if( [[descriptor key] isEqualToString: @"localCompleteness"])
+        {
+            [self sortResultsPreservingSelection];
+            return;
+        }
+    }
+    [outlineView reloadData];
 }
 
 - (void)outlineView:(NSOutlineView *)aOutlineView sortDescriptorsDidChange:(NSArray *)oldDescs
 {
-	id item = [outlineView itemAtRow: [outlineView selectedRow]];
-	
-	[resultArray sortUsingDescriptors: [self sortArray]];
-	[outlineView reloadData];
-	
-	NSArray *s = [outlineView sortDescriptors];
-	
-	if( [s count])
-	{
-		if( [[[s objectAtIndex: 0] key] isEqualToString:@"name"] == NO)
-		{
-			[outlineView selectRowIndexes: [NSIndexSet indexSetWithIndex: 0] byExtendingSelection: NO];
-		}
-		else [outlineView selectRowIndexes: [NSIndexSet indexSetWithIndex: [outlineView rowForItem: item]] byExtendingSelection: NO];
-	}
-	else [outlineView selectRowIndexes: [NSIndexSet indexSetWithIndex: [outlineView rowForItem: item]] byExtendingSelection: NO];
-	
-	[outlineView scrollRowToVisible: [outlineView selectedRow]];
+    [self sortResultsPreservingSelection];
+    if( [outlineView selectedRow] >= 0)
+        [outlineView scrollRowToVisible: [outlineView selectedRow]];
 }
 
 - (void)outlineViewSelectionDidChange:(NSNotification *)notification
@@ -4721,7 +4734,7 @@ static NSString *HorosViewingSeriesUID( id item)
     if( [outlineView tableColumnWithIdentifier: @"localCompleteness"] == nil)
     {
         NSTableColumn *completenessColumn = [[[NSTableColumn alloc] initWithIdentifier: @"localCompleteness"] autorelease];
-        [[completenessColumn headerCell] setStringValue: NSLocalizedString( @"Local", nil)];
+        [[completenessColumn headerCell] setStringValue: NSLocalizedString( @"Local %", nil)];
         [completenessColumn setWidth: 110];
         [completenessColumn setMinWidth: 60];
         [completenessColumn setEditable: NO];

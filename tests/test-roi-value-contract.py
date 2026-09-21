@@ -8,6 +8,9 @@ stack happened to hold. The greyscale conversion in its brush branch is also
 checked here, because it read different bytes of the pixel than every other
 loop in the same file and divided only the last of the three.
 
+Reconstructed MPR planes have their own pixels without an owning pixArray.
+They must return the same samples and coordinates as a plane in a stack.
+
 Like the scanline test, this links the DCMPix.o the application is built from
 and subclasses the real class, so it measures the shipped method.
 """
@@ -36,6 +39,7 @@ enum { kOpenPolygon = 10, kBrush = 20 };   // ToolMode, DCMView.h
 
 @interface ProbePix : DCMPix
 - (void) prepareWidth:(long)w height:(long)h rgb:(BOOL)rgb;
+- (void) useStandalonePlane:(BOOL)emptyArray;
 @end
 @implementation ProbePix
 // The filler only needs pixels; loading them from a file is not what is under
@@ -50,8 +54,13 @@ enum { kOpenPolygon = 10, kBrush = 20 };   // ToolMode, DCMView.h
     // -dealloc would free both of these, so each instance owns its own.
     fImage = (float*) calloc( w * h, sizeof( float));
     baseAddr = (char*) calloc( w * h, 4);
-    // The filler refuses a slice count of zero; only the count is read here.
+    // Ordinary viewer planes have an owning stack. The MPR cases below do not.
     pixArray = [[NSArray arrayWithObject: [NSNull null]] retain];
+}
+- (void) useStandalonePlane:(BOOL)emptyArray
+{
+    [pixArray release];
+    pixArray = emptyArray ? [[NSArray alloc] init] : nil;
 }
 @end
 
@@ -124,18 +133,34 @@ int main(){ @autoreleasepool {
     shortPath( 0, "no spline point");
     shortPath( 2, "two spline points");
 
-    // The ordinary path still has to produce values and coordinates.
-    {
+    // A standalone MPR plane (nil or empty pixArray) must sample the same
+    // inclusive square as an ordinary viewer plane in a stack.
+    for( int stack = 0; stack < 3; stack++) {
         ProbePix *pix = [[ProbePix alloc] init];
         [pix prepareWidth: 16 height: 16 rgb: NO];
+        if( stack) [pix useStandalonePlane: stack == 2];
+        for( int y = 0; y < 16; y++)
+            for( int x = 0; x < 16; x++)
+                pix.fImage[y * 16 + x] = 1 + x + 16 * y;
         float *locations = kUnwritten;
         long count = kUncounted;
         float *values = [pix getROIValue: &count : (id) polygonWith( 4) : &locations];
         char message[ 160];
         snprintf( message, sizeof message,
-                  "a four point polygon must return values and coordinates: values=%p locations=%p count=%ld",
-                  (void*) values, (void*) locations, count);
-        check( values != nil && locations != nil && locations != kUnwritten && count > 0, message);
+                  "stack case %d: a four point polygon must return 36 values and coordinates, got %ld",
+                  stack, count);
+        check( values != nil && locations != nil && locations != kUnwritten && count == 36, message);
+        if( values && locations && locations != kUnwritten && count == 36) {
+            long i = 0;
+            for( int y = 3; y <= 8; y++) {
+                for( int x = 3; x <= 8; x++, i++) {
+                    check( locations[2 * i] == x && locations[2 * i + 1] == y,
+                           "polygon coordinates must cover the inclusive square");
+                    check( values[i] == 1 + x + 16 * y,
+                           "polygon samples must read the reconstructed pixel buffer");
+                }
+            }
+        }
         free( values);
         if( locations && locations != kUnwritten) free( locations);
     }
@@ -170,7 +195,7 @@ int main(){ @autoreleasepool {
     }
 
     if( failures) { fprintf( stderr, "FAIL: %d check%s\n", failures, failures == 1 ? "" : "s"); return 1; }
-    puts( "PASS: output parameters written on every path and the RGB brush value is the mean of the colour bytes");
+    puts( "PASS: output parameters, stack and standalone MPR samples, and RGB brush values");
     return 0;
 }}
 '''
