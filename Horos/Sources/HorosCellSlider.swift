@@ -21,6 +21,35 @@ public final class HorosCellSliderCell: NSSliderCell {
     @objc func _visualProvider() -> AnyObject? { nil }
     @objc func _visualProviderIfExists() -> AnyObject? { nil }
     @objc func _visualProviderInView(_ view: Any?) -> AnyObject? { nil }
+
+    /// Thickness of a stock slider across its short axis, which is what the
+    /// Viewer.xib layouts were built against.
+    @objc public static func thickness(forControlSize size: NSControl.ControlSize,
+                                       tickMarks: Int) -> CGFloat {
+        switch size {
+        case .mini: return tickMarks > 0 ? 16 : 12
+        case .small: return tickMarks > 0 ? 18 : 14
+        default: return 16
+        }
+    }
+
+    /// `NSSliderCell` computes this from its visual provider, which this cell
+    /// suppresses, so the stock implementation returns `NSZeroSize`. Every
+    /// slider whose height Auto Layout takes from the intrinsic content size
+    /// then collapses to nothing: invisible, and `hitTest:` misses it, so the
+    /// slider never receives a click. `40000` is the stock long-axis value.
+    public override var cellSize: NSSize {
+        let thickness = HorosCellSliderCell.thickness(forControlSize: controlSize,
+                                                      tickMarks: numberOfTickMarks)
+        return isVertical ? NSSize(width: thickness, height: 40000)
+                          : NSSize(width: 40000, height: thickness)
+    }
+
+    public override func cellSize(forBounds rect: NSRect) -> NSSize {
+        let natural = cellSize
+        return isVertical ? NSSize(width: min(natural.width, rect.width), height: rect.height)
+                          : NSSize(width: rect.width, height: min(natural.height, rect.height))
+    }
 }
 
 @objc(HorosCellSlider)
@@ -105,7 +134,31 @@ public class HorosCellSlider: NSSlider {
 
     public override var numberOfTickMarks: Int {
         get { super.numberOfTickMarks }
-        set { super.numberOfTickMarks = newValue; needsDisplay = true }
+        set {
+            super.numberOfTickMarks = newValue
+            invalidateIntrinsicContentSize()
+            needsDisplay = true
+        }
+    }
+
+    public override var controlSize: NSControl.ControlSize {
+        get { super.controlSize }
+        set {
+            super.controlSize = newValue
+            invalidateIntrinsicContentSize()
+            needsDisplay = true
+        }
+    }
+
+    /// Without this the slider has no height of its own: `NSControl` takes the
+    /// intrinsic size from the cell, and the cell has no visual provider to
+    /// measure. Sliders in Viewer.xib that carry no height constraint then lay
+    /// out zero points tall — drawn as nothing, and skipped by `hitTest:`.
+    public override var intrinsicContentSize: NSSize {
+        let thickness = HorosCellSliderCell.thickness(forControlSize: controlSize,
+                                                      tickMarks: numberOfTickMarks)
+        return isHorizontalSlider ? NSSize(width: NSView.noIntrinsicMetric, height: thickness)
+                                  : NSSize(width: thickness, height: NSView.noIntrinsicMetric)
     }
 
     public override var isEnabled: Bool {
