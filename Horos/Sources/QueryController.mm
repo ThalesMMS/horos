@@ -1923,6 +1923,7 @@ extern "C"
         value.inventoryDetail = [NSString stringWithFormat:@"%@%@\nInventory queried: %@\nManifest: %@",
             inventory.inventoryConfirmed && !current ? @"The remote count changed; retrieve again to refresh the inventory.\n" : @"",
             inventory.summary, inventory.queriedAt, inventory.path];
+        if (current) value.unsendableCount = inventory.unsendableUIDs.count;
         return value;
     }
     NSArray *local = nil;
@@ -3647,11 +3648,16 @@ extern "C"
     if( [NSThread isMainThread] == NO)
         showGUI = NO;
     
+    // Retrieve with Option held asks for everything again, including what the node
+    // declared it cannot send; otherwise a retrieve asks only for what it can (#692).
+    BOOL retryEverything = showGUI && !onlyIfNotAvailable && ([[NSApp currentEvent] modifierFlags] & NSEventModifierFlagOption) != 0;
+    
 	if([items count])
 	{
 		for( id item in items)
 		{
 			[item setShowErrorMessage: showGUI];
+			[item setNoSmartMode: retryEverything];
 			
 			if( onlyIfNotAvailable)
 			{

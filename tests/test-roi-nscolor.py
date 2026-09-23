@@ -10,7 +10,9 @@ def source(name):
     return (subprocess.check_output(['git', 'show', sys.argv[1] + ':' + path])
             if len(sys.argv) > 1 else (root / path).read_bytes()).decode('latin1')
 s = source('ROI.m')
-bridge = s[s.index('-(void)setNSColor:(NSColor*)nsColor {'):s.rindex('@end')]
+start = s.index('-(void)setNSColor:(NSColor*)nsColor {')
+# The ROI implementation ends at the first @end after the bridge; other classes follow it.
+bridge = s[start:s.index('\n@end', start)]
 s = source('OSIROI.m')
 consumers = s[s.index('- (NSColor *)fillColor'):s.index('- (CGFloat)strokeThickness')]
 code = r'''

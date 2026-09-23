@@ -18,7 +18,11 @@ public final class RetrieveInventory: NSObject {
     private var receivers = 0
     private var receiving: Bool { receivers > 0 }
     private var attemptReceived: Set<String> = []
+    private var attemptRefused: Set<String> = []
     private var baselineImported: Set<String>?
+    /// Instances the peer had already declared it cannot send when this attempt began:
+    /// their absence was reported by the attempt that found it (#692).
+    private var knownUnsendable: Set<String> = []
     private var data: Snapshot
     @objc public let path: String
 
@@ -104,7 +108,9 @@ public final class RetrieveInventory: NSObject {
         inventory.data = snapshot
         if !inventory.receiving {
             inventory.attemptReceived = []
+            inventory.attemptRefused = []
             inventory.baselineImported = nil
+            inventory.knownUnsendable = inventory.data.peerFailed ?? []
         }
         inventory.lastImportRevision = nil
         inventory.receivers += 1
@@ -147,7 +153,7 @@ public final class RetrieveInventory: NSObject {
         if status == 0 || (status & 0xf000) == 0xb000 { data.received[uid, default: 0] += 1; attemptReceived.insert(uid) }
         if (status & 0xf000) == 0xb000 {
             var warnings = data.storageWarnings ?? [:]; warnings[uid, default: []].append(status); data.storageWarnings = warnings
-        } else if status != 0 { data.rejected[uid, default: []].append(status) }
+        } else if status != 0 { data.rejected[uid, default: []].append(status); attemptRefused.insert(uid) }
     }
 
     @objc(recordPeerFailedUID:)
@@ -155,6 +161,35 @@ public final class RetrieveInventory: NSObject {
         Self.lock.lock(); defer { Self.lock.unlock() }
         if data.peerFailed == nil { data.peerFailed = [] }
         data.peerFailed?.insert(uid)
+    }
+
+    /// After a C-GET, the instances it asked for that neither arrived nor were refused here are
+    /// what the peer could not send, when they are as many as its failed sub-operations less
+    /// those refused here. A peer that omits the Failed SOP Instance UID List (OsiriX, for a
+    /// file it cannot convert) names them this way. `requested` empty means every instance of
+    /// `series`, or of the study when that is empty. Only a final status that speaks of
+    /// failed sub-operations (0xB000, 0xA702, or success) counts: a refusal of the whole
+    /// request (0xC000, an IMAGE level the peer does not support) says nothing of any
+    /// instance. A count that does not match, or sub-operations still remaining, records
+    /// nothing (#692).
+    @objc(recordUnsentOfRequested:series:status:failed:remaining:)
+    public func recordUnsent(requested: [String], series: String, status: UInt, failed: UInt, remaining: UInt) {
+        Self.lock.lock(); defer { Self.lock.unlock() }
+        guard [0x0000, 0xB000, 0xA702].contains(status), failed > 0, remaining == 0 else { return }
+        let asked = requested.isEmpty
+            ? Set(data.expected.filter { series.isEmpty || $0.value == series }.keys)
+            : Set(requested.filter { !$0.isEmpty })
+        let refusedHere = asked.intersection(attemptRefused).count
+        let unsent = asked.subtracting(attemptReceived).subtracting(attemptRefused)
+        guard !unsent.isEmpty, unsent.count == Int(failed) - refusedHere else { return }
+        data.peerFailed = (data.peerFailed ?? []).union(unsent)
+    }
+
+    /// Asks the peer again for what it declared it cannot send: a forced retrieve (#692).
+    @objc public func forgetPeerFailures() {
+        Self.lock.lock(); defer { Self.lock.unlock() }
+        data.peerFailed = []
+        knownUnsendable = []
     }
 
     @objc(recordHTTPRejectedUID:)
@@ -244,7 +279,19 @@ public final class RetrieveInventory: NSObject {
     @objc public var localUniqueCount: Int { Self.lock.lock(); defer { Self.lock.unlock() }; return data.imported.count }
     @objc public var needsAttention: Bool {
         Self.lock.lock(); defer { Self.lock.unlock() }
-        return !inventoryConfirmed || !Set(missingUIDs).subtracting(attemptReceived).subtracting(baselineImported ?? []).isEmpty
+        return !inventoryConfirmed || !Set(missingUIDs).subtracting(attemptReceived).subtracting(baselineImported ?? [])
+            .subtracting(knownUnsendable).isEmpty
+    }
+    /// Missing instances the peer declared it cannot send; a smart retrieve does not ask for them (#692).
+    @objc public var unsendableUIDs: [String] {
+        Self.lock.lock(); defer { Self.lock.unlock() }
+        return Set(missingUIDs).intersection(data.peerFailed ?? []).sorted()
+    }
+    /// Every missing instance arrived in this attempt or is one the peer cannot send.
+    @objc public var nothingLeftToAsk: Bool {
+        Self.lock.lock(); defer { Self.lock.unlock() }
+        return inventoryConfirmed && expectedCount > 0 &&
+            Set(missingUIDs).subtracting(attemptReceived).subtracting(data.peerFailed ?? []).isEmpty
     }
     @objc public var importedCount: Int { Self.lock.lock(); defer { Self.lock.unlock() }; return Set(data.expected.keys).intersection(data.imported).count }
     @objc public var missingUIDs: [String] { Self.lock.lock(); defer { Self.lock.unlock() }; return Set(data.expected.keys).subtracting(data.imported).sorted() }
@@ -265,6 +312,6 @@ public final class RetrieveInventory: NSObject {
         Self.lock.lock(); defer { Self.lock.unlock() }
         if !inventoryConfirmed { return "Inventory unconfirmed: \(localUniqueCount) local unique instances; \(expectedCount) UIDs announced. Completeness cannot be established." }
         let total = String(expectedCount)
-        return "\(isComplete ? "Complete" : "Incomplete"): \(importedCount) of \(total) unique instances imported; \(missingUIDs.count) missing, \(duplicateUIDs.count) duplicated, \(rejectedUIDs.count) with recorded rejections, \(data.storageWarnings?.count ?? 0) with storage warnings, \(unexpectedUIDs.count) unexpected."
+        return "\(isComplete ? "Complete" : "Incomplete"): \(importedCount) of \(total) unique instances imported; \(missingUIDs.count) missing (\(unsendableUIDs.count) the server cannot send), \(duplicateUIDs.count) duplicated, \(rejectedUIDs.count) with recorded rejections, \(data.storageWarnings?.count ?? 0) with storage warnings, \(unexpectedUIDs.count) unexpected."
     }
 }

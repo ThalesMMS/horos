@@ -2220,15 +2220,10 @@ void exceptionHandler(NSException *exception)
 {
 	NSLog( @"*** listener error (displayListenerError): %@", err);
 	
+	// Said in the notices panel: a sheet held the database window until it was
+	// dismissed, once per failed association (#691).
 	if ([[NSUserDefaults standardUserDefaults] boolForKey: @"hideListenerError"] == NO)
-	{
-		NSAlert* alert = [NSAlert new];
-		[alert setMessageText: NSLocalizedString( @"DICOM Listener Error", nil)];
-		[alert setInformativeText: [err stringByAppendingString: @"\r\rThis error message can be hidden by activating the Server Mode (see Listener Preferences)"]];
-		[alert addButtonWithTitle: NSLocalizedString(@"OK", nil)];
-		
-		[alert beginSheetModalForWindow:[[BrowserController currentBrowser] window] completionHandler:nil];
-	}
+		[HorosNetworkNotices postTitle: NSLocalizedString( @"DICOM Listener Error", nil) message: err];
 }
 
 -(void) startSTORESCP:(id) sender

@@ -2890,3 +2890,15 @@
 "The PDF could not be created at %@." = "Non è stato possibile creare il PDF in %@.";
 "The PDF written for the report is not readable: %@" = "Il PDF scritto per il report non è leggibile: %@";
 "The PDF could not be saved at %@: %@" = "Non è stato possibile salvare il PDF in %@: %@";
+"Network Notices" = "Avvisi di rete";
+"(%d times)" = "(%d volte)";
+"Length 3D: %.3f mm" = "Lunghezza 3D: %.3f mm";
+"Length: return to thin slices to place the second point" = "Lunghezza: torna alle sezioni sottili per posizionare il secondo punto";
+"Length: select the second point (Esc to cancel)" = "Lunghezza: seleziona il secondo punto (Esc per annullare)";
+"Local %" = "Locale %";
+"Measuring between slices requires valid patient geometry. Click and drag remains available for a 2D length." = "La misura tra sezioni richiede una geometria del paziente valida. Fare clic e trascinare resta disponibile per una lunghezza 2D.";
+"Reslice Axial" = "Ricostruzione assiale";
+"Reslice Coronal" = "Ricostruzione coronale";
+"Reslice Sagittal" = "Ricostruzione sagittale";
+"Scroll position preview" = "Anteprima della posizione di scorrimento";
+"XML cannot preserve a Length between slices. Use Export ROIs as JSON or save the ROI archive instead." = "XML non può conservare una lunghezza tra sezioni. Usa Esporta le ROI come JSON o salva l'archivio ROI.";

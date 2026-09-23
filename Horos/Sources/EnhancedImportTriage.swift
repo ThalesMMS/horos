@@ -167,6 +167,10 @@ public final class EnhancedImportTriage: NSObject {
             let text = "image size is \(rows) by \(columns), which the thumbnail stack cannot load"
             reasons.append(text)
             error = text
+        } else if WrappedImageFragments.carriesImageFile(data, parsed, width: columns, height: rows) {
+            // An image file wrapped under a private transfer syntax is drawn by
+            // ImageIO whatever its BitsAllocated says: VTServer's 1-bit G4 TIFF
+            // scans were refused here (#687).
         } else if bitsAllocated != 8 && bitsAllocated != 16 && bitsAllocated != 32 {
             let text = "BitsAllocated is \(bitsAllocated), which the pixel stack cannot load"
             reasons.append(text)

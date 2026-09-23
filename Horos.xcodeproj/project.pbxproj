@@ -1790,6 +1790,9 @@
 		659343F6685AD89C5F358B82 /* HorosStructuredReportBridge.cpp in Sources */ = {isa = PBXBuildFile; fileRef = C75C698CF17195A80E1EC268 /* HorosStructuredReportBridge.cpp */; };
 		0F0803063D565EF3973C86E8 /* HorosDIMSEAssociationPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BA8822AFBA5BB9CF6E8FF3C /* HorosDIMSEAssociationPolicy.swift */; };
 		4D042F74BBE56D9C8101D318 /* DICOMTriageMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA222A2BD293F6C6AA702E9B /* DICOMTriageMetadata.swift */; };
+		6870A1B2C3D4E5F601687002 /* DICOMTrailingDataRepair.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6870A1B2C3D4E5F601687001 /* DICOMTrailingDataRepair.swift */; };
+		6870A1B2C3D4E5F601687004 /* WrappedImageFragments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6870A1B2C3D4E5F601687003 /* WrappedImageFragments.swift */; };
+		6910A1B2C3D4E5F601691002 /* NetworkNotices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6910A1B2C3D4E5F601691001 /* NetworkNotices.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -3828,6 +3831,9 @@
 		1C2D14FECD67887ED66B752B /* HorosDICOMIdentity.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = HorosDICOMIdentity.h; sourceTree = "<group>"; };
 		0150E3E145938AB7EF08B797 /* HorosDictionaryLookup.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = HorosDictionaryLookup.h; sourceTree = "<group>"; };
 		BA222A2BD293F6C6AA702E9B /* DICOMTriageMetadata.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DICOMTriageMetadata.swift; sourceTree = "<group>"; };
+		6870A1B2C3D4E5F601687001 /* DICOMTrailingDataRepair.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DICOMTrailingDataRepair.swift; sourceTree = "<group>"; };
+		6870A1B2C3D4E5F601687003 /* WrappedImageFragments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WrappedImageFragments.swift; sourceTree = "<group>"; };
+		6910A1B2C3D4E5F601691001 /* NetworkNotices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkNotices.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -4369,6 +4375,9 @@
 			isa = PBXGroup;
 			children = (
 				BA222A2BD293F6C6AA702E9B /* DICOMTriageMetadata.swift */,
+				6870A1B2C3D4E5F601687001 /* DICOMTrailingDataRepair.swift */,
+				6870A1B2C3D4E5F601687003 /* WrappedImageFragments.swift */,
+				6910A1B2C3D4E5F601691001 /* NetworkNotices.swift */,
 				0150E3E145938AB7EF08B797 /* HorosDictionaryLookup.h */,
 				1C2D14FECD67887ED66B752B /* HorosDICOMIdentity.h */,
 				2BA8822AFBA5BB9CF6E8FF3C /* HorosDIMSEAssociationPolicy.swift */,
@@ -8037,6 +8046,9 @@
 			isa = PBXSourcesBuildPhase;
 			files = (
 				4D042F74BBE56D9C8101D318 /* DICOMTriageMetadata.swift in Sources */,
+				6870A1B2C3D4E5F601687002 /* DICOMTrailingDataRepair.swift in Sources */,
+				6870A1B2C3D4E5F601687004 /* WrappedImageFragments.swift in Sources */,
+				6910A1B2C3D4E5F601691002 /* NetworkNotices.swift in Sources */,
 				0F0803063D565EF3973C86E8 /* HorosDIMSEAssociationPolicy.swift in Sources */,
 				659343F6685AD89C5F358B82 /* HorosStructuredReportBridge.cpp in Sources */,
 				74D1E9771C9EDDD4C73F4276 /* HorosQueryRetrieveServer.mm in Sources */,

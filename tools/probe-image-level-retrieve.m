@@ -12,12 +12,20 @@
 //                            window's button does (optional)
 //   HOROS_RETRIEVE_IMPORT_DELAY  delay the first received batch while it holds
 //                            the real import lock (seconds, optional)
+//   HOROS_RETRIEVE_SHOW_ERRORS   let the retrieve report its failures, as the query
+//                            window does (optional): the result then says how long the
+//                            main thread took to run a block in its default run loop
+//                            mode - a modal alert holds that mode (#691) - and what the
+//                            notices panel shows
+//   HOROS_RETRIEVE_REPEAT    retrieve the study a second time once the first has been
+//                            recorded, as a user asking again does (optional, #692)
 //
 // Lines: {"started": {...}}, then {"retrieve": {...}} once the retrieve thread has
 // finished and 8 s more have passed: when it finished, the study's local instance count
 // (its SOP instances, not the SR objects the app archives for it)
 // at that moment and at the end, when the last image arrived relative to the finish,
-// the cancellation time if any, and the retrieve inventory the move left.
+// the cancellation time if any, and the retrieve inventory the move left. With
+// HOROS_RETRIEVE_REPEAT, {"retrieve_again": {...}} follows for the second retrieve.
 //
 //   xcrun clang -dynamiclib -fobjc-arc -framework Cocoa tools/probe-image-level-retrieve.m -o probe.dylib
 #import <Cocoa/Cocoa.h>
@@ -52,6 +60,15 @@ static NSString *retrieveTrigger;
 static double importDelay;
 static atomic_bool delayedImport;
 static NSArray *(*originalAddFiles)(id, SEL, NSArray *, BOOL, BOOL, BOOL, BOOL, BOOL);
+static atomic_int noticesPosted;
+static void (*originalPostNotice)(id, SEL, NSString *, NSString *);
+
+// Every notice posted, repeats included: the panel counts a repeat on the notice
+// already listed, so its row count does not show one.
+static void countedPostNotice(id notices, SEL selector, NSString *title, NSString *message) {
+    atomic_fetch_add(&noticesPosted, 1);
+    originalPostNotice(notices, selector, title, message);
+}
 
 static NSArray *delayedAddFiles(id database, SEL selector, NSArray *files, BOOL notifications,
                                BOOL reread, BOOL generated, BOOL imported, BOOL returnArray) {
@@ -80,6 +97,20 @@ static void writeLine(NSDictionary *object) {
 
 static double uptime(void) { return NSProcessInfo.processInfo.systemUptime; }
 
+// Milliseconds the main thread took to run a block queued for its default run loop
+// mode, or -1 when it did not within `timeout` seconds: what the import hands to the
+// main thread with -performSelectorOnMainThread: waits for that mode.
+static double mainDefaultModeLatency(double timeout) {
+    atomic_bool *ran = calloc(1, sizeof(atomic_bool));
+    double start = uptime();
+    CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopDefaultMode, ^{ atomic_store(ran, true); });
+    CFRunLoopWakeUp(CFRunLoopGetMain());
+    while (!atomic_load(ran) && uptime() - start < timeout) usleep(5000);
+    double latency = atomic_load(ran) ? (uptime() - start) * 1000 : -1;
+    if (latency >= 0) free(ran);  // otherwise the block may still run later
+    return latency;
+}
+
 // The study's instances held locally: a multiframe instance is one image per frame in the
 // index, and the SR objects the app archives for the study are not the study's.
 static NSUInteger localImages(NSString *studyUID) {
@@ -100,6 +131,8 @@ __attribute__((constructor)) static void installImageLevelRetrieveProbe(void) {
     logPath = environment[@"HOROS_RETRIEVE_LOG"];
     double cancelAfter = [environment[@"HOROS_RETRIEVE_CANCEL_AFTER"] doubleValue];
     BOOL cancelAfterArrival = environment[@"HOROS_RETRIEVE_CANCEL_AFTER_ARRIVAL"] != nil;
+    BOOL showErrors = environment[@"HOROS_RETRIEVE_SHOW_ERRORS"] != nil;
+    int attempts = environment[@"HOROS_RETRIEVE_REPEAT"] != nil ? 2 : 1;
     importDelay = [environment[@"HOROS_RETRIEVE_IMPORT_DELAY"] doubleValue];
     retrieveTrigger = trigger;
     if (!serversPath || !trigger || !logPath) return;
@@ -112,6 +145,8 @@ __attribute__((constructor)) static void installImageLevelRetrieveProbe(void) {
                 NSSelectorFromString(@"addFilesDescribedInDictionaries:postNotifications:rereadExistingItems:generatedByOsiriX:importedFiles:returnArray:"));
             if (method) originalAddFiles = (void *)method_setImplementation(method, (IMP)delayedAddFiles);
         }
+        Method post = class_getClassMethod(NSClassFromString(@"HorosNetworkNotices"), NSSelectorFromString(@"postTitle:message:"));
+        if (post) originalPostNotice = (void *)method_setImplementation(post, (IMP)countedPostNotice);
         [NSThread detachNewThreadWithBlock:^{
             @autoreleasepool {
                 while (![NSFileManager.defaultManager fileExistsAtPath:trigger]) usleep(50000);
@@ -129,10 +164,11 @@ __attribute__((constructor)) static void installImageLevelRetrieveProbe(void) {
                     return;
                 }
                 NSString *studyUID = [study uid];
+                for (int attempt = 0; attempt < attempts; attempt++) {
                 // Smart mode: the move looks at what is already local and asks the
                 // IMAGE level for the rest.
                 [study setNoSmartMode:NO];
-                [study setShowErrorMessage:NO];
+                [study setShowErrorMessage:showErrors];
                 NSUInteger before = localImages(studyUID);
                 __block NSThread *thread = nil;
                 __block id controller = nil;
@@ -181,11 +217,21 @@ __attribute__((constructor)) static void installImageLevelRetrieveProbe(void) {
                     // Only the keys this build's inventory has: receivedAwaitingImportCount came with #646.
                     NSMutableArray *keys = [NSMutableArray array];
                     for (NSString *key in @[@"inventoryConfirmed", @"expectedCount", @"importedCount", @"isComplete",
-                                            @"needsAttention", @"receivedAwaitingImportCount", @"summary"])
+                                            @"needsAttention", @"receivedAwaitingImportCount", @"unsendableUIDs", @"summary"])
                         if ([inventory respondsToSelector:NSSelectorFromString(key)]) [keys addObject:key];
                     result[@"inventory"] = [inventory dictionaryWithValuesForKeys:keys];
                 }
-                writeLine(@{@"retrieve": result});
+                if (showErrors) {
+                    result[@"main_default_mode_ms"] = @(mainDefaultModeLatency(5));
+                    dispatch_sync(dispatch_get_main_queue(), ^{
+                        Class notices = NSClassFromString(@"HorosNetworkNotices");
+                        result[@"notices"] = notices ? [notices valueForKey:@"noticeCount"] : @(-1);
+                        result[@"notices_showing"] = notices ? [notices valueForKey:@"isShowing"] : @NO;
+                    });
+                    result[@"notices_posted"] = @(atomic_load(&noticesPosted));
+                }
+                writeLine(@{(attempt ? @"retrieve_again" : @"retrieve"): result});
+                }
             }
         }];
     }];

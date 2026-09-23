@@ -1700,6 +1700,33 @@ static NSString *availablePathInDirectory( NSString *directory, NSString *name);
                     N2LogExceptionWithStackTrace(e);
                 }
                 
+                // Bytes after the dataset's Pixel Data that do not parse - zeros,
+                // or part of another file written past the image - made the whole
+                // file unreadable (#687). Its intact part is written into the
+                // database folder and indexed if it reads; a file imported in place
+                // is left as it is, the database's own copy is replaced.
+                if (curFile == nil && dataDirPath && [HorosTrailingDataRepair intactLengthOfFileAtPath: newFile])
+                {
+                    NSString *intact = [self uniquePathForNewDataFileWithExtension: @"dcm"];
+                    long long dropped = intact ? [HorosTrailingDataRepair writeIntactCopyOfFileAtPath: newFile toPath: intact] : -1;
+                    if (dropped > 0)
+                    {
+                        @try { curFile = [[DicomFile alloc] init: intact]; }
+                        @catch (NSException* e) { N2LogExceptionWithStackTrace(e); }
+
+                        if (curFile)
+                        {
+                            NSLog( @"---- import: %@ has %lld bytes after its Pixel Data that do not parse; "
+                                  @"imported without them as %@", newFile.lastPathComponent, dropped, intact.lastPathComponent);
+                            if ([newFile hasPrefix: dataDirPath])
+                                [[NSFileManager defaultManager] removeItemAtPath: newFile error: NULL];
+                            newFile = intact;
+                        }
+                        else
+                            [[NSFileManager defaultManager] removeItemAtPath: intact error: NULL];
+                    }
+                }
+
                 if (curFile == nil)
                 {
                     [refusals refuse: newFile];

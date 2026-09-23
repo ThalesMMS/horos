@@ -16,6 +16,9 @@ import Foundation
 public final class LocalCompleteness: NSObject {
     /// Files of this study or series already in the local database.
     @objc public var inventoryDetail: String?
+    /// Missing instances the node declared it cannot send, so a retrieve does not
+    /// ask for them again (#692). The column says so: they stay short of 100%.
+    @objc public var unsendableCount = 0
     @objc public let localCount: Int
     /// What the node said it holds. Meaningless unless `remoteCountIsKnown`.
     @objc public let remoteCount: Int
@@ -64,7 +67,8 @@ public final class LocalCompleteness: NSObject {
         if exceedsRemote {
             return ">100% (\(localCount)/\(remoteCount))"
         }
-        return "\(percent)% (\(localCount)/\(remoteCount))"
+        let text = "\(percent)% (\(localCount)/\(remoteCount))"
+        return unsendableCount > 0 ? text + " · \(unsendableCount) not sendable" : text
     }
 
     /// What the column sorts on. An unknown total is not a low percentage, so it

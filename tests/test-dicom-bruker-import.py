@@ -115,7 +115,7 @@ with tempfile.TemporaryDirectory(prefix='horos-bruker-') as folder:
         else:
             (work / 'main.swift').write_text(main)
             compile_cmd = subprocess.run(
-                ['swiftc', str(root / 'Horos/Sources/DICOMTriageMetadata.swift'), str(source), str(work / 'main.swift'), '-o', str(work / 'test')],
+                ['swiftc', str(root / 'Horos/Sources/DICOMTriageMetadata.swift'), str(root / 'Horos/Sources/WrappedImageFragments.swift'), str(source), str(work / 'main.swift'), '-o', str(work / 'test')],
                 capture_output=True, text=True)
             if compile_cmd.returncode:
                 failures.append('EnhancedImportTriage.swift does not compile:\n%s'

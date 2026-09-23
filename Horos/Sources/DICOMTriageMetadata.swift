@@ -12,6 +12,11 @@ struct DICOMTriageMetadata {
     var pixelDataBytes = 0
     var hasPixelData = false
     var encapsulated = false
+    /// Offset just past the dataset's Pixel Data, when every byte of it is in the
+    /// file; nil when it is cut short or its fragments do not terminate.
+    var pixelDataEnd: Int?
+    /// Offset of the dataset's Pixel Data value: its first item when encapsulated.
+    var pixelDataValueOffset: Int?
 
     func contains(group: UInt16, element: UInt16) -> Bool {
         values[UInt32(group) << 16 | UInt32(element)] != nil
@@ -91,8 +96,25 @@ struct DICOMTriageMetadata {
                 hasPixelData = true
                 encapsulated = undefined
                 pixelDataBytes = undefined ? 0 : min(length, end - offset)
+                pixelDataValueOffset = offset
+                if undefined {
+                    var fragmentsEnd = offset
+                    if skipFragments(data, &fragmentsEnd, end: end, littleEndian: littleEndian) {
+                        pixelDataEnd = fragmentsEnd
+                    }
+                } else if length <= end - offset {
+                    pixelDataEnd = offset + length
+                }
                 // The gate needs metadata only, never copies or decodes pixels.
                 return true
+            }
+            // Encapsulated Pixel Data inside an item - an Icon Image Sequence the
+            // incoming compressor re-encoded as JPEG 2000 - holds fragments, not a
+            // dataset. Read as a sequence it failed, and the whole file was
+            // refused as not DICOM (#686).
+            if key == 0x7FE00010 && undefined {
+                guard skipFragments(data, &offset, end: end, littleEndian: littleEndian) else { return false }
+                continue
             }
             if vr == "SQ" || undefined {
                 if depth == 0 { values[key] = Value(vr: "SQ", bytes: Data(), littleEndian: littleEndian) }
@@ -145,6 +167,20 @@ struct DICOMTriageMetadata {
             } else if offset != itemEnd { return false }
         }
         return !undefined && offset == end
+    }
+
+    /// Items of explicit length up to the Sequence Delimitation Item (PS3.5 A.4).
+    private func skipFragments(_ data: Data, _ offset: inout Int, end: Int, littleEndian: Bool) -> Bool {
+        while end - offset >= 8 {
+            let tag = UInt32(Self.number(data, offset, 2, littleEndian)) << 16
+                | UInt32(Self.number(data, offset + 2, 2, littleEndian))
+            let length = Int(Self.number(data, offset + 4, 4, littleEndian))
+            offset += 8
+            if tag == 0xFFFEE0DD { return length == 0 }
+            guard tag == 0xFFFEE000, length != 0xFFFFFFFF, length <= end - offset else { return false }
+            offset += length
+        }
+        return false
     }
 
     private static func implicitVR(_ key: UInt32) -> String {

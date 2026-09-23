@@ -717,6 +717,24 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
 #endif
 
 
+// GDCM's scanner refuses a file whose File Meta Information names a transfer
+// syntax it does not know, and the file was then not DICOM at all. VTServer
+// stores scanned documents as a TIFF under a private one (#687); DCMTK and the
+// viewer read them. Nothing here can transcode such a file, so it is reported
+// without pixel data to transcode and moved into the database as it is.
++ (BOOL) isDICOMFileWithPrivateTransferSyntax:(NSString *) filePath compressed:(BOOL*) compressed image:(BOOL*) image
+{
+#ifndef DECOMPRESS_APP
+    if ([HorosWrappedImageFragments isDICOMFileWithPrivateTransferSyntaxAtPath: filePath])
+    {
+        if (compressed) *compressed = NO;
+        if (image) *image = NO;
+        return YES;
+    }
+#endif
+    return NO;
+}
+
 + (BOOL) isDICOMFile:(NSString *) filePath compressed:(BOOL*) compressed image:(BOOL*) image
 {
     if (compressed)
@@ -748,19 +766,12 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
         filenames.push_back( std::string( filePathC) );
         
         theScanner.AddTag(gdcm::Tag(0x0020, 0x000e));//Series UID
-        if( !theScanner.Scan( filenames ) )
-        {
-            return NO;
-        }
-        
-        if( !theScanner.IsKey( filenames[0].c_str() ) )
-        {
-            return NO;
-        }
+        if( !theScanner.Scan( filenames ) || !theScanner.IsKey( filenames[0].c_str() ) )
+            return [DicomFile isDICOMFileWithPrivateTransferSyntax: filePath compressed: compressed image: image];
     }
     catch (...)
     {
-        return NO;
+        return [DicomFile isDICOMFileWithPrivateTransferSyntax: filePath compressed: compressed image: image];
     }
     
     //////////////////////////////////////////////////////////

@@ -15,7 +15,9 @@ syntax error or a renamed handler fails here rather than at report time. The
 structural checks are the three points above, expressed against the script the
 application ships.
 
-Needs Xcode's `osacompile`; skips with exit 2 without it.
+Needs Xcode's `osacompile`; skips with exit 2 without it. Compiling also needs
+Microsoft Word, whose dictionary defines `add to recent files` and the rest:
+without Word the structural checks still run, and a pass is reported as skipped.
 """
 from pathlib import Path
 import re
@@ -105,13 +107,22 @@ for command in ('save as d ', 'close d saving no'):
 require('save as mergedDocument' not in script and 'close mergedDocument' not in script,
         'a command is still sent to a stored `active document` reference')
 
+word = subprocess.run(['osascript', '-l', 'JavaScript', '-e',
+                       "ObjC.import('AppKit'); $.NSWorkspace.sharedWorkspace"
+                       ".URLForApplicationWithBundleIdentifier('com.microsoft.Word').isNil()"],
+                      capture_output=True, text=True).stdout.strip() == 'false'
+if not word and not failures:
+    print('skipped: the structural checks pass; compiling the script needs the Microsoft Word '
+          'dictionary, and Word is not installed: WORD', file=sys.stderr)
+    raise SystemExit(2)
+
 with tempfile.TemporaryDirectory(prefix='horos-word-merge-script-') as name:
     directory = Path(name)
     (directory / 'merge.applescript').write_text(script)
     compiled = subprocess.run(['osacompile', '-o', str(directory / 'merge.scpt'),
                                str(directory / 'merge.applescript')],
                               capture_output=True, text=True)
-    if compiled.returncode != 0:
+    if word and compiled.returncode != 0:
         failures.append('the script does not compile: %s'
                         % (compiled.stderr or compiled.stdout).strip().splitlines()[-1:])
 

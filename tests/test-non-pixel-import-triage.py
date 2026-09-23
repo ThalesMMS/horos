@@ -15,7 +15,8 @@ import subprocess
 import tempfile
 
 root = Path(__file__).resolve().parents[1]
-sources = [root / 'Horos/Sources/EnhancedImportTriage.swift', root / 'Horos/Sources/DICOMTriageMetadata.swift']
+sources = [root / 'Horos/Sources/EnhancedImportTriage.swift', root / 'Horos/Sources/DICOMTriageMetadata.swift',
+           root / 'Horos/Sources/WrappedImageFragments.swift']
 failures = []
 
 DRIVER = r'''

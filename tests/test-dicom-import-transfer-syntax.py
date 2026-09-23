@@ -56,6 +56,19 @@ def unknown_sequence(syntax, undefined_item=False, nesting=0):
             + item(payload, undefined_item) + struct.pack('<HHI', 0xFFFE, 0xE0DD, 0))
 
 
+def icon_sequence(order='<', fragments=None):
+    # An Icon Image Sequence whose Pixel Data is encapsulated, as the incoming
+    # compressor writes it (#686): the fragments are not a dataset.
+    if fragments is None:
+        fragments = (struct.pack(order + 'HHI', 0xFFFE, 0xE000, 0)
+                     + struct.pack(order + 'HHI', 0xFFFE, 0xE000, 4) + b'\xffO\xffQ'
+                     + struct.pack(order + 'HHI', 0xFFFE, 0xE0DD, 0))
+    payload = element((0x28, 0x10), 'US', struct.pack(order + 'H', 64), order)
+    payload += element((0x28, 0x11), 'US', struct.pack(order + 'H', 64), order)
+    payload += struct.pack(order + 'HH', 0x7FE0, 0x10) + b'OB\0\0' + struct.pack(order + 'I', 0xFFFFFFFF) + fragments
+    return element((0x88, 0x200), 'SQ', item(payload, order=order), order)
+
+
 main = r'''
 import Foundation
 let path = CommandLine.arguments[1]
@@ -79,6 +92,13 @@ for name in try FileManager.default.contentsOfDirectory(atPath: path) where name
     precondition(result.pixelDataBytes == 126)
     let ultrasound = IVUSImportTriage.assessPath(path + "/" + name)
     precondition(ultrasound.mayMergeIntoIncoming && ultrasound.rows == 7 && ultrasound.columns == 9)
+}
+let icon = EnhancedImportTriage.assessPath(path + "/icon-encapsulated")
+precondition(icon.detectedDICOM && icon.mayMergeIntoIncoming && icon.rows == 7 && icon.columns == 9,
+             "an encapsulated icon made the file unreadable or replaced the root size")
+for name in ["icon-unterminated", "icon-fragment-overrun", "icon-undefined-fragment"] {
+    let data = try Data(contentsOf: URL(fileURLWithPath: path + "/" + name))
+    precondition(DICOMTriageMetadata.parse(data) == nil, "Malformed icon fragments accepted: \(name)")
 }
 for name in try FileManager.default.contentsOfDirectory(atPath: path) where name.hasPrefix("invalid-un-") {
     let data = try Data(contentsOf: URL(fileURLWithPath: path + "/" + name))
@@ -115,7 +135,14 @@ with tempfile.TemporaryDirectory(prefix='horos-import-syntax-') as directory:
                      'nesting': unknown_sequence(syntax, True, 17)}
         for case, private in malformed.items():
             (p/f'invalid-un-{name}-{case}').write_bytes(fixture(syntax, ultrasound_sop, private=private))
+    (p/'icon-encapsulated').write_bytes(fixture('1.2.840.10008.1.2.1', private=icon_sequence()))
+    frag = lambda tag, length: struct.pack('<HHI', 0xFFFE, tag, length)
+    for case, fragments in {'icon-unterminated': frag(0xE000, 0) + frag(0xE000, 4) + b'abcd',
+                            'icon-fragment-overrun': frag(0xE000, 0) + frag(0xE000, 4096) + b'abcd' + frag(0xE0DD, 0),
+                            'icon-undefined-fragment': frag(0xE000, 0xFFFFFFFF) + frag(0xE0DD, 0)}.items():
+        (p/case).write_bytes(fixture('1.2.840.10008.1.2.1', private=icon_sequence(fragments=fragments)))
     (p/'main.swift').write_text(main)
-    sources = [root/'Horos/Sources'/name for name in ['DICOMTriageMetadata.swift', 'EnhancedImportTriage.swift', 'IVUSImportTriage.swift']]
+    sources = [root/'Horos/Sources'/name for name in ['DICOMTriageMetadata.swift', 'EnhancedImportTriage.swift', 'IVUSImportTriage.swift',
+                                                          'WrappedImageFragments.swift']]
     subprocess.run(['xcrun', 'swiftc', *map(str, sources), str(p/'main.swift'), '-o', str(p/'check')], check=True)
     subprocess.run([str(p/'check'), str(p)], check=True)

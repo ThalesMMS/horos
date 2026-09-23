@@ -62,7 +62,7 @@ TECHNICAL = {
         "%d series", "%i bytes", "bytes",
         "Series", "series", "Album: %@", "Axial", "CD-Rom", "CD/DVD",
         "Color", "Coronal", "Error", "Error: %@", "File: %@",
-        "General", "Horizontal", "Vertical", "Local", "Total", "Zoom",
+        "General", "Horizontal", "Vertical", "Local", "Local %", "Total", "Zoom",
         "Incompatible", "N2Connection timeout.", "Routing...",
         "Perpendicular", "Rendering...", "Reslicing...", "Report PDF",
         "Database: %@", "Name: %@", "Opacity: %@", "Projection: %@",

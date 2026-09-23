@@ -15,6 +15,13 @@ local images until 8 s after the retrieve thread has finished.
   incomplete  the peer never sends one of the missing instances (#646)
   slow-import  the first received batch takes 15 s without committing, exceeding
                the retrieve's 10 s idle timeout while the import lock is held
+  unsendable  the peer fails the sub-operation of one missing instance with 0xA702, as
+              an OsiriX server does for a file it cannot read, and the failures are
+              reported: the main thread must keep running its default run loop mode,
+              the notices panel must show them, and that instance dropped into INCOMING
+              afterwards must be imported while it does (#691). The study is retrieved
+              twice first: the refused instance is remembered, so the second retrieve
+              asks the peer for nothing and reports nothing (#692)
 
 Checks: complete and failure end with all 30 instances local, none arriving after
 the retrieve thread finished, and (failure) the peer saw the IMAGE-level refusal
@@ -36,6 +43,7 @@ import os
 import plistlib
 import shutil
 import socket
+import sqlite3
 import subprocess
 import sys
 import time
@@ -78,6 +86,8 @@ def run_scenario(app: Path, folder: Path, dylib: Path, scenario: str) -> dict:
     if scenario == "incomplete":
         # An even instance: the odd ones are imported before the retrieve.
         peer_arguments += ["--omit-instance", str(INSTANCES)]
+    if scenario == "unsendable":
+        peer_arguments += ["--fail-instance", str(INSTANCES), "--fail-status", "0xA702"]
     peer = subprocess.Popen(peer_arguments, stdout=open(folder / "peer.log", "w"), stderr=subprocess.STDOUT)
     result = {"scenario": scenario}
     try:
@@ -93,7 +103,11 @@ def run_scenario(app: Path, folder: Path, dylib: Path, scenario: str) -> dict:
             environment["HOROS_RETRIEVE_CANCEL_AFTER_ARRIVAL"] = "1"
         if scenario == "slow-import":
             environment["HOROS_RETRIEVE_IMPORT_DELAY"] = "15"
-        launch_arguments = ["-STORESCP", "NO", "-USESTORESCP", "NO", "-TLSStoreSCP", "NO", "-hideListenerError", "YES",
+        if scenario == "unsendable":
+            environment["HOROS_RETRIEVE_SHOW_ERRORS"] = "1"
+            environment["HOROS_RETRIEVE_REPEAT"] = "1"
+        launch_arguments = ["-STORESCP", "NO", "-USESTORESCP", "NO", "-TLSStoreSCP", "NO",
+                            "-hideListenerError", "NO" if scenario == "unsendable" else "YES",
                             "-syncDICOMNodes", "NO", "-publishDICOMBonjour", "NO", "-searchDICOMBonjour", "NO",
                             "-AETITLE", "HOROSDEV", "-AEPORT", str(free_port()), "-DICOMTimeout", "8",
                             "-DICOMConnectionTimeout", "5", "-TryIMAGELevelDICOMRetrieveIfLocalImages", "YES"]
@@ -113,12 +127,46 @@ def run_scenario(app: Path, folder: Path, dylib: Path, scenario: str) -> dict:
             time.sleep(2)
             trigger.write_text("go\n")
             native_app.wait_for(lambda: any("retrieve" in r for r in records(log)), 240, interval=0.5, description="the retrieve")
+            if scenario == "unsendable":
+                # The peer's record is rewritten on every DIMSE message: what the first retrieve asked.
+                negotiation = folder / "peer" / "cget-negotiation.json"
+                result["peer_retrievals_first"] = len(json.loads(negotiation.read_text()).get("retrievals", []))
+                native_app.wait_for(lambda: any("retrieve_again" in r for r in records(log)), 240, interval=0.5,
+                                    description="the second retrieve")
+                # The instance the peer would not send, imported while its notice is up.
+                import pydicom
+                missing = next(p for p in export.glob("*.dcm")
+                               if pydicom.dcmread(p, stop_before_pixels=True).InstanceNumber == INSTANCES)
+                dropped = time.monotonic()
+                staging = data / "INCOMING.noindex" / f".{missing.name}.part"
+                shutil.copyfile(missing, staging)
+                os.rename(staging, data / "INCOMING.noindex" / missing.name)
+                def study_images():
+                    # The study's own images: the SR the app archives for it is not one.
+                    sql = native_app.database_folder(root) / "Database.sql"
+                    try:
+                        with sqlite3.connect(f"file:{sql}?mode=ro", uri=True, timeout=1) as connection:
+                            # One row per frame of a multiframe instance: count instances.
+                            return connection.execute("SELECT COUNT(DISTINCT i.ZCOMPRESSEDSOPINSTANCEUID) FROM ZIMAGE i "
+                                                      "JOIN ZSERIES s ON i.ZSERIES = s.Z_PK "
+                                                      "WHERE s.ZMODALITY IS NOT 'SR'").fetchone()[0]
+                    except sqlite3.Error:
+                        return 0
+                try:
+                    native_app.wait_for(lambda: not (data / "INCOMING.noindex" / missing.name).exists()
+                                        and study_images() >= INSTANCES, 60, description="INCOMING")
+                    result["incoming_import_seconds"] = time.monotonic() - dropped
+                except TimeoutError:
+                    result["incoming_import_seconds"] = -1
             result["app_running"] = process.poll() is None
         finally:
             native_app.stop(process)
         lines = records(log)
         result["started"] = next((r["started"] for r in lines if "started" in r), None)
         result["retrieve"] = next(r["retrieve"] for r in lines if "retrieve" in r)
+        again = next((r["retrieve_again"] for r in lines if "retrieve_again" in r), None)
+        if again is not None:
+            result["retrieve_again"] = again
     finally:
         peer.terminate()
         try:
@@ -156,6 +204,29 @@ def check(result: dict) -> list:
                         f"(needs attention {inventory.get('needsAttention')})")
     if scenario == "slow-import" and not retrieve.get("import_delay_applied"):
         problems.append("the delayed batch was not exercised")
+    if scenario == "unsendable":
+        if retrieve["local_after"] != INSTANCES - 1:
+            problems.append(f"{retrieve['local_after']} of {INSTANCES} instances local, {INSTANCES - 1} expected")
+        if not 0 <= retrieve.get("main_default_mode_ms", -1) < 1000:
+            problems.append(f"the main thread did not run its default mode ({retrieve.get('main_default_mode_ms')} ms): "
+                            "a modal alert holds it")
+        if retrieve.get("notices", 0) < 1 or not retrieve.get("notices_showing"):
+            problems.append(f"the failure was not in the notices panel ({retrieve.get('notices')}, "
+                            f"showing {retrieve.get('notices_showing')})")
+        if result.get("incoming_import_seconds", -1) < 0:
+            problems.append("an INCOMING import did not finish while the notice was up")
+        if len(inventory.get("unsendableUIDs") or []) != 1:
+            problems.append(f"the refused instance was not remembered: {inventory.get('summary')}")
+        again = result.get("retrieve_again") or {}
+        first = result.get("peer_retrievals_first", -1)
+        if first < 1 or len(result["peer_retrievals"]) != first:
+            problems.append(f"the second retrieve asked the peer again ({first} retrievals first, "
+                            f"{result['peer_retrievals']} in all)")
+        if not again.get("finished") or again.get("local_after") != INSTANCES - 1:
+            problems.append(f"the second retrieve did not end with {INSTANCES - 1} instances local ({again})")
+        if (again.get("inventory") or {}).get("needsAttention") or again.get("notices_posted") != retrieve.get("notices_posted"):
+            problems.append(f"the second retrieve reported the known refusal again ({retrieve.get('notices_posted')} -> "
+                            f"{again.get('notices_posted')} notices)")
     if scenario == "incomplete":
         if retrieve["local_after"] != INSTANCES - 1:
             problems.append(f"{retrieve['local_after']} of {INSTANCES} instances local, {INSTANCES - 1} expected")
@@ -181,7 +252,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--app", type=Path, default=native_app.DEVELOPMENT_APP)
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--scenario", action="append", choices=["complete", "failure", "cancel", "incomplete", "slow-import"])
+    parser.add_argument("--scenario", action="append",
+                        choices=["complete", "failure", "cancel", "incomplete", "slow-import", "unsendable"])
     arguments = parser.parse_args()
     out = arguments.out.resolve()
     if "local-validation" not in out.parts:
@@ -198,7 +270,7 @@ def main():
                     str(ROOT / "tools/probe-image-level-retrieve.m"), "-o", str(dylib)], check=True)
     summary = {"app": str(app), "scenarios": {}}
     failed = False
-    for scenario in arguments.scenario or ["complete", "failure", "cancel", "incomplete", "slow-import"]:
+    for scenario in arguments.scenario or ["complete", "failure", "cancel", "incomplete", "slow-import", "unsendable"]:
         result = run_scenario(app, out / scenario, dylib, scenario)
         problems = check(result)
         summary["scenarios"][scenario] = {"result": result, "problems": problems}

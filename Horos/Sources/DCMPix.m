@@ -6213,6 +6213,24 @@ static double horosNumberInArray( NSArray *values, NSUInteger index, NSString *n
 }
 
 #ifndef DECOMPRESS_APP
+// Draws the image file a private transfer syntax wraps in the Pixel Data
+// fragments, when the fragments are one image file of the object's size.
+- (BOOL) loadImageFileWrappedInPixelDataOf:(DCMObject*) dcmObject
+{
+    DCMPixelDataAttribute *pixelAttr = (DCMPixelDataAttribute *)[dcmObject attributeWithName:@"PixelData"];
+    if( pixelAttr == nil || [HorosWrappedImageFragments isPrivateTransferSyntax: pixelAttr.transferSyntax.transferSyntax] == NO)
+        return NO;
+    
+    NSImage *image = [HorosWrappedImageFragments imageFromFragments: pixelAttr.values
+                                                              width: [horosNumberValue( dcmObject, @"Columns", self.srcFile) intValue]
+                                                             height: [horosNumberValue( dcmObject, @"Rows", self.srcFile) intValue]];
+    if( image == nil)
+        return NO;
+    
+    [self getDataFromNSImage: image];
+    return YES;
+}
+
 // A frame of the video an instance carries whole.
 //
 // Transfer syntaxes 1.2.840.10008.1.2.4.100 and up put the entire stream in
@@ -6412,6 +6430,22 @@ static double horosNumberInArray( NSArray *values, NSUInteger index, NSString *n
         [pool release];
         return YES;
     }
+#ifndef DECOMPRESS_APP
+    // An image file carried whole in encapsulated Pixel Data under a private
+    // transfer syntax - VTServer's CCITT G4 TIFF scans (#687). No DICOM codec
+    // reads it; the file inside is drawn as any other raster image.
+    else if ([self loadImageFileWrappedInPixelDataOf: dcmObject])
+    {
+#ifdef OSIRIX_VIEWER
+        [self loadCustomImageAnnotationsPapyLink:-1 DCMLink:dcmObject];
+#endif
+        
+        [purgeCacheLock lock];
+        [purgeCacheLock unlockWithCondition: [purgeCacheLock condition]-1];
+        [pool release];
+        return YES;
+    }
+#endif
     else if( [SOPClassUID hasPrefix: @"1.2.840.10008.5.1.4.1.1.88"]) // DICOM SR
     {
 #ifdef OSIRIX_VIEWER

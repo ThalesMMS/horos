@@ -1243,6 +1243,24 @@ subOpCallback(void * /*subOpCallbackData*/ ,
             if (uid.length) [_retrieveInventory recordPeerFailedUID:uid];
 }
 
+// The instances a C-GET asked for, from its identifier: the SOP Instance UIDs of an IMAGE
+// level request, or every instance of the series or study the inventory expects (#692).
+- (void)recordUnsentOfRequest:(DcmDataset*)request status:(unsigned)status failed:(unsigned)failed remaining:(unsigned)remaining
+{
+    OFString level, sops, series;
+    NSArray *requested = @[];
+    if (request) {
+        request->findAndGetOFString(DCM_QueryRetrieveLevel, level);
+        request->findAndGetOFString(DCM_SeriesInstanceUID, series);
+        if (level == "IMAGE") {
+            if (request->findAndGetOFStringArray(DCM_SOPInstanceUID, sops).bad() || sops.empty()) return;
+            requested = [[NSString stringWithUTF8String:sops.c_str()] componentsSeparatedByString:@"\\"];
+        }
+    }
+    [_retrieveInventory recordUnsentOfRequested:requested series:[NSString stringWithUTF8String:series.c_str()] ?: @""
+        status:status failed:failed remaining:remaining];
+}
+
 - (void)recordWADOManifest:(HorosRetrieveManifest*)manifest
 {
     for (NSString *uid in manifest.receivedObjectUIDs) [_retrieveInventory recordUID:uid status:0];
@@ -1586,6 +1604,8 @@ subOpCallback(void * /*subOpCallbackData*/ ,
     _retrieveInventory = [[HorosRetrieveInventory beginStudy:studyUID series:[self inventorySeriesUID]
         endpoint:[self inventoryEndpoint] database:[DicomDatabase activeLocalDatabase].dataBaseDirPath
         instances:instances confirmed:confirmed && !NSThread.currentThread.isCancelled] retain];
+    // A forced retrieve asks again for what the peer said it cannot send (#692).
+    if (_noSmartMode) [_retrieveInventory forgetPeerFailures];
     [self refreshRetrieveInventory];
 }
 
@@ -1692,7 +1712,11 @@ subOpCallback(void * /*subOpCallbackData*/ ,
         {
             NSMutableArray *localObjectUIDs = [NSMutableArray array];
             
-            BOOL retrievedDone = localRetrieve && !_noSmartMode && _retrieveInventory.inventoryConfirmed && _retrieveInventory.isComplete;
+            // Nothing to ask either when what is missing is only what the peer declared it cannot
+            // send: asking again failed each time, then fetched the whole study again (#692).
+            BOOL retrievedDone = localRetrieve && !_noSmartMode && _retrieveInventory.inventoryConfirmed &&
+                (_retrieveInventory.isComplete || _retrieveInventory.nothingLeftToAsk);
+            NSSet *unsendableUIDs = _noSmartMode ? [NSSet set] : [NSSet setWithArray: _retrieveInventory.unsendableUIDs ?: @[]];
             
             if( localRetrieve && !retrievedDone && !_noSmartMode && (_retrieveInventory.inventoryConfirmed || [[NSUserDefaults standardUserDefaults] boolForKey: @"TryIMAGELevelDICOMRetrieveIfLocalImages"]))
             {
@@ -1775,7 +1799,7 @@ subOpCallback(void * /*subOpCallbackData*/ ,
                                     {
                                         if( [image uid])
                                         {
-                                            if( [localObjectUIDs containsObject: [image uid]] == NO)
+                                            if( [localObjectUIDs containsObject: [image uid]] == NO && [unsendableUIDs containsObject: [image uid]] == NO)
                                             {
                                                 if( [image seriesInstanceUID])
                                                 {
@@ -1799,7 +1823,7 @@ subOpCallback(void * /*subOpCallbackData*/ ,
                                     {
                                         if( [image uid])
                                         {
-                                            if( [localObjectUIDs containsObject: [image uid]] == NO)
+                                            if( [localObjectUIDs containsObject: [image uid]] == NO && [unsendableUIDs containsObject: [image uid]] == NO)
                                             {
                                                 if( [seriesUIDsToRetrieve objectForKey: [image seriesInstanceUID]] == nil)
                                                     [seriesUIDsToRetrieve setObject: [NSMutableArray array] forKey: [image seriesInstanceUID]];
@@ -1895,8 +1919,9 @@ subOpCallback(void * /*subOpCallbackData*/ ,
                                     // closed, while its images were still arriving (#634).
                                     [HorosRetrieveThreadGroup waitForThreads: threads propagatingCancellationOf: [NSThread currentThread]];
                                     
-                                    // A thread that failed its association cancels itself.
-                                    retrievedDone = ![HorosRetrieveThreadGroup anyCancelled: threads];
+                                    // A thread that failed its association cancels itself. A failure that
+                                    // left out only what the peer cannot send needs no STUDY level (#692).
+                                    retrievedDone = ![HorosRetrieveThreadGroup anyCancelled: threads] || _retrieveInventory.nothingLeftToAsk;
                                 }
                                 else
                                 {
@@ -1964,8 +1989,9 @@ subOpCallback(void * /*subOpCallbackData*/ ,
                                     // closed, while its images were still arriving (#634).
                                     [HorosRetrieveThreadGroup waitForThreads: threads propagatingCancellationOf: [NSThread currentThread]];
                                     
-                                    // A thread that failed its association cancels itself.
-                                    retrievedDone = ![HorosRetrieveThreadGroup anyCancelled: threads];
+                                    // A thread that failed its association cancels itself. A failure that
+                                    // left out only what the peer cannot send needs no STUDY level (#692).
+                                    retrievedDone = ![HorosRetrieveThreadGroup anyCancelled: threads] || _retrieveInventory.nothingLeftToAsk;
                                 }
                             }
                             else
@@ -2264,24 +2290,15 @@ subOpCallback(void * /*subOpCallbackData*/ ,
 	showErrorMessage = m;
 }
 
+// A network failure is said in the notices panel. NSRunCriticalAlertPanel held
+// the main run loop in its modal mode until it was dismissed, and with it
+// everything the import hands to the main thread (#691).
 + (void) errorMessage:(NSArray*) msg
 {
-    NSString *alertSuppress = @"hideListenerError";
+    NSLog( @"*** listener error: %@ %@", [msg objectAtIndex: 0], [msg objectAtIndex: 1]);
     
-    static BOOL avoidErrorMessageReentry = NO;
-    
-    if( avoidErrorMessageReentry == NO)
-    {
-        NSLog( @"*** listener error (not displayed - hideListenerError): %@ %@ %@", [msg objectAtIndex: 0], [msg objectAtIndex: 1], [msg objectAtIndex: 2]);
-        
-        avoidErrorMessageReentry = YES;
-        if ([[NSUserDefaults standardUserDefaults] boolForKey: alertSuppress] == NO)
-            NSRunCriticalAlertPanel( [msg objectAtIndex: 0], @"%@", [msg objectAtIndex: 2], nil, nil, [msg objectAtIndex: 1]);
-        
-        avoidErrorMessageReentry = NO;
-    }
-    else
-        NSLog( @"*** listener error (not displayed - hideListenerError): %@ %@ %@", [msg objectAtIndex: 0], [msg objectAtIndex: 1], [msg objectAtIndex: 2]);
+    if ([[NSUserDefaults standardUserDefaults] boolForKey: @"hideListenerError"] == NO)
+        [HorosNetworkNotices postTitle: [msg objectAtIndex: 0] message: [msg objectAtIndex: 1]];
 }
 
 - (BOOL)setupNetworkWithSyntax:(const char *)abstractSyntax dataset:(DcmDataset *)dataset
@@ -3468,6 +3485,10 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
         [_retrieveInventory recordOperation:@"C-GET" status:rsp.DimseStatus completed:rsp.NumberOfCompletedSubOperations
             failed:rsp.NumberOfFailedSubOperations warnings:rsp.NumberOfWarningSubOperations remaining:rsp.NumberOfRemainingSubOperations];
         [self recordFailedIdentifiers:rspIds];
+        // Only C-GET: its stores arrive on this association, so what did not arrive is known here.
+        if (cond.good() && !NSThread.currentThread.isCancelled)
+            [self recordUnsentOfRequest:dataset status:rsp.DimseStatus failed:rsp.NumberOfFailedSubOperations
+                remaining:rsp.NumberOfRemainingSubOperations];
         if (NSThread.currentThread.isCancelled) [self reportRetrieveCancellation: @"C-GET" confirmed: cond.good() && rsp.DimseStatus == 0xfe00];
 
         if (cond == EC_Normal)

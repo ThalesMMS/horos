@@ -14,6 +14,15 @@ broken file must fail without producing the expected pixels and without a crash.
 2000 reversible, JPEG-LS lossless; each frame its own fragment), so the same
 checks read the app's OpenJPEG and JPEG-LS decoders (#617). Needs imagecodecs.
 
+--trailing-garbage appends zeros and a stray element with an impossible length
+after every file's Pixel Data, which DCMTK refuses to parse: the import must keep
+each file without those bytes and the same checks must pass (#687).
+
+--wrapped-tiff adds a Secondary Capture whose Pixel Data is one CCITT Group 4
+TIFF under the private transfer syntax VTServer writes scanned documents with:
+it must be imported and DCMPix must draw it at its size (#687). Its pixels are
+drawn as ARGB, so no sampled values are checked for it.
+
     local-validation/venv/bin/python tools/exercise-native-dcmpix-load.py \\
         --app build/Development/HorosDevelopment.app --out local-validation/delta4/630-app-check
 
@@ -24,6 +33,7 @@ import json
 import os
 import plistlib
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -56,7 +66,57 @@ def encapsulate_frames(ds, frames, compression: str):
     ds["PixelData"].is_undefined_length = True
 
 
-def generate(folder: Path, compression: str = "none"):
+# What an OsiriX database held after the Pixel Data of two damaged files (#687).
+TRAILING_GARBAGE = b"\0" * 64 + struct.pack("<HHI", 0x6D00, 0x6800, 1711302656) + "mhxx".encode("utf-16-le")
+
+# A 1-bit CCITT Group 4 TIFF - a black rectangle on white - written by ImageIO.
+G4_TIFF_WRITER = r"""
+import Foundation
+import ImageIO
+import CoreGraphics
+let (w, h, row) = (96, 64, 12)
+var bytes = [UInt8](repeating: 255, count: row * h)
+for y in 16..<48 { for x in 24..<72 { bytes[y * row + x / 8] &= ~UInt8(0x80 >> (x % 8)) } }
+let image = CGImage(width: w, height: h, bitsPerComponent: 1, bitsPerPixel: 1, bytesPerRow: row,
+                    space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGBitmapInfo(rawValue: 0),
+                    provider: CGDataProvider(data: Data(bytes) as CFData)!, decode: nil,
+                    shouldInterpolate: false, intent: .defaultIntent)!
+let destination = CGImageDestinationCreateWithURL(URL(fileURLWithPath: CommandLine.arguments[1]) as CFURL,
+                                                  "public.tiff" as CFString, 1, nil)!
+CGImageDestinationAddImage(destination, image, [kCGImagePropertyTIFFDictionary: [kCGImagePropertyTIFFCompression: 4]] as CFDictionary)
+precondition(CGImageDestinationFinalize(destination))
+"""
+
+
+def wrapped_tiff(folder: Path, study: str):
+    """A Secondary Capture carrying a G4 TIFF under VTServer's private transfer syntax."""
+    from pydicom.dataset import Dataset, FileMetaDataset
+    from pydicom.encaps import encapsulate
+    from pydicom.uid import SecondaryCaptureImageStorage, generate_uid
+    with tempfile.TemporaryDirectory() as scratch:
+        writer, tiff = Path(scratch) / "writer.swift", Path(scratch) / "page.tif"
+        writer.write_text(G4_TIFF_WRITER)
+        subprocess.run(["xcrun", "swift", str(writer), str(tiff)], check=True, capture_output=True)
+        page = tiff.read_bytes()
+    ds = Dataset()
+    ds.file_meta = FileMetaDataset()
+    ds.file_meta.TransferSyntaxUID = "1.2.276.0.19.1.2.55.3"
+    ds.SOPClassUID, ds.SOPInstanceUID = SecondaryCaptureImageStorage, generate_uid()
+    ds.StudyInstanceUID, ds.SeriesInstanceUID = study, generate_uid()
+    ds.PatientName, ds.PatientID = "SYNTHETIC^DCMPIX", "SYN-630"
+    ds.StudyDate, ds.StudyTime, ds.StudyID = "20260916", "120000", "630"
+    ds.Modality, ds.SeriesNumber, ds.InstanceNumber = "OT", 10, 1
+    ds.Rows, ds.Columns = 64, 96
+    ds.SamplesPerPixel, ds.PhotometricInterpretation = 1, "MONOCHROME2"
+    ds.BitsAllocated, ds.BitsStored, ds.HighBit, ds.PixelRepresentation = 1, 1, 0, 0
+    ds.PixelData = encapsulate([page])
+    ds["PixelData"].VR = "OB"
+    ds["PixelData"].is_undefined_length = True
+    ds.save_as(folder / "wrapped-tiff.dcm", implicit_vr=False, little_endian=True, enforce_file_format=True)
+    return {"sop": str(ds.SOPInstanceUID), "width": 96, "height": 64, "samples": [], "frame": 0, "wrapped": True}
+
+
+def generate(folder: Path, compression: str = "none", trailing_garbage: bool = False, wrapped: bool = False):
     """CT series of different sizes and a multiframe; stored values are a known function."""
     import numpy
     from pydicom.dataset import Dataset, FileMetaDataset
@@ -87,6 +147,9 @@ def generate(folder: Path, compression: str = "none"):
             encapsulate_frames(ds, [pixels], compression)
             path = folder / f"s{series}-{number:03d}.dcm"
             ds.save_as(path, enforce_file_format=True)
+            if trailing_garbage:
+                with open(path, "ab") as damaged:
+                    damaged.write(TRAILING_GARBAGE)
             samples = [[sx, sy, value_at(series, number, sx, sy)] for sx, sy in ((0, 0), (columns - 1, 0), (0, rows - 1),
                                                                                 (columns // 2, rows // 3))]
             manifest.append({"sop": str(ds.SOPInstanceUID), "width": columns, "height": rows, "samples": samples, "frame": 0})
@@ -110,9 +173,14 @@ def generate(folder: Path, compression: str = "none"):
     ds.PixelData = b"".join(frame.tobytes() for frame in pixels)
     encapsulate_frames(ds, pixels, compression)
     ds.save_as(folder / "multiframe.dcm", enforce_file_format=True)
+    if trailing_garbage:
+        with open(folder / "multiframe.dcm", "ab") as damaged:
+            damaged.write(TRAILING_GARBAGE)
     for frame in range(frames):
         samples = [[sx, sy, (frame * 37 + sx * 2 + sy) % 256] for sx, sy in ((0, 0), (columns - 1, 0), (5, rows - 1), (70, 40))]
         manifest.append({"sop": str(ds.SOPInstanceUID), "width": columns, "height": rows, "samples": samples, "frame": frame})
+    if wrapped:
+        manifest.append(wrapped_tiff(folder, study))
     return manifest
 
 
@@ -165,7 +233,7 @@ def run_once(app: Path, fixture: Path, dylib: Path, keep: Path | None = None):
             for entry in by_sop[str(pydicom.dcmread(path, stop_before_pixels=True).SOPInstanceUID)]:
                 images.append(dict(entry, path=str(path)))
         images.sort(key=lambda e: (e["path"], e["frame"]))
-        single = [e for e in images if e["frame"] == 0 and e["width"] != 128]
+        single = [e for e in images if e["frame"] == 0 and e["width"] != 128 and not e.get("wrapped")]
         target = single[0]
         replacement = next(e for e in single if (e["width"], e["height"]) != (target["width"], target["height"]))
         plan = {"images": images,
@@ -211,11 +279,11 @@ def run_once(app: Path, fixture: Path, dylib: Path, keep: Path | None = None):
     return result
 
 
-def build_fixture(out: Path, compression: str = "none"):
+def build_fixture(out: Path, compression: str = "none", trailing_garbage: bool = False, wrapped: bool = False):
     fixture = out / "fixture"
     if fixture.exists():
         shutil.rmtree(fixture)
-    manifest = generate(fixture / "series", compression)
+    manifest = generate(fixture / "series", compression, trailing_garbage, wrapped)
     (fixture / "manifest.json").write_text(json.dumps(manifest))
     broken = fixture / "broken"
     broken.mkdir()
@@ -232,12 +300,14 @@ def main():
     parser.add_argument("--app", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--compression", choices=("none", "jpeg2000", "jpegls"), default="none")
+    parser.add_argument("--trailing-garbage", action="store_true")
+    parser.add_argument("--wrapped-tiff", action="store_true")
     arguments = parser.parse_args()
     out = arguments.out.resolve()
     if "local-validation" not in out.parts:
         parser.error("--out must be under local-validation")
     out.mkdir(parents=True, exist_ok=True)
-    fixture = build_fixture(out, arguments.compression)
+    fixture = build_fixture(out, arguments.compression, arguments.trailing_garbage, arguments.wrapped_tiff)
     dylib = out / "probe-dcmpix-load.dylib"
     subprocess.run(["xcrun", "clang", "-dynamiclib", "-fobjc-arc", "-framework", "Cocoa",
                     str(ROOT / "tools/probe-dcmpix-load.m"), "-o", str(dylib)], check=True)
