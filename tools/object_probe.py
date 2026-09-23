@@ -20,13 +20,18 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-INTERMEDIATES = "build/Build/Intermediates.noindex/Horos.build/{configuration}/Horos.build/Objects-normal/arm64"
+# script/build_and_run.sh sets SYMROOT since 8643cac9f, which moved the objects
+# out of build/Build. Both layouts are looked at; the newer object wins, so a
+# stale one left by an older build is not probed instead of the current one.
+INTERMEDIATES = ("build/Intermediates.noindex/Horos.build/{configuration}/Horos.build/Objects-normal/arm64",
+                 "build/Build/Intermediates.noindex/Horos.build/{configuration}/Horos.build/Objects-normal/arm64")
 LOGS = {"Debug": "build/logs/build-and-run.log", "Release": "build/logs/build-release.log"}
 
 
 def app_object(name: str, configuration: str = "Debug", root: Path = ROOT) -> Path | None:
-    path = root / INTERMEDIATES.format(configuration=configuration) / f"{name}.o"
-    return path if path.is_file() else None
+    found = [root / layout.format(configuration=configuration) / f"{name}.o" for layout in INTERMEDIATES]
+    found = [path for path in found if path.is_file()]
+    return max(found, key=lambda path: path.stat().st_mtime) if found else None
 
 
 def first_app_object(name: str, root: Path = ROOT) -> Path | None:

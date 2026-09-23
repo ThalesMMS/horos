@@ -162,6 +162,13 @@ def exercise(root_label: Path):
             skip_name = "level-05" if name == "deep" else "日本"
             check(skipped["paths"] == reference(tree, skip=skip_name), f"{root_label.name}/{name}: skipDescendants differs")
             check(skipped["fds_after_release"] == skipped["fds_before"], f"{root_label.name}/{name}: skip leaked descriptors")
+            # After a file, or a folder opendir refused, nothing was opened for it:
+            # skipping must not close the parent and cut the rest of the listing (#684).
+            if name == "shallow":
+                for entry in (".hidden.dcm", "locked"):
+                    skipped = run(probe, "skip", tree, entry)
+                    check(skipped["paths"] == reference(tree), f"{root_label.name}/{name}: skip after {entry} cut the listing")
+                    check(skipped["fds_after_release"] == skipped["fds_before"], f"{root_label.name}/{name}: skip after {entry} leaked descriptors")
         # Abandoned early, deep in the tree: every open handle closed, fifty times over.
         for attempt in range(50):
             result = run(probe, "abandon", trees["deep"], 25)

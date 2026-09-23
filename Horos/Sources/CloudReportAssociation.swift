@@ -186,6 +186,16 @@ public final class CloudReportAssociation: NSObject {
     /// rewritten: the original Study Instance UID remains the provenance.
     @objc(associateReportsInFiles:existingStudies:)
     public static func associateReports(inFiles files: NSArray, existingStudies: [Any]) {
+        associateReports(inFiles: files, existingStudies: existingStudies, studyUIDsForSOPInstanceUIDs: nil)
+    }
+
+    /// `existingStudies` may leave out SOPUIDs: a database holds millions of
+    /// images, and most reports match by Study UID. The lookup is asked only for
+    /// a report that did not, with the SOP Instance UIDs it references, and
+    /// answers which study owns each one.
+    @objc(associateReportsInFiles:existingStudies:studyUIDsForSOPInstanceUIDs:)
+    public static func associateReports(inFiles files: NSArray, existingStudies: [Any],
+                                        studyUIDsForSOPInstanceUIDs lookup: (([String]) -> [String: String])?) {
         let dicts = files.compactMap { $0 as? NSMutableDictionary }
         for dict in dicts {
             mergeFileIdentity(into: dict)
@@ -197,7 +207,23 @@ public final class CloudReportAssociation: NSObject {
         }
 
         for dict in dicts where isReportCandidate(dictionary(dict)) {
-            let decided = decision(forReport: dictionary(dict), knownStudies: catalog)
+            var decided = decision(forReport: dictionary(dict), knownStudies: catalog)
+            let belongs = (decided[belongsKey] as? Bool) ?? false
+            let refs = Identity.collect(from: dictionary(dict)).referencedSOPUIDs
+            if !belongs, let lookup, !refs.isEmpty {
+                let owners = lookup(Array(refs).sorted())
+                if !owners.isEmpty {
+                    let owned = catalog.map { entry -> [String: Any] in
+                        let uid = string(entry["studyID"])
+                        let sops = owners.filter { $0.value == uid }.map(\.key)
+                        guard !uid.isEmpty, !sops.isEmpty else { return entry }
+                        var withSOPs = entry
+                        withSOPs["SOPUIDs"] = strings(entry["SOPUIDs"]) + sops
+                        return withSOPs
+                    }
+                    decided = decision(forReport: dictionary(dict), knownStudies: owned)
+                }
+            }
             let rewrite = (decided[rewriteKey] as? Bool)
                 ?? ((decided[rewriteKey] as? NSNumber)?.boolValue ?? false)
             guard rewrite,

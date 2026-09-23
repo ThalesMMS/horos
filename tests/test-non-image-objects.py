@@ -78,6 +78,22 @@ else:
             failures.append('%s is no longer excluded, so a kind the application does show would '
                             'be reported as one it cannot' % predicate)
 
+# --- a PDF-backed object whose document renders to nothing is kept (#685) -------
+# Its 0x0 size made the parser report it unreadable, and the import deleted it.
+at = code.find('- (void) adoptRenderedDocument:')
+if at < 0:
+    failures.append('the PDF branches no longer share the check that keeps an unrenderable document')
+else:
+    helper = code[at:code.find('\n}\n', at)]
+    guard = helper.find('pages > 0 && w > 0 && h > 0')
+    if guard < 0 or helper.find('width = w') < guard:
+        failures.append('the rendered size is adopted before it is known to be non-zero, so an '
+                        'unrenderable PDF comes out 0x0 and is deleted as unreadable')
+    if 'pixelDataProblem' not in helper or 'could not be rendered' not in helper:
+        failures.append('an unrenderable PDF is kept with nothing saying why it shows nothing')
+    if code.count('adoptRenderedDocument:') < 4:
+        failures.append('the Encapsulated PDF branch or the SR-as-PDF branch sets its size itself again')
+
 for failure in failures:
     print('FAIL: %s' % failure)
 if failures:

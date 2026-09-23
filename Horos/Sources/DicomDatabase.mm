@@ -1909,14 +1909,52 @@ static BOOL HorosIncomingLooksLikeCloudReport(NSDictionary *dict)
     return NO;
 }
 
+// Which study owns each referenced SOP Instance. There is no index on the SOP
+// column, so this is one SQL scan; faulting every image instead took minutes per
+// import batch on a database of millions of images.
+static NSDictionary *HorosStudyUIDsForSOPInstanceUIDs(NSManagedObjectContext *context, NSArray *uids)
+{
+    NSMutableArray *encoded = [NSMutableArray array];
+    for (NSString *uid in uids)
+    {
+        if (!uid.length)
+            continue;
+        NSData *data = [DicomImage sopInstanceUIDEncodeString:uid];
+        [encoded addObject:data];
+        // isEqualToSopInstanceUID: also accepts a stored trailing zero byte.
+        NSMutableData *padded = [[data mutableCopy] autorelease];
+        [padded increaseLengthBy:1];
+        [encoded addObject:padded];
+    }
+    if (!encoded.count || !context)
+        return @{};
+
+    NSFetchRequest *request = [[[NSFetchRequest alloc] initWithEntityName:@"Image"] autorelease];
+    request.predicate = [NSPredicate predicateWithFormat:@"compressedSopInstanceUID IN %@", encoded];
+    NSError *error = nil;
+    NSArray *images = [context executeFetchRequest:request error:&error];
+    if (!images)
+        N2LogError(@"Cloud report SOP lookup failed: %@", error);
+
+    NSMutableDictionary *owners = [NSMutableDictionary dictionary];
+    for (DicomImage *image in images)
+    {
+        NSString *sop = image.sopInstanceUID;
+        NSString *study = [image valueForKeyPath:@"series.study.studyInstanceUID"];
+        if (sop.length && study.length)
+            [owners setObject:study forKey:sop];
+    }
+    return owners;
+}
+
 // Group a Cloud/PDF report with the study it references. Name alone does not
 // join patients or studies. The file keeps its original Study Instance UID.
-static void HorosAssociateCloudReports(NSArray *dicomFilesArray, NSArray *studiesArray)
+static void HorosAssociateCloudReports(NSArray *dicomFilesArray, NSArray *studiesArray, NSManagedObjectContext *context)
 {
     Class assoc = NSClassFromString(@"HorosCloudReportAssociation");
     if (assoc == Nil)
         return;
-    SEL sel = @selector(associateReportsInFiles:existingStudies:);
+    SEL sel = @selector(associateReportsInFiles:existingStudies:studyUIDsForSOPInstanceUIDs:);
     if (![assoc respondsToSelector:sel])
         return;
 
@@ -1932,19 +1970,11 @@ static void HorosAssociateCloudReports(NSArray *dicomFilesArray, NSArray *studie
     if (!maybeReport)
         return;
 
+    // Study identity only. SOP Instances are looked up on demand, for the few
+    // reports that match neither by Study UID nor by referenced study.
     NSMutableArray *known = [NSMutableArray array];
     for (DicomStudy *study in studiesArray)
     {
-        NSMutableArray *sops = [NSMutableArray array];
-        for (DicomSeries *series in [[study valueForKey:@"series"] allObjects])
-        {
-            for (id image in [[series valueForKey:@"images"] allObjects])
-            {
-                NSString *uid = [image valueForKey:@"sopInstanceUID"];
-                if ([uid length])
-                    [sops addObject:uid];
-            }
-        }
         NSMutableDictionary *entry = [NSMutableDictionary dictionary];
         if (study.studyInstanceUID)
             [entry setObject:study.studyInstanceUID forKey:@"studyID"];
@@ -1954,10 +1984,12 @@ static void HorosAssociateCloudReports(NSArray *dicomFilesArray, NSArray *studie
             [entry setObject:study.name forKey:@"patientName"];
         if (study.patientID)
             [entry setObject:study.patientID forKey:@"patientID"];
-        [entry setObject:sops forKey:@"SOPUIDs"];
         [known addObject:entry];
     }
-    ((void (*)(id, SEL, id, id))objc_msgSend)(assoc, sel, dicomFilesArray, known);
+    NSDictionary *(^lookup)(NSArray *) = ^NSDictionary *(NSArray *uids) {
+        return HorosStudyUIDsForSOPInstanceUIDs(context, uids);
+    };
+    ((void (*)(id, SEL, id, id, id))objc_msgSend)(assoc, sel, dicomFilesArray, known, lookup);
 }
 
 -(NSArray*)addFilesDescribedInDictionaries:(NSArray*)dicomFilesArray postNotifications:(BOOL)postNotifications rereadExistingItems:(BOOL)rereadExistingItems generatedByOsiriX:(BOOL)generatedByOsiriX importedFiles: (BOOL) importedFiles returnArray: (BOOL) returnArray
@@ -2018,7 +2050,7 @@ static void HorosAssociateCloudReports(NSArray *dicomFilesArray, NSArray *studie
         BOOL COMMENTSAUTOFILLSeriesLevel = [[NSUserDefaults standardUserDefaults] boolForKey: @"COMMENTSAUTOFILLSeriesLevel"];
         BOOL COMMENTSAUTOFILLStudyLevel = [[NSUserDefaults standardUserDefaults] boolForKey: @"COMMENTSAUTOFILLStudyLevel"];
         
-        HorosAssociateCloudReports(dicomFilesArray, studiesArray);
+        HorosAssociateCloudReports(dicomFilesArray, studiesArray, self.managedObjectContext);
         
         NSString* newFile = nil;
         NSTimeInterval start = [NSDate timeIntervalSinceReferenceDate];
@@ -3344,6 +3376,13 @@ static NSString *availablePathInDirectory( NSString *directory, NSString *name)
             
             if ([lastPathComponent length] > 0 && [lastPathComponent characterAtIndex: 0] == '.')
             {
+                // The enumerator has already opened a hidden folder by the time it
+                // is returned. Its contents are not ours to take: the Decompress
+                // helper expands archives in .horos-extract-<UUID>/contents here,
+                // and its files were imported while unzip was still writing them,
+                // leaving the emptied staging folder behind (#684).
+                [enumer skipDescendents];
+
                 // delete old files starting with '.'
                 struct stat st;
                 if ([enumer stat:&st] == 0)

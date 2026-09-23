@@ -546,6 +546,48 @@ static NSError *cropFailure( NSString *reason)
         return -1;
 }
 
+// A PDF-backed object takes its page count and size from the rendered document.
+// One that renders to nothing - no pages, or an empty image - used to come out
+// 0x0, which the parser reports as unreadable, and the import deletes by default
+// (DELETEFILELISTENER). It is a DICOM object like any other: it keeps the 1x1
+// placeholder and says why it cannot be shown, as a non-image class does (#685).
+- (void) adoptRenderedDocument: (NSPDFImageRep*) rep dicomElements: (NSMutableDictionary*) elements
+{
+    NSInteger pages = rep.pageCount;
+    long w = 0, h = 0;
+
+    if( pages > 0)
+    {
+        NSImage *pdfImage = [[[NSImage alloc] init] autorelease];
+        [pdfImage addRepresentation: rep];
+
+        NSBitmapImageRep *bitRep = [NSBitmapImageRep imageRepWithData: [pdfImage TIFFRepresentation]];
+
+        if( bitRep.pixelsWide > pdfImage.size.width)
+        {
+            h = bitRep.pixelsHigh;
+            w = bitRep.pixelsWide;
+        }
+        else
+        {
+            h = pdfImage.size.height;
+            w = pdfImage.size.width;
+        }
+    }
+
+    if( pages > 0 && w > 0 && h > 0)
+    {
+        NoOfFrames = pages;
+        width = w;
+        height = h;
+        return;
+    }
+
+    NSString *problem = @"its document could not be rendered, so it is kept but cannot be displayed";
+    [elements setObject: problem forKey: @"pixelDataProblem"];
+    NSLog( @"---- %@: %@", [filePath lastPathComponent], problem);
+}
+
 -(short) getDicomFileDCMTK
 {
     int i;
@@ -1413,26 +1455,10 @@ static NSError *cropFailure( NSString *reason)
             if (dataset->findAndGetUint8Array(DCM_EncapsulatedDocument, buffer, &length, OFFalse).good() && length > 0)
             {
                 NSData *pdfData = [NSData dataWithBytes:buffer length:(unsigned)length];;
-                NSPDFImageRep *rep = [NSPDFImageRep imageRepWithData:pdfData];
-                
-                NoOfFrames = [rep pageCount];
-                
-                NSImage *pdfImage = [[[NSImage alloc] init] autorelease];
-                [pdfImage addRepresentation: rep];
-                
-                NSBitmapImageRep *bitRep = [NSBitmapImageRep imageRepWithData: [pdfImage TIFFRepresentation]];
-                
-                if( bitRep.pixelsWide > pdfImage.size.width)
-                {
-                    height = bitRep.pixelsHigh;
-                    width = bitRep.pixelsWide;
-                }
-                else
-                {
-                    height = pdfImage.size.height;
-                    width = pdfImage.size.width;
-                }
+                [self adoptRenderedDocument: [NSPDFImageRep imageRepWithData:pdfData] dicomElements: dicomElements];
             }
+            else
+                [self adoptRenderedDocument: nil dicomElements: dicomElements];
         }
         
 #ifdef OSIRIX_VIEWER
@@ -1441,25 +1467,7 @@ static NSError *cropFailure( NSString *reason)
         {
             if( [DicomStudy displaySeriesWithSOPClassUID: sopClassUID andSeriesDescription: [dicomElements objectForKey: @"seriesDescription"]])
             {
-                NSPDFImageRep *rep = [self PDFImageRep];
-                
-                NoOfFrames = [rep pageCount];
-                
-                NSImage *pdfImage = [[[NSImage alloc] init] autorelease];
-                [pdfImage addRepresentation: rep];
-                
-                NSBitmapImageRep *bitRep = [NSBitmapImageRep imageRepWithData: [pdfImage TIFFRepresentation]];
-                
-                if( bitRep.pixelsWide > pdfImage.size.width)
-                {
-                    height = bitRep.pixelsHigh;
-                    width = bitRep.pixelsWide;
-                }
-                else
-                {
-                    height = pdfImage.size.height;
-                    width = pdfImage.size.width;
-                }
+                [self adoptRenderedDocument: [self PDFImageRep] dicomElements: dicomElements];
             }
             
             NSString *referencedSOPInstanceUID = [SRAnnotation getImageRefSOPInstanceUID: filePath];

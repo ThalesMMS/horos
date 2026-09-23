@@ -45,6 +45,12 @@ if 'associateReportsInFiles:existingStudies:' not in database:
     failures.append('the import path does not ask Swift to associate Cloud reports')
 if 'NSClassFromString(@"HorosCloudReportAssociation")' not in database:
     failures.append('the import path hard-links Swift instead of NSClassFromString')
+associate = database[database.index('static void HorosAssociateCloudReports('):]
+associate = associate[:associate.index('\n}\n')]
+if '@"images"' in associate or 'sopInstanceUID' in associate:
+    failures.append('the Cloud report catalog faults every image in the database again')
+if 'studyUIDsForSOPInstanceUIDs:' not in database:
+    failures.append('the import path no longer looks up referenced SOP Instances on demand')
 if 'cloudReportOriginalStudyUID' not in database:
     failures.append('the original Cloud StudyInstanceUID is not stored as provenance')
 
@@ -187,6 +193,27 @@ emit("group-name-patient", nameDict["patientUID"] as? String == "someone-else" ?
 emit("groups", "\(groups([imageDict, sameDict, referencedDict]).count)")
 emit("groups-with-name", "\(groups([imageDict, sameDict, referencedDict, nameDict]).count)")
 emit("provenance", referencedDict["comment"] as? String ?? "")
+var lookups: [[String]] = []
+let lookupSame = NSMutableDictionary(dictionary: sameDict)
+let lookupRef = NSMutableDictionary()
+lookupRef["studyID"] = cloudStudy
+lookupRef["patientUID"] = "cloud-other"
+lookupRef["patientName"] = patient
+lookupRef["SOPClassUID"] = pdf
+lookupRef["manufacturer"] = "Horos Cloud"
+lookupRef["referencedSOPInstanceUIDs"] = [image]
+var studyOnly = target
+studyOnly.removeValue(forKey: "SOPUIDs")
+CloudReportAssociation.associateReports(
+    inFiles: [lookupSame, lookupRef], existingStudies: [studyOnly],
+    studyUIDsForSOPInstanceUIDs: { uids in
+        lookups.append(uids)
+        return uids.contains(image) ? [image: study] : [:]
+    })
+emit("lookup-calls", "\(lookups.count)")
+emit("lookup-uids", lookups.first?.joined(separator: ",") ?? "")
+emit("lookup-grouped", lookupRef["studyID"] as? String == study ? "yes" : "no")
+emit("lookup-same-kept", lookupSame["studyID"] as? String == study ? "yes" : "no")
 emit("cloud-mfr", CloudReportAssociation.isCloudManufacturer("Horos Cloud") ? "yes" : "no")
 emit("not-cloud-mfr", CloudReportAssociation.isCloudManufacturer("ACME") ? "yes" : "no")
 
@@ -326,6 +353,10 @@ expected = {
     'group-name-patient': 'yes',
     'groups': '1',
     'groups-with-name': '2',
+    'lookup-calls': '1',
+    'lookup-uids': '2.25.160.2',
+    'lookup-grouped': 'yes',
+    'lookup-same-kept': 'yes',
     'cloud-mfr': 'yes',
     'not-cloud-mfr': 'no',
 }

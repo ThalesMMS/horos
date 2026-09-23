@@ -166,8 +166,12 @@
 	[self skipDescendents];
 }
 
+// Only the folder just returned, and only if it was opened: after a file, or a
+// folder opendir refused, popping would close the parent and end its listing.
 -(void)skipDescendents {
-	[self popDIR];
+	NSString* subpath = nil;
+	if ([self DIRAndSubpath:&subpath] && currpath && [subpath isEqualToString:currpath])
+		[self popDIR];
 }
 
 - (NSUInteger)level {
