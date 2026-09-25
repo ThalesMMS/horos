@@ -97,7 +97,6 @@
 }
 
 -(void)dealloc {
-//	NSLog(@"AnonymizationTagsView dealloc");
 	[dcmTagsPopUpButton release];
 	[dcmTagAddButton release];
 	[viewGroups release];
@@ -183,7 +182,6 @@
 	[textField setStringValue:@""];
 	[self addSubview:textField];
 	
-//	NSLog( @"VR: %@", tag.vr);
 	
 	NSDateFormatter* df = NULL;
 	NSNumberFormatter* nf = NULL;
@@ -274,11 +272,8 @@
 	NSArray* group = [self groupForObject:tag];
 	if (!group) return;
 	
-//	[[NSNotificationCenter defaultCenter] removeObserver:self name:NSControlTextDidEndEditingNotification object:[group objectAtIndex:1]];
-//	[[NSNotificationCenter defaultCenter] removeObserver:self name:NSControlTextDidChangeNotification object:[group objectAtIndex:1]];
 	[[[group objectAtIndex:0] cell] removeObserver:self forKeyPath:@"state"];
 	[[group objectAtIndex:1] removeObserver:self forKeyPath:@"formatIsOk"];
-//	[[group objectAtIndex:1] removeObserver:self forKeyPath:@"value"];
 	[[group objectAtIndex:0] removeFromSuperview];
 	[[group objectAtIndex:1] removeFromSuperview];
 	[[group objectAtIndex:2] removeFromSuperview];

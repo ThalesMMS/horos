@@ -1,5 +1,6 @@
 #import "MPRController.h"
 #import "MPRDCMView.h"
+#import "DCMPix.h"
 
 /// Metal reconstructs scalar 3D MPR planes by default. The host retains its
 /// camera, geometry, ROIs, tools and export. Unsupported modes and failures
@@ -15,6 +16,10 @@
 - (NSInteger)horosMPRVolumeBytes;
 /// Drops the GPU volume; the next reconstruction re-uploads if enabled.
 - (void)horosMPRReleaseVolume;
+/// Whether single planes are drawn with cubic interpolation (#702): the
+/// `HorosMPRCubicDisplay` preference, off by default.
+- (BOOL)horosMPRCubicDisplay;
+- (void)toggleMPRCubicDisplay:(id)sender;
 @end
 
 @interface MPRDCMView (HorosMPRHost)
@@ -24,4 +29,8 @@
 /// The fused series' plane the last call resliced with it (#658), malloc-owned,
 /// or NULL: then the host reslices it with VTK, as it does the plane.
 - (float *)horosMPRTakeFusedImageWidth:(long *)width height:(long *)height;
+/// Hands `pix` the cubic display plane of the last reconstruction, or takes
+/// its old one away when the last reconstruction made none (#702).
+- (void)horosMPRAttachDisplayPlaneTo:(DCMPix *)pix;
 @end
+

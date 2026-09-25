@@ -288,6 +288,14 @@ void storeCallback(void* data, T_DIMSE_StoreProgress* progress, T_DIMSE_C_StoreR
         if (!HorosFindSOPClassAndInstanceInDataSet(*dataset, sopClass, sizeof(sopClass),
                 sopInstance, sizeof(sopInstance)) || !sopClass[0] || !sopInstance[0])
             context->setStatus(STATUS_STORE_Error_CannotUnderstand);
+        // Stored, it would be indexed and counted as received; refused, the
+        // retrieve inventory records it and a later retrieve asks again (#695).
+        else if (HorosDataSetLacksDeclaredPixels(*dataset))
+        {
+            context->setStatus(STATUS_STORE_Error_DataSetDoesNotMatchSOPClass);
+            NSLog(@"Refused %s from %.16s: it declares an image but its Pixel Data is empty",
+                sopInstance, info->association->params->DULparams.callingAPTitle);
+        }
     }
     if (context->getStatus() != STATUS_Success)
         response->DimseStatus = context->getStatus();

@@ -43,8 +43,6 @@
 
 #import "url.h"
 
-//#ifdef NDEBUG
-//#else
 
 @implementation NSNotificationCenter (AllObservers)
 
@@ -52,17 +50,6 @@ const static void *namesKey = &namesKey;
 
 + (void) load
 {
-//	method_exchangeImplementations(class_getInstanceMethod(self, @selector(addObserver:selector:name:object:)),
-//	                               class_getInstanceMethod(self, @selector(my_addObserver:selector:name:object:)));
-//    
-//    method_exchangeImplementations(class_getInstanceMethod(self, @selector(postNotificationName:object:userInfo:)),
-//	                               class_getInstanceMethod(self, @selector(my_postNotificationName:object:userInfo:)));
-//    
-//    method_exchangeImplementations(class_getInstanceMethod(self, @selector(postNotification:)),
-//	                               class_getInstanceMethod(self, @selector(my_postNotification:)));
-//    
-//    method_exchangeImplementations(class_getInstanceMethod(self, @selector(removeObserver:name:object:)),
-//	                               class_getInstanceMethod(self, @selector(my_removeObserver:name:object:)));
 }
 
 - (void) my_addObserver:(id)notificationObserver selector:(SEL)notificationSelector name:(NSString *)notificationName object:(id)notificationSender
@@ -98,7 +85,6 @@ const static void *namesKey = &namesKey;
             }
         }
         
-//        NSLog( @"---- catch notifications: %@ - %@", [notificationObserver class], bundleIdentifier);
     }
     else
         [self my_addObserver:notificationObserver selector:notificationSelector name:notificationName object:notificationSender];
@@ -172,8 +158,6 @@ const static void *namesKey = &namesKey;
     {
         for( NSDictionary *observerDictionary in [self my_observersForNotificationName: notification.name])
         {
-//            SEL selector = [[observerDictionary objectForKey: @"selector"] pointerValue];
-//            id observer = [[observerDictionary objectForKey: @"observer"] pointerValue];
             
             if( selectors == nil)
                 selectors = [NSMutableArray array];
@@ -223,5 +207,3 @@ const static void *namesKey = &namesKey;
     [pool release];
 }
 @end
-
-//#endif

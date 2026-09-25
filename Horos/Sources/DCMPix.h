@@ -628,9 +628,6 @@ extern "C"
 /** create an NSImage from the current pix using the current ww/wl. Full size*/
 - (NSImage*) image;
 
-/** reeturns the current image. returns nil if no image has be previously created */
-// - (NSImage*) getImage;
-
 /** A pointer to the orientation.  9 values in length. 3 for each axis. */
 - (void) orientation:(float*) c;
 
@@ -706,6 +703,11 @@ extern "C"
 - (float*) computefImage;
 /** The same pixels without the presentation convolution: what a measurement reads. */
 - (float*) computefImageForMeasurement;
+/** What is drawn: computefImage, with the MPR's cubic display plane in place of fImage when
+    this pix has one (#702). Measurement and export keep computefImage / computefImageForMeasurement. */
+- (float*) computefImageForDisplay;
+/** The MPR's cubic display plane (#702): `pwidth * pheight` floats, or nil. Only drawn. */
+@property (nonatomic, retain) NSData *horosMPRDisplayPixels;
 
 /** Sets fusion paramaters
  * @param m  stack mode

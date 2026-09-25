@@ -128,7 +128,6 @@
 	while (series = [enumerator nextObject])
 	{
 		tempListItemTemplate = [NSMutableString stringWithString:listItemTemplate];
-		//linkToPatientPage = [[[[series objectAtIndex:0] valueForKeyPath:@"study.name"] filenameString] stringByAppendingPathComponent:@"/index.html"];
 		linkToPatientPage = [NSString stringWithFormat:@"./%@/%@", [[[series objectAtIndex:0] valueForKeyPath:@"study.name"] filenameString], @"index.html"];
 		
 		[tempListItemTemplate replaceOccurrencesOfString:@"%patient_i_page%" withString:[QTExportHTMLSummary nonNilString:linkToPatientPage] options:NSLiteralSearch range:tempListItemTemplate.range];
@@ -459,7 +458,6 @@
 {
 	NSFileManager *fileManager = [NSFileManager defaultManager];
 	NSString *htmlExtraDirectory = [[[[BrowserController currentBrowser] database] htmlTemplatesDirPath] stringByAppendingPathComponent:@"html-extra"];
-	//if([directoryContent count])
     [fileManager copyItemAtPath:htmlExtraDirectory toPath:[rootPath stringByAppendingPathComponent:@"html-extra"] error:NULL];
 }
 

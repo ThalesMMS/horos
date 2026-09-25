@@ -73,30 +73,6 @@
 			[DCMAttributeTag tagWithName:@"PatientID"],
 			[DCMAttributeTag tagWithName:@"PatientsWeight"],
 			[DCMAttributeTag tagWithName:@"PatientsAge"],
-//			[DCMAttributeTag tagWithName:@"ClinicalTrialSponsorName"],
-//			[DCMAttributeTag tagWithName:@"PatientsBirthDate"],
-//			[DCMAttributeTag tagWithName:@"ClinicalTrialProtocolID"],
-//			[DCMAttributeTag tagWithName:@"InstitutionName"],
-//			[DCMAttributeTag tagWithName:@"ClinicalTrialProtocolName"],
-//			[DCMAttributeTag tagWithName:@"StudyID"],
-//			[DCMAttributeTag tagWithName:@"ClinicalTrialSiteID"],
-//			[DCMAttributeTag tagWithName:@"StudyDate"],
-//			[DCMAttributeTag tagWithName:@"ClinicalTrialSiteName"],
-//			[DCMAttributeTag tagWithName:@"StudyTime"],
-//			[DCMAttributeTag tagWithName:@"ClinicalTrialSubjectReadingID"],
-//			[DCMAttributeTag tagWithName:@"AcquisitionDatetime"],
-//			[DCMAttributeTag tagWithName:@"ClinicalTrialSubjectID"],
-//			[DCMAttributeTag tagWithName:@"SeriesDate"],
-//			[DCMAttributeTag tagWithName:@"ClinicalTrialTimePointID"],
-//			[DCMAttributeTag tagWithName:@"SeriesTime"],
-//			[DCMAttributeTag tagWithName:@"ClinicalTrialTimePointDescription"],
-//			[DCMAttributeTag tagWithName:@"InstanceCreationDate"],
-//			[DCMAttributeTag tagWithName:@"ClinicalTrialCoordinatingCenterName"],
-//			[DCMAttributeTag tagWithName:@"InstanceCreationTime"],
-//			[DCMAttributeTag tagWithName:@"PerformingPhysiciansName"],
-//			[DCMAttributeTag tagWithName:@"ReferringPhysiciansName"],
-//			[DCMAttributeTag tagWithName:@"PhysiciansOfRecord"],
-//			[DCMAttributeTag tagWithName:@"AccessionNumber"],
 			NULL];
 }
 
@@ -217,7 +193,6 @@
 }
 
 -(void)observeValueForKeyPath:(NSString*)keyPath ofObject:(id)object change:(NSDictionary*)change context:(void*)context {
-//	NSLog(@"observeValueForKeyPath:%@ ofObject....", keyPath);
 	if (context == self.tagsView) {
 		NSString* matchName = [self nameOfCurrentMatchingTemplate];
 		
@@ -239,13 +214,8 @@
 	[self observeValueForKeyPath:NULL ofObject:NULL change:NULL context:self.tagsView];
 }
 
-//-(void)observeViewFrameDidChange:(NSNotification*)notification {
-//	[self.tagsView adaptCellSizeToViewSize];
-//}
 
 -(void)dealloc {
-//	NSLog(@"AnonymizationViewController dealloc");
-//	[[NSNotificationCenter defaultCenter] removeObserver:self name:NSViewFrameDidChangeNotification object:self.view];
 	
 	while (tags.count)
 		[self removeTag:[tags objectAtIndex:(long)tags.count-1]];	
@@ -262,8 +232,6 @@
 			NSTextField* tf = [self.tagsView textFieldForObject:tag];
 			
 			id value = tf.stringValue.length? tf.objectValue : NULL;
-			//if (value)
-			//	if () // TODO: objs
 			
 			[out addObject:[NSArray arrayWithObjects: tag, value, NULL]];
 		}

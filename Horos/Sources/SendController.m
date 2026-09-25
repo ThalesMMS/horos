@@ -355,7 +355,6 @@ static volatile int sendControllerObjects = 0;
 
 - (IBAction)selectServer: (id)sender
 {
-	//NSLog(@"select server: %@", [sender description]);
 	_serverIndex = [sender indexOfSelectedItem];
 	
 	[[NSUserDefaults standardUserDefaults] setInteger:_serverIndex forKey:@"lastSendServer"];
@@ -490,7 +489,6 @@ static volatile int sendControllerObjects = 0;
 	
     NSMutableArray *arraysOfFiles = [NSMutableArray array];
     NSMutableArray *arrayOfPatientNames = [NSMutableArray array];
-//    DicomDatabase *database = nil;
     
 	@try
 	{
@@ -594,7 +592,6 @@ static volatile int sendControllerObjects = 0;
     }
     while( loc < files.count);
     
-//    NSUInteger initialOpCount = queue.operationCount;
     while (queue.operationCount)
     {
         if( [[NSThread currentThread] isCancelled])

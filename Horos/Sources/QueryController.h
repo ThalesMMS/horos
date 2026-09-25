@@ -190,6 +190,7 @@ enum
 - (IBAction) view:(id) sender;
 - (IBAction) setBirthDate:(id) sender;
 - (NSArray*) queryPatientID:(NSString*) ID;
+- (NSArray*) queryPatientName:(NSString*) name;
 - (void) query:(id)sender;
 - (void) retrieve:(id)sender;
 - (void) retrieve:(id)sender onlyIfNotAvailable:(BOOL) onlyIfNotAvailable;

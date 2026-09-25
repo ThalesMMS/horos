@@ -34,6 +34,21 @@ inline OFBool HorosFindSOPClassAndInstanceInDataSet(DcmItem *item,
     return result;
 }
 
+// An object that declares its image size and carries Pixel Data of length zero
+// lost its picture on the way: a source that cannot read or transcode its own
+// file sends this (#695). An object without the element at all is a different
+// case, imported and explained (#101, #106). Only the top level is looked at,
+// so an icon's Pixel Data inside a sequence does not count.
+inline OFBool HorosDataSetLacksDeclaredPixels(DcmItem *item) {
+    if (!item) return OFFalse;
+    Uint16 rows = 0, columns = 0;
+    if (item->findAndGetUint16(DCM_Rows, rows).bad() || item->findAndGetUint16(DCM_Columns, columns).bad() ||
+        !rows || !columns) return OFFalse;
+    DcmElement *pixels = NULL;
+    if (item->findAndGetElement(DCM_PixelData, pixels).bad() || !pixels) return OFFalse;
+    return pixels->getLengthField() == 0;
+}
+
 inline OFBool HorosFindSOPClassAndInstanceInFile(const char *path,
     char *sopClass, size_t classCapacity, char *sopInstance, size_t instanceCapacity,
     OFBool tolerateSpacePadding = OFFalse) {

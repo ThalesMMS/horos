@@ -311,7 +311,6 @@
                     [[NSUserDefaults standardUserDefaults] setInteger:i forKey:@"lastSendServer"];
             [self selectServer:dicomImages];
             return YES;
-            // [_database storeScuImages:dicomImages toDestinationAETitle:(NSString*)aet address:(NSString*)address port:(NSInteger)port transferSyntax:(int)exsTransferSyntax];
 		}
 	}
     else

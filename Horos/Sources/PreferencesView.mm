@@ -240,8 +240,6 @@ static const NSUInteger colWidth = 80, colSeparator = 1, rowHeight = 101, titleH
 	
 	NSRect frame = [self bounds];
 	
-//	[[self backgroundColor] setFill];
-//	[NSBezierPath fillRect:frame];
 	
     if (@available(macOS 10.14, *)) {
         [[NSColor alternatingContentBackgroundColors][1] setFill];
@@ -261,7 +259,6 @@ static const NSUInteger colWidth = 80, colSeparator = 1, rowHeight = 101, titleH
 	
 	[NSGraphicsContext restoreGraphicsState];
 	
-//	[super drawRect:];
 }
 
 @end

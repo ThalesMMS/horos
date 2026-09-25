@@ -96,13 +96,10 @@ static BOOL useSeriesDescription = NO;
 static BOOL NOLOCALIZER = NO;
 static BOOL combineProjectionSeries = NO, oneFileOnSeriesForUS = NO;
 static int combineProjectionSeriesMode = NO;
-//static int CHECKFORLAVIM = -1;
 static int COMMENTSGROUP = NO, COMMENTSGROUP2 = NO, COMMENTSGROUP3 = NO, COMMENTSGROUP4 = NO;
 static int COMMENTSELEMENT = NO, COMMENTSELEMENT2 = NO, COMMENTSELEMENT3 = NO, COMMENTSELEMENT4 = NO;
 static BOOL gUsePatientIDForUID = YES, gUsePatientBirthDateForUID = YES, gUsePatientNameForUID = YES;
 static BOOL SEPARATECARDIAC4D = NO;
-//static BOOL SeparateCardiacMR = NO;
-//static int SeparateCardiacMRMode = 0;
 
 #define QUICKTIMETIMEFRAMELIMIT 1200
 
@@ -131,45 +128,6 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
     return str;
 }
 
-//@implementation NSString(_encodings_)
-//- (NSArray*)allAvailableEncodings
-//{
-//    NSMutableArray*     array = [[NSMutableArray array] retain];
-//    const NSStringEncoding*     encoding = [NSString availableStringEncodings];
-//
-//    while (*encoding) {
-//        NSMutableArray* row = [NSMutableArray arrayWithCapacity:2];
-//
-////		NSLog([NSString localizedNameOfStringEncoding:*encoding]);
-//
-//        [row addObject:[NSString localizedNameOfStringEncoding:*encoding]];
-//        [row addObject:[NSNumber numberWithInt:*encoding]];
-//        encoding++;
-//
-//        [array addObject:row];
-//
-//    }
-//
-//    return [array autorelease];
-//}
-//
-//- (int)numberFromLocalizedStringEncodingName:(NSString*)aName
-//{
-//    NSArray *encodings = [[self allAvailableEncodings] retain];
-//    NSEnumerator *en = [encodings objectEnumerator];
-//    NSArray *encPair = [NSArray array];
-//    int searchedNumber = 0;
-//
-//    while (encPair = [en nextObject])
-//    {
-//        if ([[encPair objectAtIndex:0] isEqualTo:aName])
-//            searchedNumber = [[encPair objectAtIndex:1] intValue];
-//    }
-//
-//    [encodings release];
-//    return searchedNumber;
-//}
-//@end
 
 @implementation DicomFile
 @synthesize serieID;
@@ -273,26 +231,14 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
     int	i, from, len = (int)strlen(str), index;
     NSMutableString	*result = [NSMutableString string];
     BOOL separators = NO;
-    //	BOOL twoCharsEncoding = NO;
     
     for( i = 0, from = 0, index = 0; i < len; i++)
     {
         c = str[ i];
         
-        //		if( encoding[ index] == NSISO2022JPStringEncoding || encoding[ index] == -2147483647)
-        //			twoCharsEncoding = YES;
-        //		else
-        //			twoCharsEncoding = NO;
         
         BOOL separatorFound = NO;
         
-        //		if( twoCharsEncoding)
-        //		{
-        //			if( c == 0x1b && str[ i+1] == '(')
-        //				separatorFound = YES;
-        //		}
-        //		else
-        //		{
         if( c == 0x1b)
             separatorFound = YES;
         //		}
@@ -332,12 +278,6 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
         }
     }
     
-    //	if( separators)
-    //	{
-    //		[result replaceOccurrencesOfString: @"\x1b" withString: @"" options: 0 range:result.range];
-    //		[result replaceOccurrencesOfString: @"(B=)" withString: @"=" options: 0 range:result.range];
-    //		[result replaceOccurrencesOfString: @"(B" withString: @"" options: 0 range:result.range];
-    //	}
     
     if( replace)
         return [DicomFile NSreplaceBadCharacter: result];
@@ -462,15 +402,6 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
                 {
                     currentEncoding = [NSString encodingForDICOMCharacterSet: key];
                     
-                    //                    BOOL found = NO;
-                    //                    for( int x = 0; x < 10; x++)
-                    //                    {
-                    //                        if( currentEncoding == encodings[ x])
-                    //                            found = YES;
-                    //                    }
-                    
-                    //                    if( found == NO)
-                    //                        NSLog( @"*** encoding not found in declared SpecificCharacterSet (0008,0005)");
                     
                     checkPNDelimiters = ([key isEqualToString: @"ISO 2022 IR 87"] == NO) && ([key isEqualToString: @"ISO 2022 IR 159"] == NO);
                     
@@ -550,8 +481,6 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
             COMMENTSFROMDICOMFILES = [sd boolForKey: @"CommentsFromDICOMFiles"];
             COMMENTSAUTOFILL = [sd boolForKey: @"COMMENTSAUTOFILL"];
             SEPARATECARDIAC4D = [sd boolForKey: @"SEPARATECARDIAC4D"];
-            //			SeparateCardiacMR = [sd boolForKey: @"SeparateCardiacMR"];
-            //			SeparateCardiacMRMode = [sd integerForKey: @"SeparateCardiacMRMode"];
             
             COMMENTSGROUP = [[sd objectForKey: @"COMMENTSGROUP"] intValue];
             COMMENTSELEMENT = [[sd objectForKey: @"COMMENTSELEMENT"] intValue];
@@ -586,8 +515,6 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
             COMMENTSFROMDICOMFILES = [[dict objectForKey: @"CommentsFromDICOMFiles"] intValue];
             COMMENTSAUTOFILL = [[dict objectForKey: @"COMMENTSAUTOFILL"] intValue];
             SEPARATECARDIAC4D = [[dict objectForKey: @"SEPARATECARDIAC4D"] intValue];
-            //			SeparateCardiacMR = [[dict objectForKey: @"SeparateCardiacMR"] intValue];
-            //			SeparateCardiacMRMode = [[dict objectForKey: @"SeparateCardiacMRMode"] intValue];
             
             COMMENTSGROUP = [[dict objectForKey: @"COMMENTSGROUP"] intValue];
             COMMENTSELEMENT = [[dict objectForKey: @"COMMENTSELEMENT"] intValue];
@@ -612,7 +539,6 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
             gUsePatientIDForUID = [[dict objectForKey: @"UsePatientIDForUID"] intValue];
             gUsePatientNameForUID = [[dict objectForKey: @"UsePatientNameForUID"] intValue];
             
-            //			CHECKFORLAVIM = NO;
         }
     }
 }
@@ -1279,7 +1205,6 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
         {
             AVAssetTrack* video_track = [video_tracks objectAtIndex:0];
             
-            //            NSLog(@"%f %f", video_track.naturalSize.width, video_track.naturalSize.height);
             
             NSMutableDictionary* dictionary = [NSMutableDictionary dictionary];
             [dictionary setObject: [NSNumber numberWithInt: kCVPixelFormatType_32ARGB] forKey:(NSString*)kCVPixelBufferPixelFormatTypeKey];
@@ -1337,98 +1262,6 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
 #pragma GCC diagnostic warning "-Wdeprecated-declarations"
 
 
-//-(short) getSIGNA5
-//{
-//	NSData		*file;
-//	char		*ptr;
-//	long		i;
-//	NSString	*extension = [[filePath pathExtension] lowercaseString];
-//
-//	file = [NSData dataWithContentsOfFile: filePath];
-//	if( [file length] > 3300)
-//	{
-//		ptr = (char*) [file bytes];
-//
-////		for( i = 0 ; i < [file length]; i++)
-////		{
-////			if( *((short*)&ptr[ i]) == 512 && *((short*)&ptr[ i+2]) == 512)
-////			{
-////				NSLog(@"Found! %d", i);
-////				NSLog(@"%2.2f, %2.2f", *((float*)&ptr[ i+4]), *((float*)&ptr[ i+8]));
-////				NSLog(@"%2.2f, %2.2f", *((float*)&ptr[ i+12]), *((float*)&ptr[ i+16]));
-////				NSLog(@"%2.2f, %2.2f", *((float*)&ptr[ i+20]), *((float*)&ptr[ i+24]));
-////			}
-////		}
-//
-//		//for( i = 0 ; i < [file length]; i++)
-//		i = 3228;
-//		{
-//			if( ptr[ i] == 'I' && ptr[ i+1] == 'M' && ptr[ i+2] == 'G' && ptr[ i+3] == 'F')
-//			{
-//				NSLog(@"SIGNA 5.X File Format: %d", i);
-//
-//				name = [[NSString alloc] initWithString: [[filePath lastPathComponent] stringByDeletingPathExtension]];
-//				patientID = [[NSString alloc] initWithString:name];
-//				studyID = [[NSString alloc] initWithString:name];
-//				serieID = [[NSString alloc] initWithString:name];
-//				imageID = [[NSString alloc] initWithString:[filePath pathExtension]];
-//				study = [[NSString alloc] initWithString:@"unnamed"];
-//				serie = [[NSString alloc] initWithString:@"unnamed"];
-//				Modality = [[NSString alloc] initWithString:extension];
-//				fileType = [[NSString stringWithString:@"SIGNA5"] retain];
-//
-//				FILE *fp = fopen([ filePath UTF8String], "r");
-//
-//				fseek(fp, i, SEEK_SET);
-//
-//				int magic;
-//				fread(&magic, 4, 1, fp);
-//
-//				int offset;
-//				fread(&offset, 4, 1, fp);
-//
-//				NSLog(@"offset: %d", offset+i);
-//
-//				fread(&height, 4, 1, fp);
-//				fread(&width, 4, 1, fp);
-//				int depth;
-//				fread(&depth, 4, 1, fp);
-//
-//				NoOfFrames = 1;
-//				NoOfSeries = 1;
-//
-//				NSLog(@"%dx%dx%d", height, width, depth);
-//
-//				fclose( fp);
-//
-//				date = [[[[NSFileManager defaultManager] fileAttributesAtPath:filePath traverseLink:NO ] fileCreationDate] retain];
-//				if( date == nil) date = [[NSDate date] retain];
-//
-//				[dicomElements setObject:studyID forKey:@"studyID"];
-//				[dicomElements setObject:study forKey:@"studyDescription"];
-//				[dicomElements setObject:date forKey:@"studyDate"];
-//				[dicomElements setObject:Modality forKey:@"modality"];
-//				[dicomElements setObject:patientID forKey:@"patientID"];
-//				[dicomElements setObject:name forKey:@"patientName"];
-//				[dicomElements setObject:[self patientUID] forKey:@"patientUID"];
-//				[dicomElements setObject:serieID forKey:@"seriesID"];
-//				[dicomElements setObject:name forKey:@"seriesDescription"];
-//				[dicomElements setObject:[NSNumber numberWithInt: 0] forKey:@"seriesNumber"];
-//				[dicomElements setObject:imageID forKey:@"SOPUID"];
-//				[dicomElements setObject:[NSNumber numberWithInt:[imageID intValue]] forKey:@"imageID"];
-//				[dicomElements setObject:fileType forKey:@"fileType"];
-//
-//				if( name != nil & studyID != nil & serieID != nil & imageID != nil)
-//				{
-//					return 0;   // success
-//				}
-//			}
-//		}
-//
-//	}
-//
-//	return -1;
-//}
 
 #include "BioradHeader.h"
 
@@ -1475,7 +1308,6 @@ char* replaceBadCharacter (char* str, NSStringEncoding encoding)
             date = [[[[NSFileManager defaultManager] attributesOfItemAtPath:filePath error: nil] fileCreationDate] retain];
             if( date == nil) date = [[NSDate date] retain];
             
-            //NSLog(@"File has h x w x d %d x %d x %d",height,width,NoOfFrames);
             int bytesPerPixel=1;
             // if 8bit, byte_format==1 otherwise 16bit
             if (NSSwapLittleShortToHost(header.byte_format)!=1)
@@ -2289,7 +2121,6 @@ static unsigned long long HorosNIfTIVoxelBytes(const struct nifti_1_header *head
 - (id) init:(NSString*) f DICOMOnly:(BOOL) DICOMOnly
 {
     id returnVal = nil;
-    //	NSLog(@"Init dicomFile: %d", DICOMOnly);
     if( self = [super init])
     {
         [DicomFile setDefaults];
@@ -2628,127 +2459,6 @@ static unsigned long long HorosNIfTIVoxelBytes(const struct nifti_1_header *head
     
 }
 
-//// fake DICOM for other files with XML descriptor
-//
-//- (id) initWithXMLDescriptor: (NSString*)pathToXMLDescriptor path:(NSString*) f
-//{
-//	if( self = [super init])
-//	{	
-//		// XML Data
-//		NSLog(@"pathToXMLDescriptor : %@", pathToXMLDescriptor);
-//		NSLog(@"f : %@", f);	
-//		CFURLRef sourceURL;
-////		sourceURL = CFURLCreateWithString (	NULL, // allocator 
-////											(CFStringRef) urlToXMLDescriptor, // url string 
-////											NULL); // base url
-//											
-//		sourceURL = CFURLCreateFromFileSystemRepresentation (	NULL, // allocator 
-//																(unsigned char*) [pathToXMLDescriptor UTF8String], // string buffer
-//																[pathToXMLDescriptor length],	// buffer length
-//																FALSE); // is directory
-//		NSLog(@"sourceURL : %@", sourceURL);
-//
-//		BOOL result;
-//		SInt32 errorCode;
-//		CFDataRef xmlData;
-//		//NSLog(@"xmlData");
-//		result = CFURLCreateDataAndPropertiesFromResource (	NULL, // allocator 
-//															sourceURL, &xmlData,
-//															NULL, NULL, // properties 
-//															&errorCode);
-//		
-//		CFRelease( sourceURL);
-//		
-//		if (errorCode==0)
-//		{
-//			//NSLog(@"cfXMLTree");
-//			CFTreeRef cfXMLTree;
-//			cfXMLTree = CFXMLTreeCreateFromData (	kCFAllocatorDefault,
-//													xmlData,
-//													NULL, // datasource 
-//													kCFXMLParserSkipWhitespace,
-//													kCFXMLNodeCurrentVersion);
-//			
-//			//NSLog(@"cfXMLTree : %@", cfXMLTree);
-//			//NSLog(@"[curFile dicomElements]");
-//			dicomElements = [[NSMutableDictionary dictionary] retain];
-//
-//			//NSLog(@"dicomElements : %@", dicomElements);
-//			
-//			// 
-//			CFTreeRef attributesTree;
-//			attributesTree = CFTreeGetChildAtIndex(cfXMLTree, 0);
-//			
-//			CFRelease( cfXMLTree);
-//			
-//			//NSLog(@"attributesTree: %@", attributesTree);
-//			// NSMutableDictionary* xmlData = [[NSMutableDictionary alloc] initWithCapacity:14];
-//			NSMutableDictionary* xmlData = [NSMutableDictionary dictionaryWithContentsOfFile:pathToXMLDescriptor];
-//			
-////			for(i=0; i<14; i++)
-////			{
-////				CFTreeRef childProjectName = CFTreeGetChildAtIndex(attributesTree, i);
-////				node = CFXMLTreeGetNode(childProjectName);
-////				nodeName = CFXMLNodeGetString(node);
-////				child = CFTreeGetChildAtIndex(childProjectName, 0);
-////				node = CFXMLTreeGetNode(child);
-////				nodeValue = CFXMLNodeGetString(node);
-////				[xmlData setObject:nodeValue forKey:nodeName];
-////				//NSLog(@"nodeName : %@", nodeName);
-////				//NSLog(@"nodeValue : %@", nodeValue);
-////			}
-//		
-//			width = 4;
-//			height = 4;
-//			name = [[xmlData objectForKey:@"patientName"] retain];
-//			study = [[xmlData objectForKey:@"studyDescription"] retain];
-//			serie = [[NSString alloc] initWithString:[f lastPathComponent]];
-//			date = [[NSDate dateWithString:[xmlData objectForKey:@"studyDate"]] retain];
-//			Modality = [[xmlData objectForKey:@"modality"] retain];
-//			filePath = [f retain];
-//			fileType = [@"XMLDESCRIPTOR" retain];
-//			NoOfSeries = 1;
-//			NoOfFrames = [[xmlData objectForKey:@"numberOfImages"] intValue];
-//			
-//			studyID = [[xmlData objectForKey:@"studyID"] retain];
-//			self.serieID = [filePath lastPathComponent];
-//			imageID = [[NSString alloc] initWithString:[filePath lastPathComponent]];
-//			SOPUID = [imageID retain];
-//			patientID = [[xmlData objectForKey:@"patientID"] retain];
-//			studyIDs = [studyID retain];
-//			seriesNo = [[NSString alloc] initWithString:@"0"];
-//			imageType = nil;
-//			
-//			[dicomElements setObject:[xmlData objectForKey:@"album"] forKey:@"album"];
-//			[dicomElements setObject:name forKey:@"patientName"];
-//			[dicomElements setObject:patientID forKey:@"patientID"];
-//			[dicomElements setObject:[xmlData objectForKey:@"accessionNumber"] forKey:@"accessionNumber"];
-//			[dicomElements setObject:study forKey:@"studyDescription"];
-//			[dicomElements setObject:Modality forKey:@"modality"];
-//			[dicomElements setObject:studyID forKey:@"studyID"];
-//			[dicomElements setObject:date forKey:@"studyDate"];
-//			[dicomElements setObject:[xmlData objectForKey:@"numberOfImages"] forKey:@"numberOfImages"];
-//			//[dicomElements setObject:[xmlData objectForKey:@"DATE_ADDED"] forKey:@""];
-//			[dicomElements setObject:[xmlData objectForKey:@"referringPhysiciansName"] forKey:@"referringPhysiciansName"];
-//			[dicomElements setObject:[xmlData objectForKey:@"performingPhysiciansName"] forKey:@"performingPhysiciansName"];
-//			[dicomElements setObject:[xmlData objectForKey:@"institutionName"] forKey:@"institutionName"];
-//			[dicomElements setObject:[NSDate dateWithString:[xmlData objectForKey:@"patientBirthDate"]] forKey:@"patientBirthDate"];
-//			
-//			[dicomElements setObject:[self patientUID] forKey:@"patientUID"];
-//			[dicomElements setObject:self.serieID forKey:@"seriesID"];
-//			[dicomElements setObject:[[[NSString alloc] initWithString:[filePath lastPathComponent]] autorelease] forKey:@"seriesDescription"];
-//			[dicomElements setObject:[NSNumber numberWithInt: 0] forKey:@"seriesNumber"];
-//			[dicomElements setObject:imageID forKey:@"SOPUID"];
-//			[dicomElements setObject:[NSNumber numberWithInt:[imageID intValue]] forKey:@"imageID"];
-//			[dicomElements setObject:fileType forKey:@"fileType"];
-//			[dicomElements setObject:f forKey:@"filePath"];
-//			
-//			NSLog(@"dicomElements : %@", dicomElements);
-//		}
-//	}
-//	
-//	return self;
-//}
 
 - (BOOL) commentsFromDICOMFiles
 {
@@ -2795,12 +2505,6 @@ static unsigned long long HorosNIfTIVoxelBytes(const struct nifti_1_header *head
     return SEPARATECARDIAC4D;
 }
 
-//- (BOOL) checkForLAVIM
-//{
-//	if( CHECKFORLAVIM == YES) return YES;
-//	
-//	return NO;
-//}
 
 - (int)commentsGroup
 {

@@ -87,7 +87,6 @@
 -(void)conditionallySetObject:(id)obj forKey:(id)key {
 	if (obj)
 		[self setObject:obj forKey:key];
-//	else NSLog(@"Not setting %@", key);
 }
 
 @end
@@ -98,37 +97,6 @@
 
 @implementation DicomDatabase (Scan)
 
-/*-(NSString*)describeObject:(DcmObject*)obj {
-	const DcmTagKey& key = obj->getTag();
-	DcmTag dcmtag(key);
-	DcmVR dcmev(obj->ident());
-	
-	return [NSString stringWithFormat:@"%s %s %s %s", dcmev.getVRName(), key.toString().c_str(), dcmtag.getTagName(), dcmtag.getVRName()];
-}
-
--(NSArray*)describeElementValues:(DcmElement*)obj {
-	NSMutableArray* v = [NSMutableArray array];
-	
-	unsigned int vm = obj->getVM();
-	if (vm)
-		for (int i = 0; i < vm; ++i) {
-			OFString value;
-			if (((DcmByteString*)obj)->getOFString(value,i).good())
-				[v addObject:[NSString stringWithFormat:@"[%d] %s", i, value.c_str()]];
-		}
-	
-	return v;
-}*/
-
-/*-(_DicomDatabaseScanDcmElement*)_dcmElementForKey:(NSString*)key inContext:(NSArray*)context {
-	for (NSInteger i = (long)context.count-1; i >= 0; --i) {
-		NSDictionary* elements = [context objectAtIndex:i];
-		_DicomDatabaseScanDcmElement* ddsde = [elements objectForKey:key];
-		if (ddsde) return ddsde;
-	}
-	
-	return nil;
-}*/
 
 static NSString* _dcmElementKey(Uint16 group, Uint16 element) {
 	return [NSString stringWithFormat:@"%04X,%04X", group, element];
@@ -198,20 +166,14 @@ static NSString* _dcmElementKey(DcmElement* element) {
 }
 
 -(NSMutableArray*)_itemsInRecord:(DcmDirectoryRecord*)record context:(NSMutableArray*)context basePath:(NSString*)basepath {
-//	NSString* tabs = [NSString stringByRepeatingString:@" " times:context.count*4];
 	NSMutableArray* items = [NSMutableArray array];
 	NSMutableDictionary* elements = [NSMutableDictionary dictionary];
 	[context addObject:elements];
 	
-	//NSLog(@"%@Record %@", tabs, [self describeObject:record]);
 	
 	for (unsigned int i = 0; i < record->card(); ++i) {
 		DcmElement* element = record->getElement(i);
 		
-		/*NSLog(@"%@Element %@", tabs, [self describeObject:element]);
-		NSArray* values = [self describeElementValues:element];
-		for (NSString* s in values)
-			NSLog(@"%@%@", tabs, s);*/
 		
 		[elements setObject:[_DicomDatabaseScanDcmElement elementWithElement:element] forKey:_dcmElementKey(element)];
 	}
@@ -233,7 +195,6 @@ static NSString* _dcmElementKey(DcmElement* element) {
             for (NSDictionary* e in context)
                 [elements addEntriesFromDictionary:e];
             
-            //NSLog(@"\n\n%@\nDICOMDIR info:%@", path, elements);
             
             // Both MPEG-2 syntaxes, Main Level and High Level: the viewer decodes
             // neither, and only the first was being recognised.
@@ -330,21 +291,6 @@ static NSString* _dcmElementKey(DcmElement* element) {
                     [item setObject:im forKey:@"NSImageThumbnail"];
             }
             
-    /*		[item setObject:path forKey:@"date"];
-            [item setObject:path forKey:@"seriesDICOMUID"];
-            [item setObject:path forKey:@"protocolName"];
-            [item setObject:path forKey:@"numberOfFrames"];
-            [item setObject:path forKey:@"SOPUID* ()"];
-            [item setObject:path forKey:@"imageID* ()"];
-            [item setObject:path forKey:@"sliceLocation"];
-            [item setObject:path forKey:@"numberOfSeries"];
-            [item setObject:path forKey:@"numberOfROIs"];
-            [item setObject:path forKey:@"commentsAutoFill"];
-            [item setObject:path forKey:@"seriesComments"];
-            [item setObject:path forKey:@"studyComments"];
-            [item setObject:path forKey:@"stateText"];
-            [item setObject:path forKey:@"keyFrames"];
-            [item setObject:path forKey:@"album"];*/
             
             [elements removeObjectForKey: @"0004,1500"]; // ReferencedFileID = IMAGES\IM000000
             [elements removeObjectForKey: @"0004,1400"]; // OffsetOfTheNextDirectoryRecord = 0
@@ -357,7 +303,6 @@ static NSString* _dcmElementKey(DcmElement* element) {
             [elements removeObjectForKey: @"0859,0010"]; // PrivateCreator = ETIAM DICOMDIR
             [elements removeObjectForKey: @"0859,1040"]; // Unknown Tag & Data = 13156912
             
-            //if (elements.count) NSLog(@"\nUnused DICOMDIR info for %@: %@", path, elements);
             if (elements.count) [item setObject:elements forKey:@"DEBUG"];
 
             [items addObject:item];
@@ -898,7 +843,6 @@ static NSString* _dcmElementKey(DcmElement* element) {
             NSLog( @"(scanAtPath): %@ (%@)", timing.summary, [timing perInstance: dicomImages.count]);
         }
         
-    //    if (![[[BrowserController currentBrowser] sourceForDatabase:self] isBeingEjected]) {
         if (!thread.isCancelled)
         {
             thread.status = NSLocalizedString(@"Generating series thumbnails...", nil);
@@ -955,7 +899,6 @@ static NSString* _dcmElementKey(DcmElement* element) {
 }
 
 -(void)dealloc {
-	//delete _element;
 	[super dealloc];
 }
 
@@ -965,19 +908,6 @@ static NSString* _dcmElementKey(DcmElement* element) {
 
 -(NSString*)description {
 	NSMutableString* str = [NSMutableString stringWithFormat:@"%@ = %@", self.name, self.stringValue];
-/*	unsigned int vm = _element->getVM();
-	if (vm > 1)
-		for (unsigned int i = 0; i < vm; ++i) {
-			OFString ofstr;
-			if (_element->getOFString(ofstr,i).good())
-				[str appendFormat:@"[%d][%s] ", i, ofstr.c_str()];
-		}
-	else {
-		OFString ofstr;
-		if (_element->getOFString(ofstr,0).good())
-			[str appendFormat:@"%s", ofstr.c_str()];
-	}
-	*/
 	return str;
 }
 

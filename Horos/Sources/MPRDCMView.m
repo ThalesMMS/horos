@@ -478,6 +478,11 @@ unsigned int minimumStep;
                 }
             }
             
+            // A new plane replaces the cubic display plane, or drops it (#702);
+            // moving the centre keeps the image, and so its display plane.
+            if( moveCenter == NO)
+                [self horosMPRAttachDisplayPlaneTo: pix];
+            
             if( [pix pwidth] == w && [pix pheight] == h && isRGB == [pix isRGB])
             {
                 if( imagePtr != [pix fImage])

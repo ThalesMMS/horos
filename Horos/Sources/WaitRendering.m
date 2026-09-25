@@ -83,18 +83,7 @@
 	
 	while( stop == NO)
 	{
-//		[current lockFocus];
-//		[current setStringValue:[NSString stringWithFormat:@"%0.0f", (float) ([NSDate timeIntervalSinceReferenceDate] - starttime)]];
-//		[current display];
-//		[current unlockFocus];
-//		NSLog(@"go %0.0f s", (float) ([NSDate timeIntervalSinceReferenceDate] - starttime));
-//		[NSThread sleepForTimeInterval:0.2];
-
-	//	[NSApp runModalSession:session];
 	}
-//	lasttime = [NSDate timeIntervalSinceReferenceDate] - starttime;
-//	[NSApp abortModal];
-//	[NSApp endModalSession:session];
 	
     [pool release];
 }
@@ -281,6 +270,5 @@
 	[cancelDelegate abort: self];
 }
 
-//- (NSProgressIndicator*) progress { return progress;}
 
 @end

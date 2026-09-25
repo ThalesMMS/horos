@@ -191,8 +191,6 @@ static BOOL protectedReentryWindowDidResize = NO;
 				}
 				
 				// Add the current screen ONLY
-	//			e = [[NSScreen screens] objectEnumerator];
-	//			while (screen = [e nextObject])
 				{
 					NSRect frame = [AppController usefullRectForScreen: [[self window] screen]];
                     
@@ -398,8 +396,6 @@ static BOOL protectedReentryWindowDidResize = NO;
 			}
 			
 			// Add the current screen ONLY
-	//		e = [[NSScreen screens] objectEnumerator];
-	//		while (screen = [e nextObject])
 			{
 				NSRect frame = [AppController usefullRectForScreen: [[self window] screen]];
                 
@@ -493,8 +489,6 @@ static BOOL protectedReentryWindowDidResize = NO;
                             if( [self isKindOfClass: [ViewerController class]])
                                 [theWindow.windowController windowDidChangeScreen:[NSNotification notificationWithName:NSWindowDidChangeScreenNotification object:theWindow]];
                             
-		//					[window makeKeyAndOrderFront: self];
-		//					[theWindow makeKeyAndOrderFront: self];
                             
 							return;
 						}

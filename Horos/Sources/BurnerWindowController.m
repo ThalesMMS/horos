@@ -245,11 +245,9 @@
     BOOL isDir;
 
     NSMutableArray *fileNames = [[[NSMutableArray alloc] init] autorelease];
-	//NSLog(@"Extract");
     for (fname in filenames)
 	{ 
 		NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
-		//NSLog(@"fname %@", fname);
         NSFileManager *manager = [NSFileManager defaultManager];
         if( [manager fileExistsAtPath:fname isDirectory:&isDir] && isDir)
 		{
@@ -561,8 +559,6 @@
 	if( title)
 	{
 		[cdName release];
-		//if( [title length] > 8)
-		//	title = [title substringToIndex:8];
 		cdName = [[[title uppercaseString] filenameString] retain];
 		[nameField setStringValue: cdName];
 	}
@@ -839,7 +835,6 @@
 
 - (void)setup:(id)sender
 {
-	//NSLog(@"Set up burn");
 	NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
 	runBurnAnimation = NO;
 	[burnButton setEnabled:NO];
@@ -999,7 +994,6 @@
         
         NSString *file;
         NSString *burnFolder = [self folderToBurn];
-        //NSString *dicomdirPath = [NSString stringWithFormat:@"%@/DICOMDIR",burnFolder];
         NSString *subFolder = [NSString stringWithFormat:@"%@/DICOM",burnFolder];
         NSFileManager *manager = [NSFileManager defaultManager];
         int i = 0;
@@ -1011,14 +1005,7 @@
         if( ![manager fileExistsAtPath:subFolder])
             [manager createDirectoryAtPath:subFolder withIntermediateDirectories:YES attributes:nil error:NULL];
         
-        /*
-        
-        FAUZE - 24-Mar-2018: Not clear why the statement below is needed. Causing abortion of thread because DICOMDIR resource not present
-         
-        if( ![manager fileExistsAtPath:dicomdirPath]);
-        [manager copyItemAtPath:[[NSBundle mainBundle] pathForResource:@"DICOMDIR" ofType:nil] toPath:dicomdirPath error:NULL];
-        
-        */
+        // The bundled DICOMDIR template is absent; do not copy it.
             
         NSMutableArray *newFiles = [NSMutableArray array];
         NSMutableArray *compressedArray = [NSMutableArray array];

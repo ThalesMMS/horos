@@ -118,6 +118,12 @@
                                                 <action selector="addSmartAlbum:" target="898" id="14605"/>
                                             </connections>
                                         </menuItem>
+                                        <menuItem title="Create Album from Patient List Image..." id="p7L-03-alb">
+                                            <modifierMask key="keyEquivalentModifierMask"/>
+                                            <connections>
+                                                <action selector="createAlbumFromPatientListImage:" target="898" id="p7L-03-act"/>
+                                            </connections>
+                                        </menuItem>
                                         <menuItem title="Delete selected album" id="14600">
                                             <modifierMask key="keyEquivalentModifierMask"/>
                                             <connections>

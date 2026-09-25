@@ -66,7 +66,6 @@
 		[buttonCell  setControlSize:NSMiniControlSize];
 		[buttonCell setState:NSOnState];
 		
-		//textCell = [[NSTextFieldCell alloc] initTextCell:@""];
 		[self setBezeled:YES];
 		[self setBezelStyle:NSTextFieldSquareBezel];
 		[self setDrawsBackground:YES];
@@ -87,18 +86,12 @@
 
 
 - (void)drawInteriorWithFrame:(NSRect)cellFrame inView:(NSView *)controlView{
-//	NSRect buttonFrame = NSMakeRect(cellFrame.origin.x, cellFrame.origin.y, cellFrame.size.width/2- 10 , cellFrame.size.height);
-//	NSRect textFrame = NSMakeRect(cellFrame.size.width/2 + 10, cellFrame.origin.y, cellFrame.size.width/2 - 10, cellFrame.size.height);
-//	NSLog(@"draw Interior x:%f y:%f, width %f height %f", cellFrame.origin.x,cellFrame.origin.y, cellFrame.size.width, cellFrame.size.height);
-	//NSLog(@"drawInteriorWithFrame:");
 	[super drawInteriorWithFrame:cellFrame inView:controlView];
-//	[textCell drawInteriorWithFrame:textFrame inView:controlView];
 }
 
 - (void)drawWithFrame:(NSRect)cellFrame inView:(NSView *)controlView{
 	NSRect textFrame = NSMakeRect(cellFrame.origin.x + cellFrame.size.width - 120, cellFrame.origin.y, 120 , cellFrame.size.height);
 	NSLog(@"drawWithFrame:");
-	//[super drawWithFrame:buttonFrame inView:controlView];
 	[textCell drawWithFrame:textFrame inView:controlView];
 }
 

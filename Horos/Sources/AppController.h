@@ -55,8 +55,6 @@
 
 #include "options.h"
 
-//@class ThreadPoolServer;
-//@class ThreadPerConnectionServer;
 
 //#import "IChatTheatreDelegate.h"
 
@@ -214,9 +212,6 @@ extern AppController* OsiriX;
 - (IBAction) closeAllViewers: (id) sender;  /**< Close All Viewers */
 - (void) checkAllWindowsAreVisible:(id) sender;
 - (void) checkAllWindowsAreVisible:(id) sender makeKey: (BOOL) makeKey;
-//- (IBAction)toggleActivityWindow:(id)sender;
-
-
 //===============HELP==========================
 - (IBAction) openHorosWebPage: (id) sender;
 - (IBAction) help: (id) sender;
@@ -274,9 +269,6 @@ extern AppController* OsiriX;
 #pragma mark notification
 - (void) notificationTitle:(NSString*) title description:(NSString*) description name:(NSString*) name;
 
-//#pragma mark-
-//#pragma mark display setters and getters
-//- (IBAction) saveLayout: (id)sender;
 
 #pragma mark-
 #pragma mark 12 Bit Display support.

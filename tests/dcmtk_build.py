@@ -4,7 +4,12 @@ import os
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIGURATION = os.environ.get('HOROS_TEST_CONFIGURATION', 'Debug')
-BUILD = ROOT / 'build/Build/Intermediates.noindex/Horos.build' / CONFIGURATION
+# script/build_and_run.sh passes -derivedDataPath build, which puts the
+# intermediates at build/Intermediates.noindex; older layouts had build/Build.
+BUILD = next((base / 'Intermediates.noindex/Horos.build' / CONFIGURATION
+              for base in (ROOT / 'build', ROOT / 'build/Build')
+              if (base / 'Intermediates.noindex/Horos.build' / CONFIGURATION).is_dir()),
+             ROOT / 'build/Intermediates.noindex/Horos.build' / CONFIGURATION)
 INSTALL = BUILD / 'DCMTK.build/Install'
 
 

@@ -97,6 +97,7 @@
 + (NSString*) displayedModalitiesForSeries: (NSArray*) seriesModalities;
 - (NSArray*) imageSeries;
 - (NSArray*) imageSeriesContainingPixels:(BOOL) pixels;
+- (NSUInteger) numberOfImageSeries;
 - (NSArray*) keyObjectSeries;
 - (NSArray*) keyObjects;
 - (NSArray*) presentationStateSeries;

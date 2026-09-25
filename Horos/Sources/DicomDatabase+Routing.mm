@@ -122,7 +122,6 @@
 		} @finally {
 			[_routingLock unlock];
 		}
-	//else NSLog(@"Warning: couldn't initiate routing"); // who cares
 }
 
 // A rule that cannot say where a study goes. Reported the way a failed send is,
@@ -648,27 +647,22 @@
                          [routingRule valueForKey:@"toTime"])
                 {
                     NSDateFormatter *dateFormatter = [[[NSDateFormatter alloc] init] autorelease];
-                    //[dateFormatter setDefaultDate:[NSDate date]];
                     [dateFormatter setDateFormat: @"EEEE, dd MMMM yyyy HH:mm:ss zzzzzzzzz"];
                     
                     NSString* fromTimeString = [routingRule valueForKey:@"fromTime"];
-                    //NSLog(@"fromTimeString = %@", fromTimeString);
                     NSDate* fromTime = [dateFormatter dateFromString:fromTimeString];
                     //  throwing out the year information (in fact, it is coming with 31 Dec 1969...)
                     [dateFormatter setDateFormat: @"HH:mm:ss"];
                     NSString *fromTimeString_justHHmm = [dateFormatter stringFromDate:fromTime];
-                    //NSLog(@"fromTimeString_justHHmm = %@", fromTimeString_justHHmm);
                     fromTime = [dateFormatter dateFromString:fromTimeString_justHHmm];
                     
                     [dateFormatter setDateFormat: @"EEEE, dd MMMM yyyy HH:mm:ss zzzzzzzzz"];
                     
                     NSString* toTimeString = [routingRule valueForKey:@"toTime"];
-                    //NSLog(@"toTimeString = %@", toTimeString);
                     NSDate* toTime = [dateFormatter dateFromString:toTimeString];
                     //  throwing out the year information (in fact, it is coming with 31 Dec 1969...)
                     [dateFormatter setDateFormat: @"HH:mm:ss"];
                     NSString *toTimeString_justHHmm = [dateFormatter stringFromDate:toTime];
-                    //NSLog(@"toTimeString_justHHmm = %@", toTimeString_justHHmm);
                     toTime = [dateFormatter dateFromString:toTimeString_justHHmm];
                     
                     NSCalendar *calendar = [NSCalendar currentCalendar];
@@ -677,7 +671,6 @@
                     NSInteger currentMinute = [components minute];
                     NSInteger currentSecond = [components second];
                     NSDate* currentTime = [dateFormatter dateFromString:[NSString stringWithFormat:@"%2ld:%2ld:%2ld",currentHour,currentMinute,currentSecond]];
-                    //NSLog(@"currentTime = %@", [dateFormatter stringFromDate:currentTime]);
                     
                     int64_t delayInSeconds = 0;
 
@@ -691,7 +684,6 @@
                     if ([currentTime timeIntervalSinceDate:fromTime] <= 0)
                     {
                         delayInSeconds = fabs([fromTime timeIntervalSinceDate:currentTime]);
-                        //NSLog(@"We are ahead of time. delayInSeconds = %lld", delayInSeconds);
                     }
                     else
                     {
@@ -704,7 +696,6 @@
                         {
                             //Add 1 day
                             delayInSeconds = (long long) fabs([fromTime timeIntervalSinceDate:currentTime]) + 60*60*24*1;
-                            //NSLog(@"Time passed. Tomorrow we autoroute. delayInSeconds = %lld", delayInSeconds);
                         }
                     }
                     

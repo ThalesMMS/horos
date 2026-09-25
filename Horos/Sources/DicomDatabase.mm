@@ -377,9 +377,6 @@ static DicomDatabase* activeLocalDatabase = nil;
 @synthesize hasPotentiallySlowDataAccess = _hasPotentiallySlowDataAccess;
 @synthesize compressQueue = _compressQueue, decompressQueue = _decompressQueue, compressDecompressThread = _compressDecompressThread;
 
-/*- (void)setIsReadOnly:(BOOL)isReadOnly {
- _isReadOnly = isReadOnly;
- }*/
 
 -(DataNodeIdentifier*)dataNodeIdentifier {
     return [LocalDatabaseNodeIdentifier localDatabaseNodeIdentifierWithPath:self.baseDirPath];
@@ -406,12 +403,6 @@ static DicomDatabase* activeLocalDatabase = nil;
     return managedObjectModel;
 }
 
-/*-(NSMutableDictionary*)persistentStoreCoordinatorsDictionary {
-	static NSMutableDictionary* dict = NULL;
-	if (!dict)
- dict = [[NSMutableDictionary alloc] initWithCapacity:4];
-	return dict;
- }*/
 
 -(id)initWithPath:(NSString*)p context:(NSManagedObjectContext*)c mainDatabase:(N2ManagedDatabase*)mainDbReference // reminder: context may be nil (assigned in -[N2ManagedDatabase initWithPath:] after calling this method)
 {
@@ -784,9 +775,6 @@ NSString* const DicomDatabaseLogEntryEntityName = @"LogEntry";
     return [basePath stringByAppendingPathComponent:SqlFileName];
 }
 
-/*-(NSString*)sqlFilePath {
-	return [DicomDatabase sqlFilePathForBasePath:self.baseDirPath];
- }*/
 
 -(NSString*)dataDirPath {
     return [[self.dataBaseDirPath stringByAppendingPathComponent:@"DATABASE.noindex"] stringByResolvingSymlinksAndAliases];
@@ -1454,7 +1442,6 @@ NSString* const DicomDatabaseLogEntryEntityName = @"LogEntry";
         [queue waitUntilAllOperationsAreFinished];
         [queue release];
         [_processFilesLock unlock];
-        //		[thread popLevel];
     }
     if (!succeeded && error)
         *error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSFileWriteUnknownError userInfo:@{
@@ -1561,7 +1548,6 @@ static NSString *availablePathInDirectory( NSString *directory, NSString *name);
 {
     NSThread* thread = [NSThread currentThread];
     
-    //#define RANDOMFILES
 #ifdef RANDOMFILES
     NSMutableArray* randomArray = [NSMutableArray array];
     for( int i = 0; i < 50000; i++)
@@ -1581,7 +1567,6 @@ static NSString *availablePathInDirectory( NSString *directory, NSString *name);
     NSString* errorsDirPath = self.errorsDirPath;
     NSString* dataDirPath = self.dataDirPath;
     NSString* reportsDirPath = self.reportsDirPath;
-    //NSString* tempDirPath = self.tempDirPath;
     
     [thread enterOperation];
     thread.status = [NSString stringWithFormat:NSLocalizedString(@"Scanning %@", nil), N2LocalizedSingularPluralCount(paths.count, NSLocalizedString(@"file", nil), NSLocalizedString(@"files", nil))];
@@ -1808,8 +1793,6 @@ static NSString *availablePathInDirectory( NSString *directory, NSString *name);
         
         [thread enterOperationIgnoringLowerLevels];
         thread.status = [NSString stringWithFormat:NSLocalizedString(@"Adding %@", nil), N2LocalizedSingularPluralCount(dicomFilesArray.count, NSLocalizedString(@"file", nil), NSLocalizedString(@"files", nil))];
-        //        NSLog(@"before: %X", self.managedObjectContext);
-        //      NSArray* addedImagesArray = [self addFilesInDictionaries:dicomFilesArray postNotifications:postNotifications rereadExistingItems:rereadExistingItems generatedByOsiriX:generatedByOsiriX];
         
         NSArray* objectIDs = [self addFilesDescribedInDictionaries:dicomFilesArray
                                                  postNotifications:postNotifications
@@ -1821,7 +1804,7 @@ static NSString *availablePathInDirectory( NSString *directory, NSString *name);
         [thread exitOperation];
         
         
-        //	[[NSFileManager defaultManager] removeItemAtPath: @"/tmp/dicomsr_osirix" error:NULL]; // nooooooo because other threads may be using it
+        // Other threads may still be using the temporary DICOM SR directory.
         
         if (addFailed)
         {
@@ -2046,7 +2029,6 @@ static void HorosAssociateCloudReports(NSArray *dicomFilesArray, NSArray *studie
     
     BOOL newStudy = NO;
     
-    //  NSLog(@"Add: %@", dicomFilesArray);
     
     NSAutoreleasePool* pool = [[NSAutoreleasePool alloc] init]; // It has to be done after the NSMutableArray autorelease: we will return it.
     
@@ -2095,7 +2077,6 @@ static void HorosAssociateCloudReports(NSArray *dicomFilesArray, NSArray *studie
                 @try
                 {
                     NSMutableDictionary *curDict = [dicomFilesArray objectAtIndex:i];
-                    //				NSLog(@"curDict: %@", curDict);
                     
                     newFile = [curDict objectForKey:@"filePath"];
                     
@@ -2167,7 +2148,6 @@ static void HorosAssociateCloudReports(NSArray *dicomFilesArray, NSArray *studie
                             if( supportedSOPClass == NO)
                             {
                                 NSLog( @"unsupported DICOM SOP CLASS (%@)-> for the file : %@", SOPClassUID, newFile);
-                                //                                curDict = nil;
                             }
                         }
                     }
@@ -2175,7 +2155,6 @@ static void HorosAssociateCloudReports(NSArray *dicomFilesArray, NSArray *studie
                     if ([curDict objectForKey:@"SOPClassUID"] == nil && [[curDict objectForKey: @"fileType"] hasPrefix:@"DICOM"] == YES)
                     {
                         NSLog(@"no DICOM SOP CLASS -> for the file: %@", newFile);
-                        //                        curDict = nil;
                     }
                     
                     if (curDict != nil)
@@ -2670,7 +2649,6 @@ static void HorosAssociateCloudReports(NSArray *dicomFilesArray, NSArray *studie
                                         
                                         if (reportUpToDate == NO)
                                         {
-                                            //                                            NSString *reportURL = nil; // <- For an empty DICOM SR File
                                             
                                             DicomImage *reportSR = [study reportImage];
                                             
@@ -2714,8 +2692,6 @@ static void HorosAssociateCloudReports(NSArray *dicomFilesArray, NSArray *studie
                                     
                                     [addedImagesForImageCreator addObject:image];
                                     
-                                    //								if(seriesTable && [addedSeries containsObject: seriesTable] == NO)
-                                    //									[addedSeries addObject: seriesTable];
                                     
                                     if (DICOMSR == NO && [curDict valueForKey:@"album"] !=nil)
                                     {
@@ -2730,9 +2706,6 @@ static void HorosAssociateCloudReports(NSArray *dicomFilesArray, NSArray *studie
                                         
                                         if (album == nil)
                                         {
-                                            //NSString *name = [curDict valueForKey:@"album"];
-                                            //album = [NSEntityDescription insertNewObjectForEntityForName:@"Album" inManagedObjectContext: context];
-                                            //[album setValue:name forKey:@"name"];
                                             
                                             for (album in albumArray)
                                             {
@@ -3360,7 +3333,6 @@ static NSString *availablePathInDirectory( NSString *directory, NSString *name)
         if (maxNumberOfFiles > 30000) maxNumberOfFiles = 30000;
         
         NSString *pathname;
-        // NSDirectoryEnumerator *enumer = [NSFileManager.defaultManager enumeratorAtPath:self.incomingDirPath];
         
         NSTimeInterval startTime = [NSDate timeIntervalSinceReferenceDate];
         NSTimeInterval start = startTime;
@@ -3395,11 +3367,6 @@ static NSString *availablePathInDirectory( NSString *directory, NSString *name)
                 continue;
             }
             
-            //            if ([[lastPathComponent uppercaseString] hasSuffix:@".APP"]) // We don't want to scan MacOS applications
-            //			{
-            //				[[NSFileManager defaultManager] removeItemAtPath: srcPath error: nil];
-            //				continue;
-            //			}
             
             if ([lastPathComponent length] > 0 && [lastPathComponent characterAtIndex: 0] == '.')
             {
@@ -3443,8 +3410,7 @@ static NSString *availablePathInDirectory( NSString *directory, NSString *name)
                 activityFeedbackShown = YES;
             }
             
-            // Is it a real file? Is it writable (transfer done)?
-            //					if ([[NSFileManager defaultManager] isWritableFileAtPath:srcPath] == YES)	<- Problems with CD : read-only files, but valid files
+            // Imported files may be read-only (for example, on a CD); do not require writability.
             {
                 NSDictionary *fattrs = [enumer fileAttributes];	//[[NSFileManager defaultManager] fileAttributesAtPath:srcPath traverseLink: YES];
                 
@@ -3823,8 +3789,6 @@ static NSString *availablePathInDirectory( NSString *directory, NSString *name)
         
         if ([filesArray count] > 0)
         {
-            //				if ( [[NSUserDefaults standardUserDefaults] boolForKey:@"ANONYMIZELISTENER"] == YES)
-            //					[self listenerAnonymizeFiles: filesArray];
             
             if ([[PluginManager preProcessPlugins] count])
             {
@@ -3905,7 +3869,6 @@ static NSString *availablePathInDirectory( NSString *directory, NSString *name)
     {
         if (listenerCompressionSettings == 1 || listenerCompressionSettings == 0) // decompress, listenerCompressionSettings == 0 for zip support!
         {
-            //            [self performSelectorInBackground:@selector(_threadDecompressToIncoming:) withObject:compressedPathArray];
             
             @synchronized (_decompressQueue) {
                 [_decompressQueue addObjectsFromArray:compressedPathArray];
@@ -3913,11 +3876,9 @@ static NSString *availablePathInDirectory( NSString *directory, NSString *name)
             
             [self kickstartCompressDecompress];
             
-            //            [self initiateDecompressFilesAtPaths: compressedPathArray intoDirAtPath: self.incomingDirPath];
         }
         else if (listenerCompressionSettings == 2) // compress
         {
-            //            [self performSelectorInBackground:@selector(_threadCompressToIncoming:) withObject:compressedPathArray];
             
             @synchronized (_decompressQueue) {
                 [_compressQueue addObjectsFromArray:compressedPathArray];
@@ -3925,7 +3886,6 @@ static NSString *availablePathInDirectory( NSString *directory, NSString *name)
             
             [self kickstartCompressDecompress];
             
-            //            [self initiateCompressFilesAtPaths: compressedPathArray intoDirAtPath: self.incomingDirPath];
         }
     }
 #endif
@@ -3999,14 +3959,22 @@ static NSString *availablePathInDirectory( NSString *directory, NSString *name)
                                 @try { return [worker uniquePathForNewDataFileWithExtension:@"dcm"]; }
                                 @catch (NSException *exception) { return nil; }
                             }
-                            importFile:^NSInteger(NSString *path) {
+                            importFiles:^NSDictionary<NSString*, NSNumber*> *(NSArray<NSString*> *paths) {
+                                // One commit for the whole batch; the image records say which
+                                // copy each came from, so every file still gets its verdict (#694).
+                                NSMutableDictionary *counts = [NSMutableDictionary dictionary];
                                 @try {
-                                    return [worker addFilesAtPaths:@[path] postNotifications:YES dicomOnly:YES
-                                              rereadExistingItems:NO generatedByOsiriX:NO].count;
+                                    NSArray *objectIDs = [worker addFilesAtPaths:paths postNotifications:YES dicomOnly:YES
+                                                             rereadExistingItems:NO generatedByOsiriX:NO];
+                                    for (NSManagedObjectID *objectID in objectIDs) {
+                                        DicomImage *image = (DicomImage*) [worker.managedObjectContext existingObjectWithID:objectID error:NULL];
+                                        NSString *path = [image completePath];
+                                        if (path) counts[path] = @([counts[path] integerValue] + 1);
+                                    }
                                 } @catch (NSException *exception) {
                                     N2LogExceptionWithStackTrace(exception);
-                                    return 0;
                                 }
+                                return counts;
                             }];
                         if (verdict.length)
                         {
@@ -4029,35 +3997,6 @@ static NSString *availablePathInDirectory( NSString *directory, NSString *name)
     }
 }
 
-//-(void)_threadDecompressToIncoming:(NSArray*)compressedPathArray {
-//    NSAutoreleasePool* pool = [[NSAutoreleasePool alloc] init];
-//    @try {
-//        NSThread* thread = [NSThread currentThread];
-//        thread.name = NSLocalizedString(@"DICOM Decompression...", nil);
-//        thread.status = [NSString stringWithFormat:NSLocalizedString(@"Decompressing %d %@", nil), compressedPathArray.count, compressedPathArray.count == 1? NSLocalizedString(@"file", nil) : NSLocalizedString(@"files", nil)];
-//        [ThreadsManager.defaultManager addThreadAndStart:thread];
-//        [self decompressFilesAtPaths:compressedPathArray intoDirAtPath:self.incomingDirPath];
-//    } @catch (NSException* e) {
-//        N2LogExceptionWithStackTrace(e);
-//    } @finally {
-//        [pool release];
-//    }
-//}
-
-//-(void)_threadCompressToIncoming:(NSArray*)compressedPathArray {
-//    NSAutoreleasePool* pool = [[NSAutoreleasePool alloc] init];
-//    @try {
-//        NSThread* thread = [NSThread currentThread];
-//        thread.name = NSLocalizedString(@"DICOM Compression...", nil);
-//        thread.status = [NSString stringWithFormat:NSLocalizedString(@"Compressing %d %@", nil), compressedPathArray.count, compressedPathArray.count == 1? NSLocalizedString(@"file", nil) : NSLocalizedString(@"files", nil)];
-//        [ThreadsManager.defaultManager addThreadAndStart:thread];
-//        [self compressFilesAtPaths:compressedPathArray intoDirAtPath:self.incomingDirPath];
-//    } @catch (NSException* e) {
-//        N2LogExceptionWithStackTrace(e);
-//    } @finally {
-//        [pool release];
-//    }
-//}
 
 -(void)importFilesFromIncomingDirThread
 {
@@ -4164,7 +4103,7 @@ static NSString *availablePathInDirectory( NSString *directory, NSString *name)
             @try {
                 [[AppController sharedAppController] notificationTitle:NSLocalizedString(@"Import Paused", nil)
                     description:NSLocalizedString(@"The database volume is full or unavailable. Incoming files are preserved. Free space or reconnect the volume; Horos will retry automatically.", nil)
-                    name:@"newfiles"];
+                    name:@"importpaused"];
             } @catch (NSException *e) {
                 // Notification availability must not prevent import retries.
                 N2LogExceptionWithStackTrace(e);
@@ -4759,11 +4698,6 @@ static NSString *availablePathInDirectory( NSString *directory, NSString *name)
                     if( uid)
                         study.patientUID = uid;
                     
-                    //				DicomImage* o = [[[[study valueForKey:@"series"] anyObject] valueForKey:@"images"] anyObject];
-                    //				DicomFile* dcm = [[DicomFile alloc] init:o.completePath];
-                    //				if (dcm && [dcm elementForKey:@"patientUID"])
-                    //					study.patientUID = [dcm elementForKey:@"patientUID"];
-                    //				[dcm release];
                     
                 } @catch (NSException* e) {
                     N2LogExceptionWithStackTrace(e);
@@ -5026,8 +4960,6 @@ static NSString *availablePathInDirectory( NSString *directory, NSString *name)
 }
 
 -(void)dumpSqlFile {
-    //WaitRendering *splash = [[WaitRendering alloc] init:NSLocalizedString(@"Dumping SQL Index file...", nil)]; // TODO: status
-    //[splash showWindow:self];
     
     @try {
         NSString* repairedDBFile = [self.sqlFilePath stringByAppendingPathExtension:@"dump"];
@@ -5078,8 +5010,6 @@ static NSString *availablePathInDirectory( NSString *directory, NSString *name)
         N2LogExceptionWithStackTrace(e);
     }
     
-    //	[splash close];
-    //	[splash autorelease];
 }
 
 -(void)rebuildSqlFile {
@@ -5108,17 +5038,14 @@ static NSString *availablePathInDirectory( NSString *directory, NSString *name)
     NSString *templateFile;
     
     templateFile = [htmlTemplatesDirectory stringByAppendingPathComponent:@"QTExportPatientsTemplate.html"];
-    //	NSLog( @"%@", templateFile);
     if ([[NSFileManager defaultManager] fileExistsAtPath:templateFile] == NO)
         [[NSFileManager defaultManager] copyItemAtPath:[[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"QTExportPatientsTemplate.html"] toPath:templateFile error:NULL];
     
     templateFile = [htmlTemplatesDirectory stringByAppendingPathComponent:@"QTExportStudiesTemplate.html"];
-    //	NSLog( @"%@", templateFile);
     if ([[NSFileManager defaultManager] fileExistsAtPath:templateFile] == NO)
         [[NSFileManager defaultManager] copyItemAtPath:[[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"QTExportStudiesTemplate.html"] toPath:templateFile error:NULL];
     
     templateFile = [htmlTemplatesDirectory stringByAppendingPathComponent:@"QTExportSeriesTemplate.html"];
-    //	NSLog( @"%@", templateFile);
     if ([[NSFileManager defaultManager] fileExistsAtPath:templateFile] == NO)
         [[NSFileManager defaultManager] copyItemAtPath:[[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"QTExportSeriesTemplate.html"] toPath:templateFile error:NULL];
     

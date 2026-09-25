@@ -374,18 +374,6 @@ static void
 subOpCallback(void * /*subOpCallbackData*/ ,
         T_ASC_Network *aNet, T_ASC_Association **subAssoc)
 {
-//	if (aNet == NULL) return;   /* help no net ! */
-//
-//	if (*subAssoc == NULL)
-//	{
-//        /* negotiate association */
-//		acceptSubAssoc(aNet, subAssoc);
-//	}
-//	else
-//	{
-//        /* be a service class provider */
-//		//subOpSCP(subAssoc);
-//	}
 }
 
 @interface NSURLRequest (DummyInterface)
@@ -764,12 +752,6 @@ subOpCallback(void * /*subOpCallbackData*/ ,
             
             dataset->putAndInsertString(DCM_SpecificCharacterSet, [stringEncoding UTF8String]);
             
-        //	const char *queryLevel;
-        //	if (dataset->findAndGetString(DCM_QueryRetrieveLevel, queryLevel).good())
-        //	{
-        //		const char *string = [[NSString stringWithUTF8String: queryLevel] cStringUsingEncoding: encoding];
-        //		dataset->putAndInsertString(DCM_QueryRetrieveLevel, string);
-        //	}
             
             // What a query actually asked for is the thing needed to read its
             // answers: a node that ignores an attribute returns everything, and
@@ -785,7 +767,7 @@ subOpCallback(void * /*subOpCallbackData*/ ,
                 
                 while (dictionary = [enumerator nextObject])
                 {
-                    [sentKeys addObject: [NSString stringWithFormat: @"%@=%@", [dictionary objectForKey:@"name"], [dictionary objectForKey:@"value"]]];
+                    [sentKeys addObject: [HorosQueryLog termWithKey: [dictionary objectForKey:@"name"] value: [dictionary objectForKey:@"value"]]];
                     const char *string;
                     NSString *key = [dictionary objectForKey:@"name"];
                     id value  = [dictionary objectForKey:@"value"];
@@ -888,8 +870,8 @@ subOpCallback(void * /*subOpCallbackData*/ ,
                         }
                         else
                         {
-                            NSLog( @"**** DICOM C-FIND with unknown value: %@ : %@", key, value);
-                            [unsentKeys addObject: [NSString stringWithFormat: @"%@=%@", key, value]];
+                            NSLog( @"**** DICOM C-FIND with unknown value: %@", [HorosQueryLog termWithKey: key value: value]);
+                            [unsentKeys addObject: [HorosQueryLog termWithKey: key value: value]];
                             [sentKeys removeLastObject];
                         }
                     }
@@ -1273,9 +1255,9 @@ subOpCallback(void * /*subOpCallbackData*/ ,
 {
 #ifndef NDEBUG
 	if( [self isKindOfClass:[DCMTKSeriesQueryNode class]])
-		NSLog( @"------ WADO download : starting... %@ %@", study.theDescription, study.patientID);
+		NSLog( @"------ WADO download : starting... %@", study.uid);
 	else
-		NSLog( @"------ WADO download : starting... %@ %@", self.theDescription, self.patientID);
+		NSLog( @"------ WADO download : starting... %@", self.uid);
 #endif
     
 	NSString *protocol = [[_extraParameters valueForKey: @"WADOhttps"] intValue] ? @"https" : @"http";
@@ -1552,24 +1534,51 @@ subOpCallback(void * /*subOpCallbackData*/ ,
     return _retrieveInventory;
 }
 
-- (void)refreshRetrieveInventory
+- (BOOL)refreshRetrieveInventory
 {
     HorosRetrieveInventory *inventory = self.retrieveInventory;
-    if (!inventory || ![inventory beginImportRefresh]) return;
+    if (!inventory || ![inventory beginImportRefresh]) return NO;
     NSManagedObjectContext *context = NSThread.isMainThread ? [DicomDatabase activeLocalDatabase].managedObjectContext :
         [[DicomDatabase activeLocalDatabase] independentContext];
     NSFetchRequest *request = [NSFetchRequest fetchRequestWithEntityName:@"Study"];
     request.predicate = [NSPredicate predicateWithFormat:@"studyInstanceUID == %@", [self inventoryStudyUID]];
     NSError *error = nil;
     NSArray *studies = [context executeFetchRequest:request error:&error];
-    if (error) { [inventory invalidateImportRefresh]; return; }
+    if (error) { [inventory invalidateImportRefresh]; return NO; }
     NSMutableArray *uids = [NSMutableArray array];
     for (DicomStudy *study in studies)
         for (DicomSeries *series in study.series)
             if (![self inventorySeriesUID].length || [[series valueForKey:@"seriesDICOMUID"] isEqualToString:[self inventorySeriesUID]])
                 for (DicomImage *image in series.images)
                     if (image.sopInstanceUID.length) [uids addObject:image.sopInstanceUID];
-    [inventory updateImportedUIDs:uids];
+    return [inventory updateImportedUIDs:uids];
+}
+
+NSString * const HorosRetrieveInventoryDidRefreshNotification = @"HorosRetrieveInventoryDidRefresh";
+
+// The query window reads completeness on every repaint. On the main context the
+// fetch waits for each importer commit, so the window shows the last reconciled
+// set and the fetch runs here, one node at a time (#693).
+- (void)refreshRetrieveInventoryWithoutWaiting
+{
+    if (!NSThread.isMainThread) { [self refreshRetrieveInventory]; return; }
+    if (!self.retrieveInventory) return;
+    @synchronized (self) {
+        if (_retrieveInventoryRefreshQueued) return;
+        _retrieveInventoryRefreshQueued = YES;
+    }
+    static dispatch_queue_t queue;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ queue = dispatch_queue_create("Horos.retrieveInventoryRefresh", DISPATCH_QUEUE_SERIAL); });
+    dispatch_async(queue, ^{
+        @autoreleasepool {
+            @synchronized (self) { _retrieveInventoryRefreshQueued = NO; }
+            if ([self refreshRetrieveInventory])
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [[NSNotificationCenter defaultCenter] postNotificationName:HorosRetrieveInventoryDidRefreshNotification object:self];
+                });
+        }
+    });
 }
 
 - (void)beginRetrieveInventory
@@ -2127,7 +2136,6 @@ subOpCallback(void * /*subOpCallbackData*/ ,
 		transferSyntaxes[5] = UID_JPEGProcess14SV1TransferSyntax;				//jpeg lossless
 		transferSyntaxes[6] = UID_JPEGProcess1TransferSyntax;					//jpeg 8
 		transferSyntaxes[7] = UID_JPEGProcess2_4TransferSyntax;					//jpeg 12
-//		transferSyntaxes[8] = UID_DeflatedExplicitVRLittleEndianTransferSyntax;	//bzip
 		transferSyntaxes[8] = UID_RLELosslessTransferSyntax;					//RLE
 		transferSyntaxes[9] = UID_MPEG2MainProfileAtMainLevelTransferSyntax;
 		
@@ -2143,7 +2151,6 @@ subOpCallback(void * /*subOpCallbackData*/ ,
 		transferSyntaxes[4] = UID_JPEGProcess14SV1TransferSyntax;				//jpeg lossless
 		transferSyntaxes[5] = UID_JPEGProcess1TransferSyntax;					//jpeg 8
 		transferSyntaxes[6] = UID_JPEGProcess2_4TransferSyntax;					//jpeg 12
-//		transferSyntaxes[7] = UID_DeflatedExplicitVRLittleEndianTransferSyntax;	//bzip
 		transferSyntaxes[7] = UID_RLELosslessTransferSyntax;					//RLE
         numTransferSyntaxes = 8;
         break;
@@ -2222,23 +2229,6 @@ subOpCallback(void * /*subOpCallbackData*/ ,
             numTransferSyntaxes = 5;
             break;
             
-//#ifdef WITH_ZLIB
-//      case EXS_DeflatedLittleEndianExplicit:
-//        /* we prefer deflated transmission */
-//        transferSyntaxes[0] = UID_DeflatedExplicitVRLittleEndianTransferSyntax;
-//        transferSyntaxes[1] = UID_LittleEndianExplicitTransferSyntax;
-//        transferSyntaxes[2] = UID_LittleEndianImplicitTransferSyntax;
-//        transferSyntaxes[3] = UID_BigEndianExplicitTransferSyntax;
-//		transferSyntaxes[4] = UID_JPEG2000TransferSyntax;
-//		transferSyntaxes[5] = UID_JPEGProcess14SV1TransferSyntax;
-//		transferSyntaxes[6] = UID_JPEGProcess2_4TransferSyntax;		
-//		transferSyntaxes[7] = UID_JPEGProcess1TransferSyntax;
-//		transferSyntaxes[8] = UID_RLELosslessTransferSyntax;					//RLE
-//        transferSyntaxes[9] = UID_MPEG2MainProfileAtMainLevelTransferSyntax;
-//		
-//        numTransferSyntaxes = 10;
-//        break;
-//#endif
       case EXS_RLELossless:
         /* we prefer RLE Lossless */
         transferSyntaxes[0] = UID_RLELosslessTransferSyntax;
@@ -2249,7 +2239,6 @@ subOpCallback(void * /*subOpCallbackData*/ ,
 		transferSyntaxes[5] = UID_JPEGProcess14SV1TransferSyntax;
 		transferSyntaxes[6] = UID_JPEGProcess2_4TransferSyntax;		
 		transferSyntaxes[7] = UID_JPEGProcess1TransferSyntax;
-//		transferSyntaxes[8] = UID_DeflatedExplicitVRLittleEndianTransferSyntax;
         transferSyntaxes[8] = UID_MPEG2MainProfileAtMainLevelTransferSyntax;
 		
         numTransferSyntaxes = 9;
@@ -2443,21 +2432,6 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
                 }
                 
 #ifdef WITH_OPENSSL
-                /*
-                 if (tLayer && opt_writeSeedFile)
-                 {
-                 if (tLayer->canWriteRandomSeed())
-                 {
-                 if (!tLayer->writeRandomSeed(opt_writeSeedFile))
-                 {
-                 CERR << "Error while writing random seed file '" << opt_writeSeedFile << "', ignoring." << endl;
-                 }
-                 } else {
-                 CERR << "Warning: cannot write random seed, ignoring." << endl;
-                 }
-                 }
-                 delete tLayer;
-                 */
                 if( tLayer)
                     delete tLayer;
 #endif
@@ -2536,20 +2510,12 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
 
 		T_ASC_Association *assoc = NULL;
 	   
-	//	NSLog(@"hostname: %@ calledAET %@", _hostname, _calledAET);
 		
 		opt_peer = [_hostname UTF8String];
 		opt_port = _port;
 		_abortAssociation = NO;
         NSInteger connectionTimeout = [[NSUserDefaults standardUserDefaults] integerForKey:@"DICOMConnectionTimeout"];
 		
-	//
-	//	
-	//	//debug code activated for now
-	//	_debug = OFTrue;
-	//	DUL_Debug(OFTrue);
-	//	DIMSE_debug(OFTrue);
-	//	SetDebugLevel(3);
 		
 		if( strcmp(abstractSyntax, UID_GETPatientRootQueryRetrieveInformationModel) == 0 ||
 			strcmp(abstractSyntax, UID_GETStudyRootQueryRetrieveInformationModel) == 0 ||
@@ -2572,8 +2538,6 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
 		DcmTLSTransportLayer *tLayer = NULL;
 		NSString *uniqueStringID = [NSString stringWithFormat:@"%d.%d.%d", getpid(), inc++, (int) random()];
 		
-	//	if (_secureConnection)
-	//		[DDKeychain lockTmpFiles];
         
 		@try
 		{
@@ -2721,7 +2685,6 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
 			/* corresponding values into the association parameters.*/
 			gethostname(localHost, sizeof(localHost) - 1);
 			// Address formatting and dual-stack DNS fallback are application policy.
-			//NSLog(@"peer host: %s", peerHost);
 			cond = HorosDIMSESetPeerAddress(params, localHost, opt_peer, (int)opt_port);
             if (cond.bad()) [[NSException exceptionWithName:@"DICOM Network Failure" reason:[NSString stringWithUTF8String:cond.text()] userInfo:nil] raise];	//localHost
 			
@@ -2763,7 +2726,6 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
 			if (_verbose)
 				printf("Requesting Association\n");
 			
-//			if( [NSThread isMainThread] == YES && [[NSUserDefaults standardUserDefaults] boolForKey: @"dontUseThreadForAssociationAndCFind"] == NO)
 			{
 				NSRecursiveLock *lock = [[NSRecursiveLock alloc] init];
 				NSMutableDictionary *dict = [NSMutableDictionary dictionaryWithObjectsAndKeys: lock, @"lock", [NSValue valueWithPointer: net], @"net", [NSValue valueWithPointer: params], @"params", nil];
@@ -3101,7 +3063,6 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
 		// cleanup
 		if (_secureConnection)
 		{
-	//		[DDKeychain unlockTmpFiles];
 			[[NSFileManager defaultManager] removeItemAtPath:[DICOMTLS keyPathForServerAddress:_hostname port:_port AETitle:_calledAET withStringID:uniqueStringID] error:NULL];
 			[[NSFileManager defaultManager] removeItemAtPath:[DICOMTLS certificatePathForServerAddress:_hostname port:_port AETitle:_calledAET withStringID:uniqueStringID] error:NULL];
 			[[NSFileManager defaultManager] removeItemAtPath:[NSString stringWithFormat:@"%@%@", TLS_TRUSTED_CERTIFICATES_DIR, uniqueStringID] error:NULL];
@@ -3225,7 +3186,6 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
 	{
         if (_verbose) {
             errmsg("Find Failed\n Condition:\n");
-            //dataset->print(COUT);
             DimseCondition::dump(cond);
             NSLog(@"Dimse Status: %@", [NSString stringWithUTF8String: DU_cfindStatusString(rsp.DimseStatus)]);
         }
@@ -3257,7 +3217,6 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
     OFCondition cond = EC_Normal;
 
     /* opt_repeatCount specifies how many times a certain file shall be processed */
-    //int n = (int)_repeatCount;
 	int n = 1;
     /* as long as no error occured and the counter does not equal 0 */
     while (cond == EC_Normal && n--) {
@@ -3277,7 +3236,6 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
 - (OFCondition) cmove:(T_ASC_Association *)assoc network:(T_ASC_Network *)net dataset:(DcmDataset *)dataset destination: (char*) destination
 {
     /* opt_repeatCount specifies how many times a certain file shall be processed */
-    //int n = (int)_repeatCount;
 	int n = 1;
 	OFCondition cond = EC_Normal;
     /* as long as no error occured and the counter does not equal 0 */
@@ -3294,7 +3252,6 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
 - (OFCondition) cget:(T_ASC_Association *)assoc network:(T_ASC_Network *)net dataset:(DcmDataset *)dataset
 {
     /* opt_repeatCount specifies how many times a certain file shall be processed */
-    //int n = (int)_repeatCount;
 	int n = 1;
 	OFCondition cond = EC_Normal;
     /* as long as no error occured and the counter does not equal 0 */
@@ -3324,8 +3281,6 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
     MyCallbackInfo      callbackData;
 	OFCondition			cond = EC_Normal;
 	
-   // sopClass = querySyntax[opt_queryModel].moveSyntax;
-
     /* which presentation context should be used */
     presId = ASC_findAcceptedPresentationContextID(assoc, UID_MOVEStudyRootQueryRetrieveInformationModel);
     if (presId == 0) return DIMSE_NOVALIDPRESENTATIONCONTEXTID;
@@ -3451,8 +3406,6 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
     DcmDataset          *statusDetail = NULL;
     MyCallbackInfo      callbackData;
 
-   // sopClass = querySyntax[opt_queryModel].moveSyntax;
-
     /* which presentation context should be used */
     presId = ASC_findAcceptedPresentationContextID(assoc, UID_GETStudyRootQueryRetrieveInformationModel); //UID_GETStudyRootQueryRetrieveInformationModel UID_GETPatientStudyOnlyQueryRetrieveInformationModel
     if (presId == 0) return DIMSE_NOVALIDPRESENTATIONCONTEXTID;
@@ -3556,13 +3509,12 @@ static NSString *releaseNetworkVariablesSync = @"releaseNetworkVariablesSync";
 
 - (NSString*) description
 {
-    return [NSString stringWithFormat: @"QueryNode: %@ %@ %@ %@", _name, _accessionNumber, _modality, _calledAET];
+    return [NSString stringWithFormat: @"QueryNode: %@ %@ %@", _uid, _modality, _calledAET]; // no patient name or accession number: this is what a node looks like in the log
 }
 
 #pragma mark Max simultaneous auto-retrieve requests
 
 static NSMutableDictionary* semaphores = [[NSMutableDictionary alloc] init];
-//static const MPSemaphoreCount virtualLimit = 1000; // this value must higher that the maximum possible number of allowed simultaneous retrieves... the GUI limit is currently 9
 
 + (dispatch_semaphore_t)semaphoreForServerHostAndPort:(NSString*)key { // this method can lock the thread (that happens when the user has diminished the limit and requests are already past the limit)
     dispatch_semaphore_t mpsid = nil;

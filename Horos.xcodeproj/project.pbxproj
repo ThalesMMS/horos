@@ -168,6 +168,9 @@
 		5F9A0C000000000000002010 /* AutoCleanupPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F9A0C000000000000001010 /* AutoCleanupPreview.swift */; };
 		5F9A0C000000000000002020 /* ApplicationMenuLookup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F9A0C000000000000001020 /* ApplicationMenuLookup.swift */; };
 		99E3A59DBF64555CAB4F65B6 /* RetrieveListenerRequirement.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24200105551B5A3B9BA97357 /* RetrieveListenerRequirement.swift */; };
+		BDA718C052E7453686722C59 /* PatientListAlbumWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47B9BDDA33954C2AA84602B5 /* PatientListAlbumWindow.swift */; };
+		2531DB304C6D407194A69ED6 /* PatientListImport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B284A95A57E04EBF8D5F1DCB /* PatientListImport.swift */; };
+		833F03A295CD4337B2A1791F /* QueryLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F64878178ED4FB0A77A6B3F /* QueryLog.swift */; };
 		3F72B2C9BBF445C2B9B3EA37 /* HorosDatabaseServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FFA8B8C1A9E4C2C951F8EA6 /* HorosDatabaseServer.swift */; };
 		2429C3B9C69D41568D8EFB9E /* MetalPerformanceTrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86BA53B4117D4B8D82C7E73F /* MetalPerformanceTrace.swift */; };
 		2354B2BCE262DC6C14F8C07B /* MetalComputePipelineCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5190DE254EA3F2B1A0E0CC85 /* MetalComputePipelineCache.swift */; };
@@ -2119,6 +2122,9 @@
 		5F9A0C000000000000001010 /* AutoCleanupPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AutoCleanupPreview.swift"; sourceTree = "<group>"; };
 		5F9A0C000000000000001020 /* ApplicationMenuLookup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ApplicationMenuLookup.swift"; sourceTree = "<group>"; };
 		24200105551B5A3B9BA97357 /* RetrieveListenerRequirement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RetrieveListenerRequirement.swift"; sourceTree = "<group>"; };
+		47B9BDDA33954C2AA84602B5 /* PatientListAlbumWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PatientListAlbumWindow.swift"; sourceTree = "<group>"; };
+		B284A95A57E04EBF8D5F1DCB /* PatientListImport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PatientListImport.swift"; sourceTree = "<group>"; };
+		7F64878178ED4FB0A77A6B3F /* QueryLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "QueryLog.swift"; sourceTree = "<group>"; };
 		3FFA8B8C1A9E4C2C951F8EA6 /* HorosDatabaseServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HorosDatabaseServer.swift"; sourceTree = "<group>"; };
 		86BA53B4117D4B8D82C7E73F /* MetalPerformanceTrace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MetalPerformanceTrace.swift"; sourceTree = "<group>"; };
 		5190DE254EA3F2B1A0E0CC85 /* MetalComputePipelineCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MetalComputePipelineCache.swift"; sourceTree = "<group>"; };
@@ -5786,6 +5792,9 @@
 				5F9A0C000000000000001010 /* AutoCleanupPreview.swift */,
 				5F9A0C000000000000001020 /* ApplicationMenuLookup.swift */,
 				24200105551B5A3B9BA97357 /* RetrieveListenerRequirement.swift */,
+				47B9BDDA33954C2AA84602B5 /* PatientListAlbumWindow.swift */,
+				B284A95A57E04EBF8D5F1DCB /* PatientListImport.swift */,
+				7F64878178ED4FB0A77A6B3F /* QueryLog.swift */,
 				3FFA8B8C1A9E4C2C951F8EA6 /* HorosDatabaseServer.swift */,
 				86BA53B4117D4B8D82C7E73F /* MetalPerformanceTrace.swift */,
 				5190DE254EA3F2B1A0E0CC85 /* MetalComputePipelineCache.swift */,
@@ -8061,6 +8070,9 @@
 				5F9A0C000000000000002010 /* AutoCleanupPreview.swift in Sources */,
 				5F9A0C000000000000002020 /* ApplicationMenuLookup.swift in Sources */,
 				99E3A59DBF64555CAB4F65B6 /* RetrieveListenerRequirement.swift in Sources */,
+				BDA718C052E7453686722C59 /* PatientListAlbumWindow.swift in Sources */,
+				2531DB304C6D407194A69ED6 /* PatientListImport.swift in Sources */,
+				833F03A295CD4337B2A1791F /* QueryLog.swift in Sources */,
 				3F72B2C9BBF445C2B9B3EA37 /* HorosDatabaseServer.swift in Sources */,
 				2429C3B9C69D41568D8EFB9E /* MetalPerformanceTrace.swift in Sources */,
 				2354B2BCE262DC6C14F8C07B /* MetalComputePipelineCache.swift in Sources */,

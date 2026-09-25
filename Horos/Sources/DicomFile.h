@@ -101,7 +101,6 @@
 - (id) init:(NSString*) f; /**< Init with file at location NSString* f */
 - (id) init:(NSString*) f DICOMOnly:(BOOL) DICOMOnly; /**< init with file at location NSString* f DICOM files only if DICOMOnly = YES */
 - (id) initRandom; /**< Inits and returns an empty dicomFile */
-//- (id) initWithXMLDescriptor: (NSString*)pathToXMLDescriptor path:(NSString*) f; /**< Init with XMLDescriptor for information and f for image data */
 - (NSString*) patientUID; /**< Returns the patientUID */
 + (NSString*) patientUID: (id) src; /**< Returns the patientUID */
 
@@ -143,7 +142,6 @@
 - (BOOL) combineProjectionSeries; /**< Returns the combineProjectionSeries default.  If YES, combines are projection Modalities: CR, DR into one series. */
 - (BOOL) oneFileOnSeriesForUS; /**< Returns the oneFileOnSeriesForUS default */
 - (BOOL) combineProjectionSeriesMode; /**< Returns the combineProjectionSeriesMode default. */
-//- (BOOL) checkForLAVIM; /**< Returns the CHECKFORLAVIM default. */
 - (BOOL) separateCardiac4D; /**< Returns the SEPARATECARDIAC4D default. If YES separates cardiac studies into separate gated series. */
 - (int) commentsGroup; /**< Returns the commentsGroup default. The DICOM group to get comments from. */
 - (int) commentsElement; /**< Returns the commentsGroup default.  The DICOM  element to get get comments from. */

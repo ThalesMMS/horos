@@ -290,9 +290,6 @@ NSString* sopInstanceUIDDecode( unsigned char *r, int length)
         if (sopInstanceUID)
             return sopInstanceUID;
     
-//	char *ss = sopInstanceUIDEncode( @"1.3.6.1.4.1.19291.2.1.3.4214185015613178564241742949672953387242");
-//	NSString* uid =  sopInstanceUIDDecode( [[NSData dataWithBytes: ss length: strlen( ss)+1] bytes]);
-//	free( ss);
 	
         NSData *data = [self primitiveValueForKey:@"compressedSopInstanceUID"];
         
@@ -332,8 +329,6 @@ NSString* sopInstanceUIDDecode( unsigned char *r, int length)
             char *ss = sopInstanceUIDEncode( s);
             [self setValue: [NSData dataWithBytesNoCopy: ss length: length] forKey:@"compressedSopInstanceUID"];
             
-    //		if( [[self sopInstanceUID] isEqualToString: s] == NO)
-    //			NSLog(@"******** ERROR sopInstanceUID : %@ %@", s, [self sopInstanceUID]);
         }
         else [self setValue: nil forKey:@"compressedSopInstanceUID"];
     }
@@ -539,33 +534,6 @@ NSString* sopInstanceUIDDecode( unsigned char *r, int length)
 
 #pragma mark-
 
-//- (NSNumber*) mountedVolume
-//{
-//	if( mountedVolume) return mountedVolume;
-//	
-//	NSNumber	*f = [self primitiveValueForKey:@"storedMountedVolume"];
-//	
-//	if( f == nil)  f = [NSNumber numberWithBool: NO];
-//
-//	[mountedVolume release];
-//	mountedVolume = [f retain];
-//
-//	return mountedVolume;
-//    return nil;
-//}
-
-//- (void) setMountedVolume:(NSNumber*) f
-//{
-//	[mountedVolume release];
-//	mountedVolume = nil;
-//	
-//	[self willChangeValueForKey:@"storedMountedVolume"];
-//	if( [f boolValue] == NO)
-//		[self setPrimitiveValue: nil forKey:@"storedMountedVolume"];
-//	else
-//		[self setPrimitiveValue: f forKey:@"storedMountedVolume"];
-//	[self didChangeValueForKey:@"storedMountedVolume"];
-//}
 
 #pragma mark-
 

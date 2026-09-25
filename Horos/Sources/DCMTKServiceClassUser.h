@@ -86,7 +86,6 @@ typedef char* T_ASC_Network;
 	BOOL _debug;
 	BOOL _abortAssociation;
 	unsigned long _maxReceivePDULength ;
-	//unsigned long _repeatCount ;
 	int _repeatCount ;
 	int _cancelAfterNResponses;
 	E_TransferSyntax _networkTransferSyntax;

@@ -130,10 +130,6 @@ END_EXTERN_C
 
 #define APPLICATIONTITLE    "DCMQRSCP"
 
-//const char *opt_configFileName = "dcmqrscp.cfg";
-//OFBool      opt_checkFindIdentifier = OFFalse;
-//OFBool      opt_checkMoveIdentifier = OFFalse;
-//OFCmdUnsignedInt opt_port = 0;
 
 HorosQueryRetrieveServer *scp = nil;
 HorosQueryRetrieveServer *scptls = nil;
@@ -311,12 +307,6 @@ void errmsg(const char* msg, ...)
 	//single process
 	options.singleProcess_ = [[NSUserDefaults standardUserDefaults] boolForKey: @"SingleProcessMultiThreadedListener"];
 	
-	//debug
-//	options.debug_ = OFTrue;
-//	DUL_Debug(OFTrue);
-//	DIMSE_debug(OFTrue);
-//	SetDebugLevel(3);
-	
 	//no restrictions on moves
 	options.restrictMoveToSameAE_ = OFFalse;
     options.restrictMoveToSameHost_ = OFFalse;
@@ -328,25 +318,8 @@ void errmsg(const char* msg, ...)
 	
 	options.networkTransferSyntax_ = (E_TransferSyntax) [[NSUserDefaults standardUserDefaults] integerForKey: @"preferredSyntaxForIncoming"];
 	
-//	options.networkTransferSyntax_ = EXS_LittleEndianImplicit;		// See dcmqrsrv.mm
-//	else options.networkTransferSyntax_ = EXS_LittleEndianExplicit;																								// See dcmqrsrv.mm
 	
 	options.networkTransferSyntaxOut_ =  EXS_LittleEndianExplicit;	//;	//EXS_LittleEndianExplicit;	//;		EXS_JPEG2000		// See dcmqrcbm.mm - NOT USED
-	/*
-	options.networkTransferSyntaxOut_ = EXS_LittleEndianExplicit;
-	options.networkTransferSyntaxOut_ = EXS_BigEndianExplicit;
-	options.networkTransferSyntaxOut_ = EXS_JPEGProcess14SV1TransferSyntax;
-	options.networkTransferSyntaxOut_ = EXS_JPEGProcess1TransferSyntax;
-	options.networkTransferSyntaxOut_ = EXS_JPEGProcess2_4TransferSyntax;
-	options.networkTransferSyntaxOut_ = EXS_JPEG2000LosslessOnly;
-	options.networkTransferSyntaxOut_ = EXS_JPEG2000;
-	options.networkTransferSyntaxOut_ = EXS_RLELossless;
-#ifdef WITH_ZLIB
-	options.networkTransferSyntaxOut_ = EXS_DeflatedLittleEndianExplicit;
-#endif
-	options.networkTransferSyntaxOut_ = EXS_LittleEndianImplicit;
-*/
-
 	//timeout
 	OFCmdSignedInt opt_timeout = [[NSUserDefaults standardUserDefaults] integerForKey:@"DICOMTimeout"];
     
@@ -368,11 +341,6 @@ void errmsg(const char* msg, ...)
 	options.dimse_timeout_ = OFstatic_cast(int, opt_timeout);
 	options.blockMode_ = DIMSE_NONBLOCKING;
 	
-	//maxpdu
-	//overrideMaxPDU = 
-	
-	//correct UID padding
-	//options.correctUIDPadding_ = OFTrue
 	
 	//enble new VR
 	dcmEnableUnknownVRGeneration.set(OFTrue);
@@ -386,29 +354,11 @@ void errmsg(const char* msg, ...)
 	
 	options.writeTransferSyntax_ = EXS_Unknown;
 	
-//	switch ( [[NSUserDefaults standardUserDefaults] integerForKey:@"ListenerCompressionSettings"]) //It's not a good idea, because it's a single process... no multi-threads
-//	{
-//		case 0:
-//			options.writeTransferSyntax_ = EXS_Unknown;	//write with same syntax as it came in
-//		break;
-//			
-//		case 1:
-//			options.writeTransferSyntax_ = EXS_LittleEndianExplicit; //decompress
-//		break;
-//			
-//		case 2:
-//			options.writeTransferSyntax_ = EXS_JPEG2000;	// compress
-//		break;
-//	}
-	
 	//remove group lengths
 	options.groupLength_ = EGL_withoutGL;
 	
 	//number of associations
 	options.maxAssociations_ = 800;
-	
-	//port
-//	opt_port = _port;
 	
 	//max PDU size
 	options.maxPDU_ = ASC_DEFAULTMAXPDU;
@@ -497,13 +447,6 @@ void errmsg(const char* msg, ...)
 			//			}
 		}		
 		
-//		if (_dhparam && ! (tLayer->setTempDHParameters(_dhparam)))
-//		{
-//			localException = [NSException exceptionWithName:@"DICOM Network Failure (storescu TLS)" reason:[NSString stringWithFormat:@"Unable to load temporary DH parameter file %s", _dhparam] userInfo:nil];
-//			[localException raise];
-//		}
-		
-//		if (_doAuthenticate)
 		{			
 			tLayer->setPrivateKeyPasswd([[DICOMTLS TLS_PRIVATE_KEY_PASSWORD] cStringUsingEncoding:NSUTF8StringEncoding]);
 			

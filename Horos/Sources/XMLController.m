@@ -139,7 +139,6 @@ extern int delayedTileWindows;
 	}
 	while( (parent = [parent parent]));
 	
-	// NSLog( result);
 	// Example (0008,1111)[0].(0010,0010)
 	
 	return result;
@@ -1196,10 +1195,6 @@ extern int delayedTileWindows;
 {
     if( modificationsToApplyArray.count)
     {
-        /*
-        NSMutableArray	*params = [NSMutableArray arrayWithObjects:@"dcmodify", @"--verbose", @"--ignore-errors", nil];
-		[params addObjectsFromArray: modificationsToApplyArray];
-		*/
          
 		NSArray *objects = [self arrayOfFiles];
 		NSMutableArray *files = [NSMutableArray arrayWithArray: [objects valueForKey:@"completePath"]];
@@ -1208,7 +1203,6 @@ extern int delayedTileWindows;
 		{
 			[files removeDuplicatedStrings];
             
-			//[params addObjectsFromArray: files];
 			
 			WaitRendering *wait = nil;
 			if( [files count] > 1)
@@ -1221,8 +1215,6 @@ extern int delayedTileWindows;
             
 			@try
 			{
-                //NSStringEncoding encoding = [NSString encodingForDICOMCharacterSet: [[DicomFile getEncodingArrayForFile: srcFile] objectAtIndex: 0]];
-				//[XMLController modifyDicom: params encoding: encoding];
                 
                 
                 
@@ -1581,8 +1573,6 @@ extern int delayedTileWindows;
     // Set up toolbar properties: Allow customization, give a default display mode, and remember state in user defaults 
     [toolbar setAllowsUserCustomization: YES];
     [toolbar setAutosavesConfiguration: YES];
-//    [toolbar setDisplayMode: NSToolbarDisplayModeIconOnly];
-    
     // We are the delegate
     [toolbar setDelegate: self];
     
@@ -1591,7 +1581,6 @@ extern int delayedTileWindows;
 	[[self window] setShowsToolbarButton:NO];
 	[[[self window] toolbar] setVisible: YES];
     
-//    [window makeKeyAndOrderFront:nil];
 }
 
 - (NSToolbarItem *) toolbar: (NSToolbar *)toolbar itemForItemIdentifier: (NSString *) itemIdent willBeInsertedIntoToolbar:(BOOL) willBeInserted {

@@ -248,7 +248,6 @@
 @synthesize view = _view;
 
 - (void)dealloc {
-//    [_view removeObserver:self forKeyPath:@"predicate"];
     self.view = nil;
     [super dealloc];
 }
@@ -257,7 +256,6 @@
     if (!_view) {
         _view = [[O2DicomPredicateEditorView alloc] initWithFrame:NSZeroRect];
         [_view setFrameSize:NSMakeSize(4000, 20)];
-//        [_view addObserver:self forKeyPath:@"predicate" options:0 context:[O2DicomPredicateEditorRowTemplate class]];
     }
     
     return _view;

@@ -41,7 +41,6 @@
 /** \brief OutlineView for BrowserController */
 @interface MyOutlineView : NSOutlineView
 {
-//	NSArray	*allColumns; // we once removed and added columns, now we use the isHidden flag...
 }
 
 - (void)removeAllColumns __deprecated; // hideAllColumns

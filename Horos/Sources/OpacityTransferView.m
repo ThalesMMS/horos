@@ -221,10 +221,6 @@
 		entries256[ last + x] = 1.0;
 	}
 	
-//	for( i = 0 ; i < 256; i++)
-//	{
-//		NSLog( @"%d : %f", i, entries256[ i]);
-//	}
 	
 	return [NSData dataWithBytes: entries256 length: 256 * sizeof(float)];
 }
@@ -280,7 +276,6 @@
 			if( curPoint.x == 0)
 			{
 				[courbe moveToPoint: curPoint];
-			//	NSLog(@"zero point");
 			}
 			else [courbe moveToPoint: NSMakePoint(0, 0)];
 		}
@@ -293,7 +288,6 @@
 	}
 	
 	if( curPoint.x != 512 || [points count] == 0) [courbe lineToPoint:NSMakePoint( 512, 100)];
-//	else NSLog(@"end point");
 	
 	[[NSColor blackColor] set];
 	[courbe setLineWidth: 2];

@@ -42,8 +42,6 @@
 #include <dcmtk/dcmdata/dcdatset.h>
 #include <dcmtk/ofstd/ofcond.h>
 
-//NSString * const OsiriXFileReceivedNotification;
-
 /** \brief  Finds the appropriate study/series/image for Q/R
 *
 * Finds the appropriate study/series/image for Q/R

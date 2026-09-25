@@ -93,6 +93,15 @@ public enum ResliceProjection: Int {
     case maximum = 1, minimum = 2, mean = 3
 }
 
+/// How a sample between voxel centres is computed (#702). `linear` is the
+/// reference: measurement, projections and the comparison with VTK use it.
+/// `cubic` is Catmull-Rom over the 4×4×4 neighbourhood, for display only: it
+/// reproduces voxel centres and linear ramps exactly, and its result is kept
+/// within the eight voxels around the sample, so a sharp edge gains no halo.
+public enum ResliceInterpolation: Int {
+    case linear = 0, cubic = 1
+}
+
 /// One plane to produce: `origin` is the centre of pixel (0, 0); pixel (x, y)
 /// has its centre at `origin + x * rowStep + y * columnStep`. The slab spans
 /// `thickness` along `rowStep × columnStep`, centred on the plane, sampled
@@ -103,9 +112,11 @@ public struct ReslicePlane {
     public let thickness: Float, sampleCount: Int
     public let projection: ResliceProjection
     public let background: Float
+    public let interpolation: ResliceInterpolation
 
     public init(origin: SIMD3<Float>, rowStep: SIMD3<Float>, columnStep: SIMD3<Float>, width: Int, height: Int,
-                thickness: Float, sampleStep: Float, projection: ResliceProjection, background: Float) throws {
+                thickness: Float, sampleStep: Float, projection: ResliceProjection, background: Float,
+                interpolation: ResliceInterpolation = .linear) throws {
         guard width > 0, height > 0, width <= 16384, height <= 16384 else { throw ResliceFailure.geometry("The plane has no extent.") }
         let numbers = [origin, rowStep, columnStep].flatMap { [$0.x, $0.y, $0.z] } + [thickness, sampleStep, background]
         guard numbers.allSatisfy({ $0.isFinite }), thickness >= 0, sampleStep > 0 else { throw ResliceFailure.geometry("The plane geometry is not finite.") }
@@ -117,7 +128,7 @@ public struct ReslicePlane {
         // Samples are placed every `sampleStep`, both ends of the slab included.
         sampleCount = thickness > 0 ? max(2, Int((thickness / sampleStep).rounded(.up)) + 1) : 1
         guard sampleCount <= 4096 else { throw ResliceFailure.geometry("The slab asks for \(sampleCount) samples per pixel; reduce the thickness or coarsen the step.") }
-        self.projection = projection; self.background = background
+        self.projection = projection; self.background = background; self.interpolation = interpolation
     }
 
     var normal: SIMD3<Float> { simd_normalize(simd_cross(rowStep, columnStep)) }
@@ -162,6 +173,7 @@ public final class MPRMetalReslicer {
         float4 slabStep;    // xyz: displacement between consecutive samples; w: first sample offset factor
         uint4 size;         // width, height, sampleCount, projection
         float4 extent;      // volume dims (x, y, z), background
+        uint4 options;      // x: interpolation, 0 linear, 1 cubic
     };
     static float sampleVolume(texture3d<float, access::read> volume, float3 v, thread bool &inside) {
         float3 dims = float3(volume.get_width(), volume.get_height(), volume.get_depth());
@@ -182,6 +194,43 @@ public final class MPRMetalReslicer {
         float x01 = mix(c001, c101, w.x), x11 = mix(c011, c111, w.x);
         return mix(mix(x00, x10, w.y), mix(x01, x11, w.y), w.z);
     }
+    // Catmull-Rom weights of the four neighbours at offsets -1, 0, 1, 2 for a
+    // fraction t: (0, 1, 0, 0) at t = 0, so voxel centres come back exactly.
+    static float4 catmullRom(float t) {
+        float t2 = t * t, t3 = t2 * t;
+        return float4(-0.5f * t3 + t2 - 0.5f * t,
+                      1.5f * t3 - 2.5f * t2 + 1.0f,
+                      -1.5f * t3 + 2.0f * t2 + 0.5f * t,
+                      0.5f * t3 - 0.5f * t2);
+    }
+    static float sampleVolumeCubic(texture3d<float, access::read> volume, float3 v, thread bool &inside) {
+        float3 dims = float3(volume.get_width(), volume.get_height(), volume.get_depth());
+        inside = all(v >= -0.5) && all(v <= dims - 0.5);
+        if (!inside) return 0.0;
+        float3 base = floor(v);
+        float3 t = v - base;
+        int3 b = int3(base), last = int3(dims) - 1;
+        float4 wx = catmullRom(t.x), wy = catmullRom(t.y), wz = catmullRom(t.z);
+        // Seeded from the voxel at the base: fast math assumes no infinities.
+        float low = volume.read(uint3(clamp(b, int3(0), last))).r, high = low, sum = 0.0;
+        for (int dz = 0; dz < 4; ++dz) {
+            int z = clamp(b.z - 1 + dz, 0, last.z);
+            float plane = 0.0;
+            for (int dy = 0; dy < 4; ++dy) {
+                int y = clamp(b.y - 1 + dy, 0, last.y);
+                float row = 0.0;
+                for (int dx = 0; dx < 4; ++dx) {
+                    float c = volume.read(uint3(clamp(b.x - 1 + dx, 0, last.x), y, z)).r;
+                    row += wx[dx] * c;
+                    // The eight voxels a linear sample would use bound the result.
+                    if (dx == 1 || dx == 2) if (dy == 1 || dy == 2) if (dz == 1 || dz == 2) { low = min(low, c); high = max(high, c); }
+                }
+                plane += wy[dy] * row;
+            }
+            sum += wz[dz] * plane;
+        }
+        return clamp(sum, low, high);
+    }
     kernel void reslice(texture3d<float, access::read> volume [[texture(0)]],
                         device float *output [[buffer(0)]],
                         constant Params &p [[buffer(1)]],
@@ -195,7 +244,7 @@ public final class MPRMetalReslicer {
             float3 world = start + p.slabStep.xyz * float(s);
             float4 voxel = p.worldToVoxel * float4(world, 1.0);
             bool inside;
-            float value = sampleVolume(volume, voxel.xyz, inside);
+            float value = p.options.x == 1 ? sampleVolumeCubic(volume, voxel.xyz, inside) : sampleVolume(volume, voxel.xyz, inside);
             if (!inside) continue;
             if (counted == 0) accumulated = value;
             else if (projection == 1) accumulated = max(accumulated, value);
@@ -417,6 +466,7 @@ public final class MPRMetalReslicer {
         var origin: SIMD4<Float>, rowStep: SIMD4<Float>, columnStep: SIMD4<Float>, slabStep: SIMD4<Float>
         var size: SIMD4<UInt32>
         var extent: SIMD4<Float>
+        var options: SIMD4<UInt32>
     }
 
     /// Produces `plane.width * plane.height` floats, row-major, top row first.
@@ -444,7 +494,8 @@ public final class MPRMetalReslicer {
             origin: SIMD4(plane.origin, 0), rowStep: SIMD4(plane.rowStep, 0), columnStep: SIMD4(plane.columnStep, 0),
             slabStep: SIMD4(slabDirection, Float(plane.sampleCount - 1) * 0.5),
             size: SIMD4(UInt32(plane.width), UInt32(plane.height), UInt32(plane.sampleCount), UInt32(plane.projection.rawValue)),
-            extent: SIMD4(Float(uploaded.width), Float(uploaded.height), Float(uploaded.depth), plane.background))
+            extent: SIMD4(Float(uploaded.width), Float(uploaded.height), Float(uploaded.depth), plane.background),
+            options: SIMD4(UInt32(plane.interpolation.rawValue), 0, 0, 0))
         let w = pipeline.threadExecutionWidth, h = max(1, pipeline.maxTotalThreadsPerThreadgroup / w)
         let grid = MTLSize(width: plane.width, height: plane.height, depth: 1), group = MTLSize(width: w, height: h, depth: 1)
         if let submitter {
@@ -560,9 +611,19 @@ public final class MPRReslicerBridge: NSObject {
     @objc public func reslice(origin: [NSNumber], orientation: [NSNumber], spacing: Double, width: Int, height: Int,
                               thickness: Double, sampleStep: Double, projection: Int, background: Double,
                               into destination: UnsafeMutablePointer<Float>) throws {
+        try reslice(origin: origin, orientation: orientation, spacing: spacing, width: width, height: height,
+                    thickness: thickness, sampleStep: sampleStep, projection: projection, background: background,
+                    interpolation: ResliceInterpolation.linear.rawValue, into: destination)
+    }
+
+    /// The same, with `interpolation` 0 (linear) or 1 (cubic, for display only; #702).
+    @objc public func reslice(origin: [NSNumber], orientation: [NSNumber], spacing: Double, width: Int, height: Int,
+                              thickness: Double, sampleStep: Double, projection: Int, background: Double,
+                              interpolation: Int, into destination: UnsafeMutablePointer<Float>) throws {
         do {
             let plane = try Self.plane(origin: origin, orientation: orientation, spacing: spacing, width: width, height: height,
-                                       thickness: thickness, sampleStep: sampleStep, projection: projection, background: background)
+                                       thickness: thickness, sampleStep: sampleStep, projection: projection, background: background,
+                                       interpolation: interpolation)
             let started = DispatchTime.now().uptimeNanoseconds
             try engine.reslice(plane, into: UnsafeMutableRawBufferPointer(start: destination,
                                                                           count: plane.width * plane.height * MemoryLayout<Float>.stride))
@@ -571,8 +632,10 @@ public final class MPRReslicerBridge: NSObject {
     }
 
     private static func plane(origin: [NSNumber], orientation: [NSNumber], spacing: Double, width: Int, height: Int,
-                              thickness: Double, sampleStep: Double, projection: Int, background: Double) throws -> ReslicePlane {
-        guard origin.count == 3, orientation.count == 9, let mode = ResliceProjection(rawValue: projection) else {
+                              thickness: Double, sampleStep: Double, projection: Int, background: Double,
+                              interpolation: Int = 0) throws -> ReslicePlane {
+        guard origin.count == 3, orientation.count == 9, let mode = ResliceProjection(rawValue: projection),
+              let sampling = ResliceInterpolation(rawValue: interpolation) else {
             throw ResliceFailure.geometry("The plane description is incomplete.")
         }
         let o = origin.map { $0.floatValue }, c = orientation.map { $0.floatValue }
@@ -580,6 +643,6 @@ public final class MPRReslicerBridge: NSObject {
                                 rowStep: SIMD3(c[0], c[1], c[2]) * Float(spacing),
                                 columnStep: SIMD3(c[3], c[4], c[5]) * Float(spacing),
                                 width: width, height: height, thickness: Float(thickness), sampleStep: Float(sampleStep),
-                                projection: mode, background: Float(background))
+                                projection: mode, background: Float(background), interpolation: sampling)
     }
 }

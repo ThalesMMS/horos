@@ -55,9 +55,7 @@
 
 #include <dcmtk/ofstd/ofthread.h>
 
-//#define WITH_OPJ_BUFFER_STREAM
 #define WITH_OPJ_FILE_STREAM
-//#define OPJ_VERBOSE
 
 struct opj_memory_stream
 {
@@ -243,7 +241,6 @@ void* OPJSupport::decompressJPEG2KWithBuffer(void* inputBuffer,
                                              long *decompressedBufferSize,
                                              int *colorModel)
 {
-    //opj_initialize("");
     opj_dparameters_t parameters;
     int i;
     int width, height;
@@ -351,8 +348,6 @@ void* OPJSupport::decompressJPEG2KWithBuffer(void* inputBuffer,
 
     if(decodeInfo.image->color_space == OPJ_CLRSPC_SYCC)
     {
-        //disable for now
-        //color_sycc_to_rgb(decodeInfo.image);
     }
     
     if (decodeInfo.image->color_space != OPJ_CLRSPC_SYCC
@@ -464,9 +459,6 @@ void* OPJSupport::decompressJPEG2KWithBuffer(void* inputBuffer,
                 ac = (unsigned char)*alpha++;;
             }
             
-            /*                         A        R          G       B
-             */
-            //*ptrIBody++ = (int)((ac<<24) | (rc<<16) | (gc<<8) | bc);
             *ptrIBody = rc;
             ptrIBody++;
             *ptrIBody = gc;
@@ -498,7 +490,6 @@ void* OPJSupport::decompressJPEG2KWithBuffer(void* inputBuffer,
         else /* prec[9:16] */
         {
             int *grey = decodeInfo.image->comps[0].data;
-            //int ushift = 0, dshift = 0, force16 = 0;
             
             short* ptrSBody = (short*)inputBuffer;
             
@@ -546,7 +537,6 @@ void* OPJSupport::decompressJPEG2KWithBuffer(void* inputBuffer,
         else /* prec[9:16] */
         {
             int *grey;
-            //int ushift = 0, dshift = 0, force16 = 0;
             
             grey = decodeInfo.image->comps[0].data;
             
@@ -605,7 +595,6 @@ opj_image_t* rawtoimage(char *inputbuffer, opj_cparameters_t *parameters,
                         int fragment_size, int image_width, int image_height, int sample_pixel,
                         int bitsallocated, int bitsstored, int sign, /*int quality,*/ int pc)
 {
-    //(void)quality;
     int w, h;
     int numcomps;
     OPJ_COLOR_SPACE color_space;
@@ -640,7 +629,6 @@ opj_image_t* rawtoimage(char *inputbuffer, opj_cparameters_t *parameters,
     
     /* initialize image components */
     memset(&cmptparm[0], 0, 3 * sizeof(opj_image_cmptparm_t));
-    //assert( bitsallocated == 8 );
     
     for(int i = 0; i < numcomps; i++)
     {
@@ -667,8 +655,6 @@ opj_image_t* rawtoimage(char *inputbuffer, opj_cparameters_t *parameters,
     image->y1 = parameters->image_offset_y0 + (h - 1) * subsampling_dy + 1;
     
     /* set image data */
-    
-    //assert( fragment_size == numcomps*w*h*(bitsallocated/8) );
     if (bitsallocated <= 8)
     {
         if( sign )
@@ -899,8 +885,6 @@ OPJSupport::compressJPEG2K(void *data,
     
     while(1)
     {
-        //        int tile_index=-1, user_changed_tile=0, user_changed_reduction=0;
-        //        int max_tiles=0, max_reduction=0;
         fails = OPJ_TRUE;
         
         /* encode the image */
@@ -919,7 +903,6 @@ OPJSupport::compressJPEG2K(void *data,
             l_data = (OPJ_BYTE*) malloc(l_data_size * sizeof(OPJ_BYTE));
             memset(l_data, 0, l_data_size * sizeof(OPJ_BYTE));
             
-            //assert( l_data );
             if (!l_data)
             {
                 /* close and free the byte stream */
@@ -1004,10 +987,6 @@ OPJSupport::compressJPEG2K(void *data,
     else
     {
 #ifdef WITH_OPJ_BUFFER_STREAM
-        //printf("%p\n",bufferInfo.buf);
-        //printf("%lu\n",bufferInfo.len);
-        //to=(unsigned char *) malloc(bufferInfo.len);
-        //memcpy(to,l_stream,bufferInfo.len);
 #endif
         
 #ifdef WITH_OPJ_FILE_STREAM
@@ -1035,14 +1014,12 @@ OPJSupport::compressJPEG2K(void *data,
             if (length % 2)
             {
                 length++; // ensure even length
-                //fprintf(stdout,"Padded to %li\n", length);
             }
             
             to = (unsigned char *) malloc(length);
             
             fread(to, length, 1, f);
             
-            //printf("%s %lu\n",parameters.outfile,length);;
             
             fclose(f);
         }

@@ -158,7 +158,6 @@
         [b setObject:NSLocalizedString(@"validated", nil) forKey:[NSNumber numberWithInt:4]];
         [base setObject:b forKey:@"OsiriX StudyStatus"];
         
-//        NSLog(@"base: %@", base);
     }
     
     return base;

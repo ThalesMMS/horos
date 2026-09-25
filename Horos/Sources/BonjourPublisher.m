@@ -770,7 +770,6 @@ static NSInteger O2BufferLimitAwaitingCommand, O2BufferLimitUpload, O2BufferLimi
 - (DicomDatabase*)_stackIndependentDatabase {
     if (_stack.count > _hdi)
     {
-        //        N2LogStackTrace( @"_stack.count > _hdi");
         return [self _stackedObject];
     }
     DicomDatabase* database = [[DicomDatabase defaultDatabase] independentDatabase];
@@ -1286,19 +1285,6 @@ static NSInteger O2BufferLimitAwaitingCommand, O2BufferLimitUpload, O2BufferLimi
             
             [localPaths addObject: path];
             
-            //				if([[path pathExtension] isEqualToString:@"zip"])
-            //				{
-            //					// it is a ZIP
-            //					NSLog(@"BONJOUR ZIP");
-            //					NSString *xmlPath = [[path stringByDeletingPathExtension] stringByAppendingPathExtension:@"xml"];
-            //					NSLog(@"xmlPath : %@", xmlPath);
-            //					if([[NSFileManager defaultManager] fileExistsAtPath:xmlPath])
-            //					{
-            //						// it has an XML descriptor with it
-            //						NSLog(@"BONJOUR XML");
-            //						[localPaths addObject:xmlPath];
-            //					}
-            //				}
             
             [self _unstack]; // the string
         }
@@ -1309,19 +1295,6 @@ static NSInteger O2BufferLimitAwaitingCommand, O2BufferLimitUpload, O2BufferLimi
             
             [dstPaths addObject: path];
             
-            //				if([[path pathExtension] isEqualToString:@"zip"])
-            //				{
-            //					// it is a ZIP
-            //					NSLog(@"BONJOUR ZIP");
-            //					NSString *xmlPath = [[path stringByDeletingPathExtension] stringByAppendingPathExtension:@"xml"];
-            //					NSLog(@"xmlPath : %@", xmlPath);
-            //					if([[NSFileManager defaultManager] fileExistsAtPath:xmlPath])
-            //					{
-            //						// it has an XML descriptor with it
-            //						NSLog(@"BONJOUR XML");
-            //						[dstPaths addObject:xmlPath];
-            //					}
-            //				}
             
             [self _unstack]; // the string
         }
@@ -1335,8 +1308,6 @@ static NSInteger O2BufferLimitAwaitingCommand, O2BufferLimitUpload, O2BufferLimi
         {
             NSString* path = [localPaths objectAtIndex: i];
             
-            //						if ([[NSFileManager defaultManager] fileExistsAtPath: path] == NO)
-            //							NSLog( @"Bonjour Publisher - File doesn't exist at path: %@", path);
             
             NSData* content = [NSData dataWithContentsOfMappedFile:path];
             int size = NSSwapHostIntToBig([content length]);

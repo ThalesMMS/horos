@@ -38,9 +38,11 @@ static BOOL FULL32BITPIPELINE=NO;
 @property char *baseAddr;
 @property unsigned char *LUT12baseAddr;
 - (float*)computefImage;
+- (float*)computefImageForDisplay;
 @end
 @implementation Pixels
 - (float*)computefImage { return self.fImage; }
+- (float*)computefImageForDisplay { return self.fImage; }
 @end
 @interface View:NSResponder {
 @public

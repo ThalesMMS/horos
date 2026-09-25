@@ -91,7 +91,6 @@
 		for( int i = 0; i < 10; i++) encoding[ i] = 0;
 		encoding[ 0] = NSISOLatin1StringEncoding;
 		
-//		dataset ->print( COUT);
 		
 		if (dataset ->findAndGetString(DCM_SpecificCharacterSet, string).good() && string != nil)
 		{
@@ -166,21 +165,6 @@
 			{
 				_modality = [[NSString alloc] initWithCString:string encoding:NSISOLatin1StringEncoding];
 			}
-			/*
-			else {
-				// look for modality at the Series level and get modalities from children
-				//This has not been tested yet LWP
-				[self queryWithValues:nil];
-				NSMutableSet *modalitiesInStudy = [NSMutableSet set];
-				NSEnumerator *enumerator = [_children  objectEnumerator];
-				DCMTKSeriesQueryNode * child;
-				while (child = [enumerator nextObject]) {
-					if ([child modality])
-						[modalitiesInStudy addObject:[child modality]];
-				}
-				_modality = [[[modalitiesInStudy allObjects] componentsJoinedByString:@"/"] retain];
-			}
-			*/
 		}
 		
 		if (dataset ->findAndGetString(DCM_NumberOfStudyRelatedInstances, string).good() && string != nil)
@@ -189,12 +173,6 @@
 			_numberImages = [[NSNumber numberWithInt: [numberString intValue]] retain];
 			[numberString release];
 		}
-//		else if (dataset ->findAndGetString(DCM_ImageGroupLength, string).good() && string != nil)
-//		{
-//			NSString	*numberString = [[NSString alloc] initWithCString:string encoding:NSISOLatin1StringEncoding];
-//			_numberImages = [[NSNumber numberWithInt: [numberString intValue]] retain];
-//			[numberString release];
-//		}
 	}
 	return self;
 }
@@ -273,7 +251,6 @@
         return [_name capitalizedString];
     
     return _name;
-//    return [DicomStudy scrambleString: _name];
 }
 
 - (NSDate*) dateOfBirth // Match DicomStudy

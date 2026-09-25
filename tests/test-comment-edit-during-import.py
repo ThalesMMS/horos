@@ -55,9 +55,13 @@ arrival = body('-(void)_observeDatabaseAddNotification:', browser)
 if not arrival:
     failures.append('-_observeDatabaseAddNotification: is gone')
 else:
-    if '_refreshDatabaseDisplay' not in arrival:
+    if '_refreshDatabaseDisplayAfterImport' not in arrival:
         failures.append('the arrival notification refreshes the outline directly, bypassing the '
                         'guard entirely')
+    # Import refreshes are coalesced (#697); the one that fires keeps the guard.
+    fire = body('-(void)_importListRefreshFire', browser)
+    if 'editedRow' not in fire or '_refreshDeferredWhileEditing = YES' not in fire:
+        failures.append('the coalesced import refresh reloads the outline under an edit')
     if 'outlineViewRefresh' in arrival:
         failures.append('the arrival notification still calls -outlineViewRefresh itself')
 

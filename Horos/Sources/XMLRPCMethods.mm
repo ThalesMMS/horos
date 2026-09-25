@@ -969,7 +969,7 @@
     
     if (!serverName.length)
     {
-        NSLog( @"****** XMLRPC server name is empty: %@", paramDict);
+        NSLog( @"****** XMLRPC server name is empty: %@", [HorosQueryLog describeRetrieveParameters: paramDict]);
         ReturnWithCode(400);
     }
     
@@ -984,7 +984,7 @@
     
     if (!source)
     {
-        NSLog( @"****** XMLRPC server name not found: %@", paramDict);
+        NSLog( @"****** XMLRPC server name not found: %@", [HorosQueryLog describeRetrieveParameters: paramDict]);
         ReturnWithErrorValue(-2);
     }
     
@@ -1025,7 +1025,7 @@
         }
         else
         {
-            NSLog( @"****** XMLRPC no images found corresponding to this filter: %@", paramDict);
+            NSLog( @"****** XMLRPC no images found corresponding to this filter: %@", [HorosQueryLog describeRetrieveParameters: paramDict]);
             ReturnWithErrorValue(-3);
         }
     } @catch (NSException* e) {

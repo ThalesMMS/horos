@@ -67,8 +67,6 @@
 	[_activityTableView setDelegate: _activityHelper];
     [_activityTableView setDataSource: _activityHelper];
 	
-//	[_activityTableView bind:@"content" toObject:[ThreadsManager defaultManager].threadsController withKeyPath:@"arrangedObjects" options:NULL];
-//	[[_activityTableView tableColumnWithIdentifier:@"all"] bind:@"value" toObject:[ThreadsManager defaultManager].threadsController withKeyPath:@"arrangedObjects" options:NULL];
 }
 
 -(void)deallocActivity
@@ -285,7 +283,6 @@ static NSString* const BrowserActivityHelperContext = @"BrowserActivityHelperCon
             // progress
             if (![cell.progressIndicator superview]) {
                 [tableView addSubview:cell.progressIndicator];
-        //		[self.progressIndicator startAnimation:self];
             }
             
             NSRect progressFrame;

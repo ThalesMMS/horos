@@ -121,7 +121,6 @@ extern NSString* const DicomDatabaseLogEntryEntityName;
 
 #pragma mark Paths
 // these paths are inside baseDirPath
-// -(NSString*)sqlFilePath; // this is already defined in N2ManagedDatabase
 -(NSString*)modelVersionFilePath; // this should become private
 -(NSString*)loadingFilePath; // this should become private
 // these paths are inside dataBaseDirPath

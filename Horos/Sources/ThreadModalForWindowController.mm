@@ -90,13 +90,6 @@ static NSString* ThreadModalForWindowControllerObservationContext = @"ThreadModa
     [self.progressIndicator setIndeterminate:YES];
 	[self.progressIndicator startAnimation:self];
 	
-//  [self.titleField bind:@"value" toObject:self.thread withKeyPath:NSThreadNameKey options:NULL];
-//  [self.window bind:@"title" toObject:self.thread withKeyPath:NSThreadNameKey options:NULL];
-//    [self.statusField bind:@"string" toObject:self.thread withKeyPath:NSThreadStatusKey options:NULL];
-//    [self.progressDetailsField bind:@"value" toObject:self.thread withKeyPath:NSThreadProgressDetailsKey options:NULL];
-//    [self.cancelButton bind:@"hidden" toObject:self.thread withKeyPath:NSThreadSupportsCancelKey options:[NSDictionary dictionaryWithObject:NSNegateBooleanTransformerName forKey:NSValueTransformerNameBindingOption]];
-//	[self.cancelButton bind:@"hidden2" toObject:self.thread withKeyPath:NSThreadIsCancelledKey options:NULL];
-//	[self.backgroundButton bind:@"hidden" toObject:self.thread withKeyPath:NSThreadSupportsBackgroundingKey options:[NSDictionary dictionaryWithObject:NSNegateBooleanTransformerName forKey:NSValueTransformerNameBindingOption]];
 	
 	[self.thread addObserver:self forKeyPath:NSThreadProgressKey options:NSKeyValueObservingOptionInitial context:ThreadModalForWindowControllerObservationContext];
 	[self.thread addObserver:self forKeyPath:NSThreadNameKey options:NSKeyValueObservingOptionInitial context:ThreadModalForWindowControllerObservationContext];
@@ -306,11 +299,6 @@ static NSString* ThreadModalForWindowControllerObservationContext = @"ThreadModa
         if ([NSThread isMainThread])
             [NSApp endSheet:self.window];
         else [NSApp performSelectorOnMainThread:@selector(endSheet:) withObject:self.window waitUntilDone:NO];
-        //    if (![self.window isSheet]) {
-        //        if ([NSThread isMainThread])
-        //            [self.window orderOut:self];
-        //        else [self.window performSelectorOnMainThread:@selector(orderOut:) withObject:self waitUntilDone:NO];
-        //    }
     }
 }
 
@@ -331,9 +319,6 @@ static NSString* ThreadModalForWindowControllerObservationContext = @"ThreadModa
 @implementation NSThread (ModalForWindow)
 
 -(ThreadModalForWindowController*)startModalForWindow:(NSWindow*)window {
-//	if ([[self threadDictionary] objectForKey:ThreadIsCurrentlyModal])
-//		return nil;
-//	[[self threadDictionary] setObject:[NSNumber numberWithBool:YES] forKey:ThreadIsCurrentlyModal];
 	if ([NSThread isMainThread]) {
 		if (![self isFinished])
 			return [[[ThreadModalForWindowController alloc] initWithThread:self window:window] autorelease];
@@ -359,9 +344,5 @@ static NSString* ThreadModalForWindowControllerObservationContext = @"ThreadModa
 
 @implementation MainThreadActiveWindow
 
-/*-(BOOL)isKeyWindow {
-    BOOL cond = [[(ThreadModalForWindowController*)self.windowController thread] isMainThread] ;//&& [NSApp isActive];
-    return cond? YES : [super isKeyWindow];
-}*/
 
 @end

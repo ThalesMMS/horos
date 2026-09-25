@@ -45,7 +45,6 @@
 #import "DCMCalendarDate.h"
 #import "DCMNetServiceDelegate.h"
 #import "QueryArrayController.h"
-//#import "AdvancedQuerySubview.h"
 #import "DCMTKRootQueryNode.h"
 #import "DCMTKStudyQueryNode.h"
 #import "DCMTKSeriesQueryNode.h"
@@ -143,7 +142,6 @@ extern "C"
                     
                     array = [qm queries];
                     
-//                    NSLog( @"date: %@ time: %@ count: %d", date, studyTime, array.count);
                     
                     NSMutableDictionary *dictionary = [NSMutableDictionary dictionaryWithDictionary: [qm parameters]];
                     
@@ -189,7 +187,6 @@ extern "C"
 	
 	@try
 	{
-		// aServer = [[QueryController currentQueryController] TLSAskPrivateKeyPasswordForServer:aServer];
 		qm = [[[QueryArrayController alloc] initWithCallingAET:[NSUserDefaults defaultAETitle] distantServer:aServer] autorelease];
 		
 		NSString *filterValue = [an stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
@@ -227,7 +224,6 @@ extern "C"
 	
 	@try
 	{
-		// aServer = [[QueryController currentQueryController] TLSAskPrivateKeyPasswordForServer:aServer];
 		qm = [[QueryArrayController alloc] initWithCallingAET:[NSUserDefaults defaultAETitle] distantServer:aServer];
 		
 		NSString *filterValue = [an stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
@@ -411,7 +407,7 @@ extern "C"
             
             NSArray *found = [QueryController queryStudiesForFilters: one servers: serversList showErrors: showErrors];
             
-            NSLog( @"---- patient identifier \"%@\": %d stud%@", identifier, (int) found.count, found.count == 1? @"y" : @"ies");
+            NSLog( @"---- patient identifier %d of %d: %d stud%@", (int) [identifiers indexOfObject: identifier] + 1, (int) identifiers.count, (int) found.count, found.count == 1? @"y" : @"ies");
             
             [QueryController mergeStudies: found into: combined];
         }
@@ -510,7 +506,7 @@ extern "C"
                     if( [s rangeOfString:@"*"].location != NSNotFound && [s stringByReplacingOccurrencesOfString: @"*" withString:@""].length <= 2)
                     {
                         [keysToBeRemoved addObject: key];
-                        NSLog( @"---- too small query (%@) -> removed: %@", key, s);
+                        NSLog( @"---- too small query -> removed: %@", [HorosQueryLog termWithKey: key value: s]);
                     }
                     
                     s = [s stringByReplacingOccurrencesOfString: @"*" withString:@""];
@@ -565,19 +561,19 @@ extern "C"
     
     if( usePatientName && study.name.length == 0)
     {
-        NSLog( @"****** QR: usePatientName == YES && study.name.length == 0 : %@", study);
+        NSLog( @"****** QR: usePatientName == YES && study.name.length == 0 : %@", study.studyInstanceUID);
         return 0;
     }
     
     if( usePatientBirthDate && study.dateOfBirth == nil)
     {
-        NSLog( @"****** QR: usePatientBirthDate == YES && study.dateOfBirth == 0 : %@", study);
+        NSLog( @"****** QR: usePatientBirthDate == YES && study.dateOfBirth == 0 : %@", study.studyInstanceUID);
         return 0;
     }
     
     if( usePatientID && study.patientID.length == 0)
     {
-        NSLog( @"****** QR: usePatientID && study.patientID.length == 0 : %@", study);
+        NSLog( @"****** QR: usePatientID && study.patientID.length == 0 : %@", study.studyInstanceUID);
         return 0;
     }
     
@@ -588,7 +584,7 @@ extern "C"
     }
     
 #ifndef NDEBUG
-    NSLog( @"------- queryStudiesForPatient: %@", study.name);
+    NSLog( @"------- queryStudiesForPatient: %@", study.studyInstanceUID);
 #endif
     
     NSMutableDictionary *filters = [NSMutableDictionary dictionary];
@@ -658,7 +654,6 @@ extern "C"
 		[theTask setEnvironment:[NSDictionary dictionaryWithObject:[[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"/dicom.dic"] forKey:@"DCMDICTPATH"]];
 		[theTask setLaunchPath:[[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"/echoscu"]];
 		
-		//NSArray *args = [NSArray arrayWithObjects: address, [NSString stringWithFormat:@"%d", port], @"-aet", [[NSUserDefaults standardUserDefaults] stringForKey: @"AETITLE"], @"-aec", aet, @"-to", [[NSUserDefaults standardUserDefaults] stringForKey:@"DICOMTimeout"], @"-ta", [[NSUserDefaults standardUserDefaults] stringForKey:@"DICOMTimeout"], @"-td", [[NSUserDefaults standardUserDefaults] stringForKey:@"DICOMTimeout"], nil];
 		
 		NSMutableArray *args = [NSMutableArray array];
 		[args addObject: address];
@@ -676,8 +671,6 @@ extern "C"
 		
 		if([[serverParameters objectForKey:@"TLSEnabled"] boolValue])
 		{
-			//[DDKeychain lockTmpFiles];
-			
 			// TLS support. Options listed here http://support.dcmtk.org/docs/echoscu.html
 			
 			if([[serverParameters objectForKey:@"TLSAuthenticated"] boolValue])
@@ -730,7 +723,7 @@ extern "C"
 				[DDKeychain KeychainAccessExportTrustedCertificatesToDirectory:trustedCertificatesDir];
 				NSArray *trustedCertificates = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:trustedCertificatesDir error:nil];
 				
-				//[args addObject:@"--add-cert-dir"]; // add certificates in d to list of certificates  .... needs to use OpenSSL & rename files (see http://forum.dicom-cd.de/viewtopic.php?p=3237&sid=bd17bd76876a8fd9e7fdf841b90cf639 )
+				// Certificate-directory support would require OpenSSL-compatible certificate filenames.
 				for (NSString *cert in trustedCertificates)
 				{
 					[args addObject:@"--add-cert-file"];
@@ -778,7 +771,6 @@ extern "C"
         
 		if([[serverParameters objectForKey:@"TLSEnabled"] boolValue])
 		{
-			//[DDKeychain unlockTmpFiles];
 			[[NSFileManager defaultManager] removeItemAtPath:[DICOMTLS keyPathForServerAddress:address port:[port intValue] AETitle:aet withStringID:uniqueStringID] error:NULL];
 			[[NSFileManager defaultManager] removeItemAtPath:[DICOMTLS certificatePathForServerAddress:address port:[port intValue] AETitle:aet withStringID:uniqueStringID] error:NULL];
 			[[NSFileManager defaultManager] removeItemAtPath:[NSString stringWithFormat:@"%@%@", TLS_TRUSTED_CERTIFICATES_DIR, uniqueStringID] error:NULL];
@@ -1198,19 +1190,6 @@ extern "C"
 				[src setValue: [NSNumber numberWithBool: NO] forKey: @"activated"];
 			}
 			
-//			if( [r count] == 1)
-//			{
-//				for( id src in sourcesArray)
-//				{
-//					if( [[src valueForKey: @"AddressAndPort"] isEqualToString: [r lastObject]])
-//					{
-//						[sourcesTable selectRowIndexes: [NSIndexSet indexSetWithIndex: [sourcesArray indexOfObject: src]] byExtendingSelection: NO];
-//						[sourcesTable scrollRowToVisible: [sourcesArray indexOfObject: src]];
-//					}
-//				}
-//			}
-//			else
-//			{
 				BOOL first = YES;
 				
                 for( int i = 0; i < r.count; i++)
@@ -1529,8 +1508,6 @@ extern "C"
 		{
 			[pressedKeys appendString: [event characters]];
 			
-			NSLog(@"%@", pressedKeys);
-			
 			NSArray *resultFilter = [resultArray filteredArrayUsingPredicate: [NSPredicate predicateWithFormat:@"name BEGINSWITH[cd] %@", pressedKeys]];
 			
 			[NSObject cancelPreviousPerformRequestsWithTarget: pressedKeys selector:@selector(setString:) object:@""];
@@ -1627,16 +1604,6 @@ extern "C"
 {
 	@try
 	{
-//		if( [[tableColumn identifier] isEqualToString:@"comment"])
-//		{
-//			DatabaseIsEdited = YES;
-//			return YES;
-//		}
-//		else
-//		{
-//			DatabaseIsEdited = NO;
-//			return NO;
-//		}
 	}
 	@catch (NSException * e)
 	{
@@ -1915,7 +1882,7 @@ extern "C"
 - (HorosLocalCompleteness*) localCompletenessForItem: (id) item
 {
     if ([item isKindOfClass:[DCMTKQueryNode class]] && [item retrieveInventory]) {
-        [item refreshRetrieveInventory];
+        [item refreshRetrieveInventoryWithoutWaiting];
         HorosRetrieveInventory *inventory = [item retrieveInventory];
         BOOL current = [inventory matchesReportedCount:[[item valueForKey:@"numberImages"] integerValue]];
         HorosLocalCompleteness *value = [[[HorosLocalCompleteness alloc] initWithLocalCount:current ? inventory.importedCount : inventory.localUniqueCount
@@ -2226,17 +2193,16 @@ extern "C"
     [outlineView selectRowIndexes: selection byExtendingSelection: NO];
 }
 
+// Imports change the values, not the order: rows move only when the user
+// clicks a column header (#693).
 - (void) reloadResultsAfterLocalChange
 {
-    for( NSSortDescriptor *descriptor in [outlineView sortDescriptors])
-    {
-        if( [[descriptor key] isEqualToString: @"localCompleteness"])
-        {
-            [self sortResultsPreservingSelection];
-            return;
-        }
-    }
     [outlineView reloadData];
+}
+
+- (void) retrieveInventoryDidRefresh: (NSNotification*) notification
+{
+    [outlineView setNeedsDisplay: YES];
 }
 
 - (void)outlineView:(NSOutlineView *)aOutlineView sortDescriptorsDidChange:(NSArray *)oldDescs
@@ -2283,6 +2249,25 @@ extern "C"
     
 	[PatientModeMatrix selectTabViewItemAtIndex: 1];	// PatientID search
 	[searchFieldID setStringValue: ID];
+	
+	[self query: self];
+	
+	NSArray *result = [NSArray arrayWithArray: resultArray];
+	
+    [self applyPresetDictionary: savedSettings];
+	
+	return result;
+}
+
+// The same, by patient name (#703): the user's filters come back afterwards.
+- (NSArray*) queryPatientName:(NSString*) name
+{
+    NSDictionary *savedSettings = [self savePresetInDictionaryWithDICOMNodes: NO];
+	
+    [self emptyPreset: self];
+    
+	[PatientModeMatrix selectTabViewItemAtIndex: 0];	// Patient name search
+	[searchFieldName setStringValue: name];
 	
 	[self query: self];
 	
@@ -2544,7 +2529,7 @@ extern "C"
                     
                     currentQueryKey = [NSString stringWithUTF8String:tag.getTagName()];
                     
-                    NSLog( @"DICOM Q&R with custom field: %@ : %@", currentQueryKey, customValue);
+                    NSLog( @"DICOM Q&R with custom field: %@", [HorosQueryLog termWithKey: currentQueryKey value: customValue]);
                     
                     if( showError && [customValue cStringUsingEncoding: [NSString encodingForDICOMCharacterSet: [[NSUserDefaults standardUserDefaults] stringForKey: @"STRINGENCODING"]]] == nil)
                     {
@@ -2837,16 +2822,10 @@ extern "C"
                 {
                     if( showError && [NSThread isMainThread])
                     {
-//                        if ([defaults boolForKey:alertSuppress])
-//                        {
-//                            doit = YES;
-//                        }
-//                        else
                         {
                             NSAlert* alert = [[NSAlert new] autorelease];
                             [alert setMessageText: NSLocalizedString(@"Query", nil)];
                             [alert setInformativeText: NSLocalizedString(@"No query parameters provided. The query may take a long time.", nil)];
-//                            [alert setShowsSuppressionButton:YES];
                             [alert addButtonWithTitle: NSLocalizedString(@"Continue", nil)];
                             [alert addButtonWithTitle: NSLocalizedString(@"Cancel", nil)];
                             
@@ -3240,7 +3219,7 @@ extern "C"
                 {
                     if( [[study valueForKey: @"accessionNumber"] isEqualToString: [item valueForKey: @"accessionNumber"]])
                     {
-                        NSLog( @"--- Identical AccessionNumber: %@ - %d images", item, [[item valueForKey: @"numberImages"] intValue]);
+                        NSLog( @"--- Identical AccessionNumber: %@ - %d images", [item valueForKey: @"uid"], [[item valueForKey: @"numberImages"] intValue]);
                         
                         addItem = NO;
                         break;
@@ -3379,7 +3358,7 @@ extern "C"
 			NSLog( @"Will auto-retrieve these items:");
 			for( id item in selectedItems)
 			{
-				NSLog( @"%@ %@ %@ %@", [item valueForKey:@"theDescription"], [item valueForKey:@"patientID"], [item valueForKey:@"accessionNumber"], [item valueForKey:@"date"]);
+				NSLog( @"%@ - %d images", [item valueForKey:@"uid"], [[item valueForKey: @"numberImages"] intValue]);
 			}
 			NSLog( @"______________________________________________");
 			
@@ -3661,62 +3640,6 @@ extern "C"
 			
 			if( onlyIfNotAvailable)
 			{
-//				if( [[NSUserDefaults standardUserDefaults] boolForKey: @"RetrieveOnlyMissingUID"])
-//				{
-//					DicomStudy *localStudy = nil;
-//					
-//					// Local Study
-//					if( [item isMemberOfClass: [DCMTKSeriesQueryNode class]])
-//					{
-//						array = [self localSeries: item context: nil];
-//						
-//						if( [array count])
-//							localStudy = [[array lastObject] valueForKey: @"study"];
-//					}
-//					else
-//					{
-//						array = [self localStudy: item context: nil];
-//						
-//						if( [array count])
-//							localStudy = [array lastObject];
-//					}
-//					
-//					if( localStudy)
-//					{
-//						NSArray *localImagesUIDs = [[localStudy valueForKeyPath: @"series.images.sopInstanceUID"] allObjects];
-//						
-//						DcmDataset *dataset = new DcmDataset();
-//						
-//						dataset-> insertEmptyElement(DCM_StudyInstanceUID, OFTrue);
-//						dataset-> insertEmptyElement(DCM_SeriesInstanceUID, OFTrue);
-//						dataset-> insertEmptyElement(DCM_SOPInstanceUID, OFTrue);
-//						
-//						if( [item isMemberOfClass:[DCMTKStudyQueryNode class]]) // Study Level
-//							dataset-> putAndInsertString(DCM_StudyInstanceUID, [[item uid] UTF8String], OFTrue);
-//						else													// Series Level
-//							dataset-> putAndInsertString(DCM_SeriesInstanceUID, [[item uid] UTF8String], OFTrue);
-//							
-//						dataset-> putAndInsertString(DCM_QueryRetrieveLevel, "IMAGE", OFTrue);
-//						
-//						[self queryWithValues: nil dataset: dataset];
-//						
-//						for( DCMTKImageQueryNode *image in [self children])
-//						{
-//							if( [image uid])
-//							{
-//								if( [localImagesUIDs containsObject: [image uid]])
-//								{
-//									// already here
-//								}
-//								else
-//								{
-//									// not here
-//								}
-//							}
-//						}
-//					}
-//				}
-//				else
 				{
 					int localNumber = 0;
 					NSArray *array = 0L;
@@ -4089,8 +4012,8 @@ extern "C"
 			}
 			@catch (NSException * e)
 			{
-                NSLog( @"dictionary: %@", d);
-                NSLog( @"object: %@, %@", object, [object uid]);
+                NSLog( @"dictionary keys: %@", [[d allKeys] componentsJoinedByString: @", "]);
+                NSLog( @"object: %@", [object uid]);
 				N2LogExceptionWithStackTrace( e);
 			}
 			
@@ -4311,7 +4234,7 @@ static NSString *HorosViewingSeriesUID( id item)
 			seriesArray = [context executeFetchRequest:request error:&error];
 			if( [seriesArray count] > 0)
 			{
-				NSLog( @"%@",  [seriesArray description]);
+				NSLog( @"%d local series", (int) [seriesArray count]);
 				
 				NSManagedObject	*series = [seriesArray objectAtIndex: 0];
 				
@@ -5061,6 +4984,7 @@ static NSString *HorosViewingSeriesUID( id item)
 		
 		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(observeDatabaseAddNotification:) name:OsirixAddToDBNotification object:nil];
 		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(observeStoreCompletedNotification:) name:@"HorosDICOMStoreCompleted" object:nil];
+		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(retrieveInventoryDidRefresh:) name:HorosRetrieveInventoryDidRefreshNotification object:nil];
 		
 		queryFilters = nil;
 		currentQueryKey = nil;
@@ -5339,13 +5263,6 @@ static NSString *HorosViewingSeriesUID( id item)
 	//set up Query Keys
 	currentQueryKey = PatientName;
 	
-//	dateQueryFilter = [[QueryFilter queryFilterWithObject:nil ofSearchType:searchExactMatch forKey:@"StudyDate"] retain];
-//	timeQueryFilter = [[QueryFilter queryFilterWithObject:nil ofSearchType:searchExactMatch forKey:@"StudyTime"] retain];
-    
-//    if( [[NSUserDefaults standardUserDefaults] boolForKey: @"SupportQRModalitiesinStudy"])
-//        modalityQueryFilter = [[QueryFilter queryFilterWithObject:nil ofSearchType:searchExactMatch forKey:@"ModalitiesinStudy"] retain];
-//	else
-//        modalityQueryFilter = [[QueryFilter queryFilterWithObject:nil ofSearchType:searchExactMatch forKey:@"Modality"] retain];
     
 	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(refreshSources) name:@"DCMNetServicesDidChange"  object:nil];
     
@@ -5447,10 +5364,6 @@ static NSString *HorosViewingSeriesUID( id item)
 
 - (IBAction) verify:(id)sender
 {
-//	int selectedRow = [sourcesTable selectedRow];
-//    
-//    [NSThread detachNewThreadSelector: @selector( queryTest:) toTarget: [QueryController class] withObject: [[sourcesArray objectAtIndex: selectedRow] valueForKey:@"server"]];
-//    
     
 	int status, selectedRow = [sourcesTable selectedRow];
 

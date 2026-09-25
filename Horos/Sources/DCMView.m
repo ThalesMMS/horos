@@ -3646,7 +3646,7 @@ NSInteger studyCompare(ViewerController *v1, ViewerController *v2, void *context
         (colorTransfer || redFactor != 1 || greenFactor != 1 || blueFactor != 1) && f_ext_texture_rectangle;
     BOOL windowedLens = self.curDCM.transferFunctionPtr || self.curDCM.subtractedfImage || self.curDCM.shutterEnabled ||
         self.curDCM.stackMode == 4 || self.curDCM.stackMode == 5;
-    float *lensSource = scalarLens && !windowedLens ? [self.curDCM computefImage] : nil;
+    float *lensSource = scalarLens && !windowedLens ? [self.curDCM computefImageForDisplay] : nil;
     if (scalarLens && !windowedLens && !lensSource) {
         [self.horosScalarCLUTState markUnavailable];
         [self setNeedsDisplay:YES];
@@ -12712,7 +12712,7 @@ static NSInteger HorosMovieIndexForScroll(NSInteger current, NSInteger count, do
             if( intFULL32BITPIPELINE == YES && TextureComputed32bitPipeline == NO)
             {
                 rowBytes = *tW * 4;
-                computedfImage = [self.curDCM computefImage];
+                computedfImage = [self.curDCM computefImageForDisplay];
                 src.data = computedfImage;
                 src.rowBytes = self.curDCM.pwidth*4;
                 dst.rowBytes = rowBytes;
@@ -12777,7 +12777,7 @@ static NSInteger HorosMovieIndexForScroll(NSInteger current, NSInteger count, do
     {
         *tW = self.curDCM.pwidth;
         rowBytes = self.curDCM.pwidth*4;
-        computedfImage = [self.curDCM computefImage];
+        computedfImage = [self.curDCM computefImageForDisplay];
         baseAddr = (char*) computedfImage;
     }
     else

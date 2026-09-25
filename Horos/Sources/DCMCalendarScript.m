@@ -49,7 +49,6 @@
 		
 		//Important:  You should access NSAppleScript only from the main thread.
 		[compiledScript performSelectorOnMainThread:@selector(compileAndReturnError:) withObject:nil waitUntilDone: YES];
-//		[compiledScript compileAndReturnError:nil];
 	}
 	return self;
 }

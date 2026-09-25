@@ -94,9 +94,6 @@ static NSString* purgedDatabasePath = nil;
 + (BOOL) isICloudDriveEnabled
 {
     
-    /* General iCloud Drive enabled check */
-    //NSString* mobileDocumentsPath = [NSString stringWithFormat:@"%@/Library/Mobile Documents/com~apple~CloudDocs", NSHomeDirectory()];
-    //return [[NSFileManager defaultManager] fileExistsAtPath:mobileDocumentsPath isDirectory:nil];
     
     NSString* mobileDocumentsPath = [NSString stringWithFormat:@"%@/Library/Mobile Documents/com~apple~CloudDocs/Documents", NSHomeDirectory()];
     if ([[NSFileManager defaultManager] fileExistsAtPath:mobileDocumentsPath isDirectory:nil])
@@ -171,35 +168,6 @@ static NSString* purgedDatabasePath = nil;
 
 + (void) performStartupICloudDriveTasks:(BrowserController*) browserController
 {
-    /*
-     
-    -- NOT USED
-    
-     NSString* purgedDatabaseLocation = [[NSUserDefaults standardUserDefaults] objectForKey:@"PURGED_DATABASELOCATIONURL"];
-    
-    if (purgedDatabaseLocation)
-    {
-        NSError *error = nil;
-        NSArray *folderContents = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:purgedDatabaseLocation error:&error];
-        if (error == nil && folderContents && folderContents.count == 1)
-        {
-            if ([[folderContents objectAtIndex:0] isEqualToString:@"INCOMING.noindex"])
-            {
-                NSString* toDelete = [NSString stringWithFormat:@"%@/INCOMING.noindex",purgedDatabaseLocation];
-                
-                folderContents = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:toDelete error:&error];
-                
-                if (error == nil && folderContents && folderContents.count == 0)
-                {
-                    [[NSFileManager defaultManager] removeItemAtPath:toDelete error:nil];
-                    [[NSFileManager defaultManager] removeItemAtPath:purgedDatabaseLocation error:nil];
-                    
-                    [[NSUserDefaults standardUserDefaults] setObject:nil forKey: @"PURGED_DATABASELOCATIONURL"];
-                }
-            }
-        }
-    }
-    */
     
     
     if ([ICloudDriveDetector requiresUserNotificationOnICloudDrive])
@@ -383,7 +351,6 @@ static NSString* purgedDatabasePath = nil;
             [[NSUserDefaults standardUserDefaults] setInteger: [[NSUserDefaults standardUserDefaults] integerForKey: @"DEFAULT_DATABASELOCATION"] forKey: @"DATABASELOCATION"];
             [[NSUserDefaults standardUserDefaults] setObject: [[NSUserDefaults standardUserDefaults] stringForKey: @"DEFAULT_DATABASELOCATIONURL"] forKey: @"DATABASELOCATIONURL"];
 
-            //[[NSUserDefaults standardUserDefaults] setObject:databasePath forKey: @"PURGED_DATABASELOCATIONURL"]; -- NOT USED
             
             [[NSUserDefaults standardUserDefaults] synchronize];
             

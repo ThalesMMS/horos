@@ -10,8 +10,9 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--source', type=Path, default=root / 'Horos/Sources/AppController.m')
 args = parser.parse_args()
 source = args.source.read_bytes().decode('latin1')
-start = source.index('//if ([NSUserDefaults.standardUserDefaults boolForKey:@"DoNotEmptyIncomingDir"]) // move temp & decompress to incoming')
-end = source.index('//\t[self checkForOsirixMimeType]', start)
+# The recovery block is the braced block between these two statements.
+start = source.index('[self initTilingWindows];') + len('[self initTilingWindows];')
+end = source.index('if( [AppController isKDUEngineAvailable])', start)
 recovery = source[start:end]
 program = r'''
 #import <Foundation/Foundation.h>

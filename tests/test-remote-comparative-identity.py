@@ -16,6 +16,7 @@ static NSString *PatientID=@"PatientID", *PatientBirthDate=@"PatientBirthDate";
 @property(copy) NSString *name;
 @property(copy) NSString *patientID;
 @property(retain) NSDate *dateOfBirth;
+@property(copy) NSString *studyInstanceUID;
 @end
 @implementation DicomStudy
 @end

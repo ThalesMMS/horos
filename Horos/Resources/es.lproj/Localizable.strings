@@ -2831,6 +2831,7 @@
 
 "Show Patient Crosshair" = "Mostrar cursor de referencia del paciente";
 "Use Metal in MPR" = "Usar Metal en MPR";
+"Cubic Interpolation for MPR Display" = "Interpolación cúbica para la visualización MPR";
 "Compare in Metal (3D)" = "Comparar en Metal (3D)";
 "Metal comparison, %.1f ms. Use the original viewer for tools and overlays." = "Comparación Metal, %.1f ms. Use el visor original para herramientas y superposiciones.";
 "Copy ROIs from Fused Series..." = "Copiar ROIs de la serie fusionada...";
@@ -2901,3 +2902,36 @@
 "Reslice Sagittal" = "Reconstrucción sagital";
 "Scroll position preview" = "Vista previa de la posición de desplazamiento";
 "XML cannot preserve a Length between slices. Use Export ROIs as JSON or save the ROI archive instead." = "XML no puede conservar una longitud entre cortes. Use Exportar las ROI como JSON o guarde el archivo de ROI.";
+
+/* Album from a patient list image (#703) */
+"The identifier pattern in the preferences is not a regular expression with a capture group; the default is used." = "El patrón del identificador en las preferencias no es una expresión regular con un grupo de captura; se usa el predeterminado.";
+"Text recognition was unsure of this line." = "El reconocimiento de texto no está seguro de esta línea.";
+"No local study has this identifier." = "Ningún estudio local tiene este identificador.";
+"The name differs from the one stored for this identifier." = "El nombre difiere del almacenado para este identificador.";
+"Several patients have this name; none was chosen." = "Varios pacientes tienen este nombre; no se eligió ninguno.";
+"Found by name only." = "Encontrado solo por el nombre.";
+"The age differs from the stored birth date." = "La edad no coincide con la fecha de nacimiento almacenada.";
+"No birth date is stored to check the age." = "No hay fecha de nacimiento almacenada para comprobar la edad.";
+"The sex differs from the stored one." = "El sexo difiere del almacenado.";
+"The clipboard image cannot be read." = "No se puede leer la imagen del portapapeles.";
+"There is no image on the clipboard." = "No hay ninguna imagen en el portapapeles.";
+"Copy a screenshot of the patient list, then try again." = "Copie una captura de la lista de pacientes y vuelva a intentarlo.";
+"The text of the image could not be recognised." = "No se pudo reconocer el texto de la imagen.";
+"No patient was found in the image." = "No se encontró ningún paciente en la imagen.";
+"Each patient needs a line with a name of two words or more." = "Cada paciente necesita una línea con un nombre de dos palabras o más.";
+"Album from Patient List" = "Álbum desde lista de pacientes";
+"Include" = "Incluir";
+"Identifier" = "Identificador";
+"Age / Sex" = "Edad / Sexo";
+"Local studies" = "Estudios locales";
+"To check" = "Por revisar";
+"Patient list %@" = "Lista de pacientes %@";
+"Album name:" = "Nombre del álbum:";
+"Search PACS" = "Buscar en PACS";
+"Create Album" = "Crear álbum";
+"%d of %d patients, %d studies will be in the album." = "%d de %d pacientes, %d estudios estarán en el álbum.";
+"The album was not created." = "No se creó el álbum.";
+"A study changed or was deleted after the list was reviewed. Review the list again." = "Un estudio cambió o se eliminó después de revisar la lista. Revise la lista de nuevo.";
+"The album could not be saved." = "No se pudo guardar el álbum.";
+"Create Album from Patient List Image..." = "Crear álbum desde imagen de lista de pacientes...";
+"1 study" = "1 estudio";

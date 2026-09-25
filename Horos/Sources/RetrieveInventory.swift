@@ -207,12 +207,15 @@ public final class RetrieveInventory: NSObject {
                                     "failed":String(failed),"warnings":String(warnings),"remaining":String(remaining)])
     }
 
-    @objc(updateImportedUIDs:)
-    public func updateImportedUIDs(_ uids: [String]) {
+    /// Returns whether the imported identities changed.
+    @objc(updateImportedUIDs:) @discardableResult
+    public func updateImportedUIDs(_ uids: [String]) -> Bool {
         Self.lock.lock(); defer { Self.lock.unlock() }
         let imported = Set(uids.filter { !$0.isEmpty })
         if receiving && baselineImported == nil { baselineImported = imported }
-        if imported != data.imported { data.imported = imported; save() }
+        guard imported != data.imported else { return false }
+        data.imported = imported; save()
+        return true
     }
 
     /// Expected instances this attempt received that the index does not hold yet.

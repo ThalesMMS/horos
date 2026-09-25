@@ -353,7 +353,6 @@ enum /*typedef NS_ENUM(NSUInteger, O2ValueRepresentation)*/ {
         });
 
         
-        //        NSLog(@"ascadfasf %@", [_tagsPopUp exposedBindings]);
         [_tagsPopUp bind:@"selectedTag" toObject:self withKeyPath:@"selectedTag" options:[NSDictionary dictionaryWithObject:[NSNumber numberWithBool:YES] forKey:NSValidatesImmediatelyBindingOption]];
 
         [self _observePopUpButtonWillPopUpNotification:nil];
@@ -454,8 +453,7 @@ enum /*typedef NS_ENUM(NSUInteger, O2ValueRepresentation)*/ {
         
         menu = _withinPopUp.menu = [[[NSMenu alloc] initWithTitle:@""] autorelease];
         
-        //        mi = [menu addItemWithTitle:NSLocalizedString(@"the last day", nil) action:nil keyEquivalent:@""]; // this choice ("is within" "the last day") is removed because it's already covered by the "is today" item
-        //        mi.tag = O21Day;
+        // "The last day" is omitted because "is today" already covers it.
         mi = [menu addItemWithTitle:NSLocalizedString(@"the last 2 days", nil) action:nil keyEquivalent:@""];
         mi.tag = O22Days;
         mi = [menu addItemWithTitle:NSLocalizedString(@"the last 7 days", nil) action:nil keyEquivalent:@""];
@@ -558,7 +556,6 @@ enum /*typedef NS_ENUM(NSUInteger, O2ValueRepresentation)*/ {
     if (context != [self class])
         return [super observeValueForKeyPath:keyPath ofObject:object change:change context:context];
     
-//    NSLog(@"%X observeValueForKeyPath: %@ -> %@", (int)self, keyPath, [self valueForKeyPath:keyPath]);
     
     if (object == self)
     {
@@ -606,7 +603,6 @@ enum /*typedef NS_ENUM(NSUInteger, O2ValueRepresentation)*/ {
                 } break;
             }
             
-//            [self review];
         }
         
         if ([keyPath isEqualToString:@"operator"])
@@ -712,53 +708,6 @@ enum /*typedef NS_ENUM(NSUInteger, O2ValueRepresentation)*/ {
     _tagsSortKey = sender.tag;
 }
 
-//- (void)sortTagsMenu {
-//    NSMenu* menu = _tagsPopUp.menu;
-//    
-//    NSArray* mis = [menu.itemArray sortedArrayUsingComparator:^NSComparisonResult(NSMenuItem* mi1, NSMenuItem* mi2) {
-//        if (mi1.isEnabled != mi2.isEnabled) {
-//            if (!mi1.isEnabled)
-//                return NSOrderedDescending;
-//            else return NSOrderedAscending;
-//        }
-//        
-//        DCMAttributeTag* obj1 = mi1.representedObject;
-//        DCMAttributeTag* obj2 = mi2.representedObject;
-//        
-//        if (!obj1)
-//            if (!obj2)
-//                return NSOrderedSame;
-//            else return NSOrderedAscending;
-//            else if (!obj2)
-//                return NSOrderedDescending;
-//        
-//        // by tag
-//        if (_tagsSortKey == O2DicomPredicateEditorSortTagsByTag) {
-//            long t1 = [[self class] tagForTag:obj1];
-//            long t2 = [[self class] tagForTag:obj2];
-//            if (t1 < t2)
-//                return NSOrderedAscending;
-//            if (t1 > t2)
-//                return NSOrderedDescending;
-//        }
-//        
-//        // by name
-//        return [[[self class] _transformTagName:obj1.name] caseInsensitiveCompare:[[self class] _transformTagName:obj2.name]];
-//    }];
-//    
-//    NSInteger stag = [_tagsPopUp selectedTag];
-//    NSDictionary* binding = [_tagsPopUp infoForBinding:@"selectedTag"];
-//    [_tagsPopUp unbind:@"selectedTag"];
-//    
-//    [menu removeAllItems];
-//    for (NSMenuItem *mi in mis)
-//        [menu addItem: mi];
-//    
-//    if (binding)
-//        [_tagsPopUp bind:@"selectedTag" toObject:[binding valueForKey:NSObservedObjectKey] withKeyPath:[binding valueForKey:NSObservedKeyPathKey] options:[binding objectForKey:NSOptionsKey]];
-//    else if (stag != -1)
-//        [_tagsPopUp selectItemWithTag:stag];
-//}
 
 - (void)_observePopUpButtonWillPopUpNotification:(NSNotification*)notification {
     
@@ -790,32 +739,6 @@ enum /*typedef NS_ENUM(NSUInteger, O2ValueRepresentation)*/ {
     }
 }
 
-/*- (void)menuNeedsUpdate:(NSMenu*)menu {
-    if (menu == _tagsPopUp.menu) {
-        BOOL somethingIsAvailable = NO;
-        for (NSMenuItem* mi in menu.itemArray)
-            if (!mi.isHidden) {
-                somethingIsAvailable = YES;
-                break;
-            }
-        if (!somethingIsAvailable) {
-            [_tagsPopUpKeysCatcher setStringValue:@""];
-            [self filterItemsWithWords:nil];
-        }
-        [self performSelector:@selector(_focusTagsPopUpFilterTextField:) withObject:menu afterDelay:0.01 inModes:[NSArray arrayWithObject:NSRunLoopCommonModes]];
-    }
-}
-
-- (void)_focusTagsPopUpFilterTextField:(NSMenu*)menu {
-    NSWindow* menuWindow = [[NSApp windows] lastObject]; // this is the NSCalbonMenuWindow instance
-    if ([menuWindow.className isEqualToString:@"NSCarbonMenuWindow"]) {
-        // this is a hack - the NSTextField will never be drawn by the NSCarbonMenuWindow, but somehow it's still receiving keyboard events
-        [menuWindow.contentView addSubview:_tagsPopUpKeysCatcher];
-        [menuWindow makeFirstResponder:_tagsPopUpKeysCatcher];
-    }
-}*/
-
-//#pragma mark Operators
 
 - (void)setAvailableOperators:(NSNumber*)first, ... NS_REQUIRES_NIL_TERMINATION {
     NSMutableSet* oops = [NSMutableSet set];
@@ -826,7 +749,6 @@ enum /*typedef NS_ENUM(NSUInteger, O2ValueRepresentation)*/ {
         [oops addObject:arg];
     va_end(args);
     
-//    NSLog(@"Available Operators -> %@", oops);
     
     NSMenuItem* firstItem = nil;
     for (NSMenuItem* mi in _operatorsPopUp.itemArray) {
@@ -843,27 +765,6 @@ enum /*typedef NS_ENUM(NSUInteger, O2ValueRepresentation)*/ {
         self.operator = _operatorsPopUp.selectedTag;
 }
 
-/*- (void)setOperator:(NSInteger)type {
- [_operatorsPopUp selectItemWithTag:type];
- 
- [self resizeSubviewsWithOldSize:self.bounds.size];
- }*/
-
-
-
-
-//#pragma mark -----
-
-//+ (NSDateFormatter*)dateFormatter {
-//    static NSDateFormatter* formatter = nil;
-//    if (!formatter) {
-//        formatter = [[NSDateFormatter alloc] init];
-//        formatter.timeStyle = NSDateFormatterNoStyle;
-//        formatter.dateStyle = NSDateFormatterShortStyle;
-//    }
-//    
-//    return formatter;
-//}
 
 + (NSFormatter*)integerFormatter {
     static NSNumberFormatter* formatter = nil;
@@ -1024,8 +925,6 @@ enum /*typedef NS_ENUM(NSUInteger, O2ValueRepresentation)*/ {
             
         case DCM_CS: {
             [views addObject:_isLabel];
-//            [views addObject:_operatorsPopUp];
-//            [self setAvailableOperators: N(NSContainsPredicateOperatorType), N(NSBeginsWithPredicateOperatorType), N(NSEndsWithPredicateOperatorType), N(NSEqualToPredicateOperatorType), N(NSNotEqualToPredicateOperatorType), nil];
             // .. popup
             [_codeStringPopUp.menu removeAllItems];
             NSDictionary* dic = [O2DicomPredicateEditorCodeStrings codeStringsForTag:self.DCMAttributeTag];
@@ -1044,7 +943,6 @@ enum /*typedef NS_ENUM(NSUInteger, O2ValueRepresentation)*/ {
             if (i)
                 [views addObject:_codeStringPopUp];
             // add custom-value menu item
-            //                [_codeStringPopUp.menu addItem:[NSMenuItem separatorItem]];
             NSMenuItem* mi = [_codeStringPopUp.menu addItemWithTitle:NSLocalizedString(@"user-defined", nil) action:nil keyEquivalent:@""];
             mi.tag = ++i;
             mi.representedObject =_stringValueTextField;
@@ -1081,10 +979,6 @@ enum /*typedef NS_ENUM(NSUInteger, O2ValueRepresentation)*/ {
         _reviewing = NO;
     }
     
-    /*if ([_valueTextField.formatter isKindOfClass:[NSNumberFormatter class]]) {
-     if (![self.value isKindOfClass:[NSNumber class]])
-     self.value = [NSNumber numberWithInteger:0];*/
-    
     // show/hide
     
     for (NSView* subview in [[self.subviews copy] autorelease])
@@ -1098,25 +992,15 @@ enum /*typedef NS_ENUM(NSUInteger, O2ValueRepresentation)*/ {
         p = subview;
     }
     
-//    [p setNextKeyView:[self nextKeyView]];
-    
-    /*NSView* pview = nil;
-    for (NSView* view in views) {
-        [pview setNextResponder:view];
-        pview = view;
-    }*/
     
     [self resizeSubviewsWithOldSize:self.bounds.size];
 }
 
 - (double)matchForPredicate:(id)p {
-//    NSLog(@"matchForPredicate: %@", predicate);
 
     if ([p isKindOfClass:[NSComparisonPredicate class]])
         @try {
             NSComparisonPredicate *predicate = p;
-//            NSExpression* eleft = [predicate leftExpression];
-//            NSExpression* eright = [predicate rightExpression];
             NSPredicateOperatorType otype = [predicate predicateOperatorType];
 
             DCMAttributeTag* tag = [self tagWithKeyPath:[predicate keyPath]];
@@ -1202,7 +1086,6 @@ enum /*typedef NS_ENUM(NSUInteger, O2ValueRepresentation)*/ {
         @try {
             NSCompoundPredicate *predicate = p;
             NSArray* subpredicates = [predicate subpredicates];
-//            if (subpredicates.count > 1) {
                 // subpredicates must be of same KeyPath
                 NSString* keyPath = nil;
                 for (id p in subpredicates)
@@ -1240,8 +1123,6 @@ enum /*typedef NS_ENUM(NSUInteger, O2ValueRepresentation)*/ {
                     sp0.predicateOperatorType == NSNotEqualToPredicateOperatorType && sp1.predicateOperatorType == NSNotEqualToPredicateOperatorType &&
                     [sp0.constantValue isEqualToString:@""] && sp1.constantValue == nil)
                     return 1;
-//            } else
-//                return 0.1;
         } @catch (...) {
         }
     
@@ -1251,12 +1132,8 @@ enum /*typedef NS_ENUM(NSUInteger, O2ValueRepresentation)*/ {
     return 0;
 }
 
-/*+ (NSSet*)keyPathsForValuesAffectingPredicate {
-    return [NSSet setWithObjects: @"tag", @"operator", @"value", @"within", nil];
-}*/
 
 - (void)setPredicate:(id)p {
-//    NSLog(@"setPredicate: %@", predicate);
     
     if ([p isKindOfClass:[NSPredicate class]] && [[p predicateFormat] isEqualToString:@"TRUEPREDICATE"]) {
         [self setDCMAttributeTag:nil];
@@ -1270,7 +1147,6 @@ enum /*typedef NS_ENUM(NSUInteger, O2ValueRepresentation)*/ {
         O2ValueRepresentation vr = [[self class] valueRepresentationFromVR:tag.vr];
 
         NSPredicateOperatorType otype = [predicate predicateOperatorType];
-//        NSExpression* eright = [predicate rightExpression];
         
         [self setDCMAttributeTag:tag];
         
@@ -1535,7 +1411,6 @@ enum /*typedef NS_ENUM(NSUInteger, O2ValueRepresentation)*/ {
     
     frame.origin.x = 0;
     
-    //    NSLog(@"sf");
     for (id view in self.subviews) {
         frame = NSMakeRect(frame.origin.x, 0, 0, 0);
         if ([view isKindOfClass:[NSPopUpButton class]] || [view isKindOfClass:[NSDatePicker class]]) {
@@ -1546,10 +1421,6 @@ enum /*typedef NS_ENUM(NSUInteger, O2ValueRepresentation)*/ {
         } else
             frame.size = NSMakeSize(150, bounds.size.height);
         
-        //        NSLog(@"%@ %@ frame: %@", [view className], [view respondsToSelector:@selector(title)]? [view title] : nil, NSStringFromRect(frame));
-        
-        //        if (subview == self.subviews.lastObject)
-        //            if (frame.origin.x+frame.wi)
         
         [view setFrame:frame];
         
@@ -1557,10 +1428,6 @@ enum /*typedef NS_ENUM(NSUInteger, O2ValueRepresentation)*/ {
     }
 }
 
-/*- (void)drawRect:(NSRect)rect {
-    [super drawRect:rect];
-    // [NSBezierPath strokeRect:self.bounds];
-}*/
 
 - (NSInteger)tagForCodeString:(NSString*)str {
     NSDictionary* dic = [O2DicomPredicateEditorCodeStrings codeStringsForTag:self.DCMAttributeTag];

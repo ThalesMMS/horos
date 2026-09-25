@@ -509,7 +509,6 @@ static void* const SearchDicomNodesContext = @"SearchDicomNodesContext";
     [_federatedCheckboxes release];
     _federatedCheckboxes = nil;
     
-    //	[[[NSUserDefaults standardUserDefaults] objectForKey:@"localDatabasePaths"] removeObserver:self forValuesKey:@"values"];
     _browser = nil;
     [_volumeDiscovery release];
     [super dealloc];
@@ -531,7 +530,6 @@ static void* const SearchDicomNodesContext = @"SearchDicomNodesContext";
                 return YES;
             if (h1.name && h2.name && [h1.name isEqualToString:h2.name])
                 return YES;
-            //             return [h1 isEqualToHost:h2];
         } @catch (...) {
             @throw;
         } @finally {
@@ -549,7 +547,6 @@ static void* const SearchDicomNodesContext = @"SearchDicomNodesContext";
         return;
     }
     
-    //    NSKeyValueChange changeKind = [[change valueForKey:NSKeyValueChangeKindKey] unsignedIntegerValue];
     
     dontListenToSourcesChanges = YES;
     
@@ -671,13 +668,6 @@ static void* const SearchDicomNodesContext = @"SearchDicomNodesContext";
             // add new items
             for (NSString* aak in aa)
             {
-                //                [NSThread performBlockInBackground:^{
-                //                    // we're now in a background thread
-                //                    NSString* aet = nil;
-                //                    if ([[self class] host:[DicomNodeIdentifier location:aak toHost:NULL port:NULL aet:&aet] isEqualToHost:currentHost] && [aet isEqualToString:[[NSUserDefaults standardUserDefaults] stringForKey:@"AETITLE"]]) // don't list self
-                //                        return;
-                //                    [[NSOperationQueue mainQueue] addOperationWithBlock:^{
-                // we're now back in the main thread
                 DataNodeIdentifier* dni;
                 NSUInteger i = [[_browser.sources.content valueForKey:@"location"] indexOfObject:aak];
                 if (i == NSNotFound)
@@ -692,8 +682,6 @@ static void* const SearchDicomNodesContext = @"SearchDicomNodesContext";
                     dni.dictionary = [aa objectForKey:aak];
                     dni.description = [dni.dictionary objectForKey:@"Description"];
                 }
-                //                    }];
-                //                }];
             }
         }
         
@@ -921,7 +909,6 @@ static void* const SearchDicomNodesContext = @"SearchDicomNodesContext";
 
 -(void)horosBonjourBrowser:(HorosBonjourBrowser*)nsb didFindService:(HorosBonjourService*)service
 {
-    //NSLog(@"Bonjour service found: %@", service);
     
     DataNodeIdentifier* source;
     if (nsb == _nsbOsirix)
@@ -929,8 +916,6 @@ static void* const SearchDicomNodesContext = @"SearchDicomNodesContext";
     else
         source = [DicomNodeIdentifier dicomNodeIdentifierWithLocation:nil port:0 aetitle:@"" description:service.name dictionary:nil];
     
-    //    source.discovered = YES;
-    //	source.service = service;
     @synchronized (_bonjourSources) {
         [_bonjourServices addObject: service];
         [_bonjourSources addObject: source];

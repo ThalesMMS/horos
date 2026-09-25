@@ -107,7 +107,6 @@ NSString *CopiedRowsType = @"COPIED_ROWS_TYPE";
 {
     // register for drag and drop
     [tableView registerForDraggedTypes: [NSArray arrayWithObjects:MovedRowsType, nil]];
-    //    [tableView setAllowsMultipleSelection:YES];
     [super awakeFromNib];
 }
 

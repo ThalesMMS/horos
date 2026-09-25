@@ -125,23 +125,6 @@
     [self mouseDown:event];
 }
 
-/*- (void)bind:(NSString *)binding toObject:(id)observable withKeyPath:(NSString *)keyPath options:(NSDictionary *)options {
-    [super bind:binding toObject:observable withKeyPath:keyPath options:options];
-
-    if ([binding isEqualToString:@"selectedTag"]) {
-        NSInteger i = [self indexOfSelectedItem];
-        if (i != -1) {
-            NSMenuItem* mi = [self.menu itemAtIndex:i];
-            if (!mi.title.length)
-                [self.menu removeItemAtIndex:i];
-        }
-    }
-}*/
-
-/*- (NSInteger)selectedTag {
-    NSInteger t = [super selectedTag];
-    return t;
-}*/
 
 @end
 

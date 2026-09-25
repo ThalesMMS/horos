@@ -57,7 +57,6 @@
 -(id)init {
 	self = [super init];
 	
-	//_threads = [[NSMutableArray alloc] init];
 	
 	_threadsController = [[NSArrayController alloc] init];
 	[_threadsController setSelectsInsertedObjects:NO];

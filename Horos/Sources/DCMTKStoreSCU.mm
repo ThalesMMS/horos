@@ -126,9 +126,6 @@ END_EXTERN_C
 
 #define OFFIS_CONSOLE_APPLICATION "storescu"
 
-//static char rcsid[] = "$dcmtk: " OFFIS_CONSOLE_APPLICATION " v"
-//  OFFIS_DCMTK_VERSION " " OFFIS_DCMTK_RELEASEDATE " $";
-
 /* default application titles */
 #define APPLICATIONTITLE        "STORESCU"
 #define PEERAPPLICATIONTITLE    "ANY-SCP"
@@ -742,11 +739,6 @@ storeSCU(StoreSendContext &context, T_ASC_Association * assoc, const char *fname
         return cond;
     }
 
-//    /* if required, invent new SOP instance information for the current data set (user option) */
-//    if (opt_inventSOPInstanceInformation) {
-//        replaceSOPInstanceInformation(dcmff.getDataset());
-//    }
-
     /* figure out which SOP class and SOP instance is encapsulated in the file */
     if (!HorosFindSOPClassAndInstanceInDataSet(dcmff.getDataset(),
         sopClass, sizeof( sopClass), sopInstance, sizeof( sopInstance), context.opt_correctUIDPadding)) {
@@ -772,8 +764,6 @@ storeSCU(StoreSendContext &context, T_ASC_Association * assoc, const char *fname
 	
 	
 	/************* do on the fly conversion here*********************/
-	
-	//printf("on the fly conversion\n");
 	//we have a valid presentation ID,.Chaeck and see if file is consistent with it
 	DcmXfer preferredXfer(context.opt_networkTransferSyntax);
 	OFBool status = NO;
@@ -799,7 +789,6 @@ storeSCU(StoreSendContext &context, T_ASC_Association * assoc, const char *fname
 		else if (filexfer.getXfer() != context.opt_networkTransferSyntax)
 		{
 			// The file is already compressed, we will re-compress the file.....
-//			E_TransferSyntax fileTS = filexfer.getXfer();
 			
 			if( (filexfer.getXfer() == EXS_JPEG2000LosslessOnly && preferredXfer.getXfer() == EXS_JPEG2000) ||
 				(filexfer.getXfer() == EXS_JPEG2000 && preferredXfer.getXfer() == EXS_JPEG2000LosslessOnly))
@@ -1123,7 +1112,6 @@ static OFCondition cstore(StoreSendContext &context, T_ASC_Association * assoc, 
 	// TLS
 	[_cipherSuites release];
 	
-//	NSLog( @"dealloc DICOM Send");
 	
 	[super dealloc];
 }
@@ -1138,14 +1126,8 @@ static OFCondition cstore(StoreSendContext &context, T_ASC_Association * assoc, 
 	
 	[[AppController sharedAppController] notificationTitle: NSLocalizedString( @"DICOM Send", nil) description: [NSString stringWithFormat: NSLocalizedString(@"Sending %@...\rTo: %@ - %@", nil), N2LocalizedSingularPluralCount( _filesToSend.count, NSLocalizedString(@"file", nil), NSLocalizedString(@"files", nil)), _calledAET, _hostname] name:@"send"];
 	
-//	NSString *tempFolder = [NSString stringWithFormat:@"/tmp/DICOMSend_%@-%@", _callingAET, [[NSDate date] description]];
 	NSMutableArray *paths = [[NSMutableArray alloc] init];
 	
-	//delete if necessary and create temp folder. Allows us to compress and deompress files. Wish we could do on the fly
-//	NSFileManager *fileManager = [NSFileManager defaultManager];
-//	if ([fileManager fileExistsAtPath:tempFolder]) [fileManager removeItemAtPath:tempFolder error:NULL];
-//	
-//	if ([fileManager createDirectoryAtPath:tempFolder attributes:nil]) NSLog(@"created Folder: %@", tempFolder);
 	
 	OFCondition cond;
 	const char *opt_peer = NULL;
@@ -1169,7 +1151,6 @@ static OFCondition cstore(StoreSendContext &context, T_ASC_Association * assoc, 
     T_ASC_Association *assoc = NULL;
     DcmAssociationConfiguration asccfg; // handler for association configuration profiles
     
-	//NSLog(@"set hostname: %@", _hostname);
 	opt_peer = [_hostname UTF8String];
 	opt_port = _port;
 	
@@ -1277,7 +1258,6 @@ static OFCondition cstore(StoreSendContext &context, T_ASC_Association * assoc, 
 	context.opt_acse_timeout = OFstatic_cast(int, opt_timeout);
 	
 	//dimse-timeout
-	//OFCmdSignedInt opt_timeout = 0;
 	
 	context.opt_dimse_timeout = OFstatic_cast(int, opt_timeout);
 	context.opt_blockMode = DIMSE_NONBLOCKING;
@@ -1292,8 +1272,6 @@ static OFCondition cstore(StoreSendContext &context, T_ASC_Association * assoc, 
 	DcmTLSTransportLayer *tLayer = NULL;
 	
 	#ifndef OSIRIX_LIGHT
-//	if( _secureConnection)
-//		[DDKeychain lockTmpFiles];
 	NSString *uniqueStringID = NSUUID.UUID.UUIDString;
 	#endif
 	
@@ -1348,7 +1326,6 @@ static OFCondition cstore(StoreSendContext &context, T_ASC_Association * assoc, 
 			DimseCondition::dump(cond);
 			localException = [[NSException exceptionWithName:@"DICOM Network Failure (STORE-SCU)" reason:[NSString stringWithFormat: @"ASC_initializeNetwork %04x:%04x %s", cond.module(), cond.code(), cond.text()] userInfo:nil] retain];
 			[localException raise];
-			//return;
 		}
 	
 	#ifndef OSIRIX_LIGHT
@@ -1468,7 +1445,6 @@ static OFCondition cstore(StoreSendContext &context, T_ASC_Association * assoc, 
             DimseCondition::dump(cond);
             localException = [[NSException exceptionWithName:@"DICOM Network Failure (STORE-SCU)" reason:[NSString stringWithFormat: @"ASC_createAssociationParameters %04x:%04x %s", cond.module(), cond.code(), cond.text()] userInfo:nil] retain];
             [localException raise];
-            //return;
         }
         
         /* sets this application's title and the called application's title in the params */
@@ -1484,14 +1460,12 @@ static OFCondition cstore(StoreSendContext &context, T_ASC_Association * assoc, 
             DimseCondition::dump(cond);
             localException = [[NSException exceptionWithName:@"DICOM Network Failure (STORE-SCU)" reason:[NSString stringWithFormat: @"ASC_setTransportLayerType %04x:%04x %s", cond.module(), cond.code(), cond.text()] userInfo:nil] retain];
             [localException raise];
-            //return;
         }
         
         /* Figure out the presentation addresses and copy the */
         /* corresponding values into the association parameters.*/
         gethostname(localHost, sizeof(localHost) - 1);
         // Address formatting and dual-stack DNS fallback are application policy.
-        //NSLog(@"peer host: %s", peerHost);
         cond = HorosDIMSESetPeerAddress(params, localHost, opt_peer, (int)opt_port);
             if (cond.bad()) [[NSException exceptionWithName:@"DICOM Network Failure" reason:[NSString stringWithUTF8String:cond.text()] userInfo:nil] raise];
         
@@ -1504,7 +1478,6 @@ static OFCondition cstore(StoreSendContext &context, T_ASC_Association * assoc, 
             DimseCondition::dump(cond);
             localException = [[NSException exceptionWithName:@"DICOM Network Failure (STORE-SCU)" reason:[NSString stringWithFormat: @"addStoragePresentationContexts %04x:%04x %s", cond.module(), cond.code(), cond.text()] userInfo:nil] retain];
             [localException raise];
-            //return;
         }
 
         
@@ -1563,7 +1536,6 @@ static OFCondition cstore(StoreSendContext &context, T_ASC_Association * assoc, 
             errmsg("No Acceptable Presentation Contexts");
             localException = [[NSException exceptionWithName:@"DICOM Network Failure (STORE-SCU)" reason:@"No acceptable presentation contexts" userInfo:nil] retain];
             [localException raise];
-            //return;
         }
 
         /* dump general information concerning the establishment of the network connection if required */
@@ -1764,7 +1736,6 @@ static OFCondition cstore(StoreSendContext &context, T_ASC_Association * assoc, 
         // cleanup
         if( _secureConnection)
         {
-    //		[DDKeychain unlockTmpFiles];
             [[NSFileManager defaultManager] removeItemAtPath:[DICOMTLS keyPathForServerAddress:_hostname port:_port AETitle:_calledAET withStringID:uniqueStringID] error:NULL];
             [[NSFileManager defaultManager] removeItemAtPath:[DICOMTLS certificatePathForServerAddress:_hostname port:_port AETitle:_calledAET withStringID:uniqueStringID] error:NULL];
             [[NSFileManager defaultManager] removeItemAtPath:[NSString stringWithFormat:@"%@%@", TLS_TRUSTED_CERTIFICATES_DIR, uniqueStringID] error:NULL];
@@ -1844,8 +1815,6 @@ static OFCondition cstore(StoreSendContext &context, T_ASC_Association * assoc, 
 			[NSThread currentThread].status = [NSString stringWithFormat: NSLocalizedString( @"%@%@", nil), N2LocalizedSingularPluralCount( [[userInfo objectForKey: @"SendTotal"] intValue] - [[userInfo objectForKey: @"NumberSent"] intValue], NSLocalizedString(@"file", nil), NSLocalizedString(@"files", nil)), extraInfo];
 			[NSThread currentThread].progress = [[userInfo objectForKey: @"NumberSent"] floatValue] / [[userInfo objectForKey: @"SendTotal"] floatValue];
 		}
-//		[self sendStatusNotification: userInfo];
-//		[[NSNotificationCenter defaultCenter] postNotificationName:OsirixDCMSendStatusNotification object:self userInfo:userInfo];
 	}
 
 	[paths release];
@@ -1856,10 +1825,6 @@ static OFCondition cstore(StoreSendContext &context, T_ASC_Association * assoc, 
 	[localException raise];
 }
 
-//- (void) sendStatusNotification:(NSMutableDictionary*) userInfo
-//{
-//	[[NSNotificationCenter defaultCenter] postNotificationName:OsirixDCMSendStatusNotification object:self userInfo:userInfo];
-//}
 
 - (void) updateLogEntry: (NSMutableDictionary*) userInfo
 {

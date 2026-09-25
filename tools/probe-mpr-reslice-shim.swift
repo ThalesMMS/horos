@@ -9,10 +9,13 @@ import simd
 // host copied it into the image. The image is kept until the next frame replaces it, as the view keeps
 // it: an image freed unread let the optimizer drop the host's copy into it, which the view never does.
 // HOROS_METAL4 (#623) makes the engine submit on Metal 4.
+// HOROS_CUBIC_DISPLAY (#702) adds what the host does with the cubic display option on: a single plane is
+// resliced a second time, with cubic interpolation, into a display image kept like the view's image.
 
 private var engine: MPRMetalReslicer?
 private var planes: [ReslicePlane] = []
 private var shownImage: UnsafeMutableRawPointer?
+private var shownDisplay: UnsafeMutableRawPointer?
 private var volumeCentre = SIMD3<Float>(0, 0, 0)
 private var volumeExtent: Float = 0
 
@@ -84,6 +87,17 @@ public func horosABMPRReslice(_ index: Int32) -> Int32 {
     do {
         #if HOROS_RESLICE_INTO
         try engine.reslice(plane, into: UnsafeMutableRawBufferPointer(start: image, count: bytes))
+        #if HOROS_CUBIC_DISPLAY
+        if plane.sampleCount == 1 {
+            guard let display = malloc(bytes) else { return -1 }
+            free(shownDisplay)
+            shownDisplay = display
+            let cubic = try ReslicePlane(origin: plane.origin, rowStep: plane.rowStep, columnStep: plane.columnStep,
+                                         width: plane.width, height: plane.height, thickness: 0, sampleStep: 1,
+                                         projection: plane.projection, background: plane.background, interpolation: .cubic)
+            try engine.reslice(cubic, into: UnsafeMutableRawBufferPointer(start: display, count: bytes))
+        }
+        #endif
         #else
         let data = try engine.reslice(plane)
         guard data.count == bytes else { return -1 }

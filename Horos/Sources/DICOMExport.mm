@@ -529,8 +529,6 @@ static float deg2rad = M_PI / 180.0f;
 								dstVimage.rowBytes = width*sizeof( float);
 								
 								err = vImageScale_PlanarF( &srcVimage, &dstVimage, nil, kvImageHighQualityResampling);
-							//	if( err) NSLog(@"%d", err);
-								
 								// Convert Destination to 16 bits
 								srcVimage.data = tempFloatDst;
 								srcVimage.height =  newHeight;

@@ -253,8 +253,6 @@
 	
 		if (nil == carriedData)
 		{
-//			NSRunAlertPanel(NSLocalizedString(@"Drag Error",nil), NSLocalizedString(@"Sorry, but the past operation failed",nil), 
-//            nil, nil, nil);
 			return NO;
 		}
 		else
@@ -271,8 +269,6 @@
 				return NO;
 			}
 		}
-//		[self setNeedsDisplay:YES];    //redraw us with the new image
-//		return YES;
 	}
 	return NO;
 }
@@ -326,9 +322,6 @@
 	
     if (nil == carriedData)
     {
-//        //the operation failed for some reason
-//        NSRunAlertPanel(NSLocalizedString(@"Drag Error",nil), NSLocalizedString(@"Sorry, but the past operation failed",nil), 
-//            nil, nil, nil);
         return;
     }
     else

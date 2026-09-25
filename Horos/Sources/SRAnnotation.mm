@@ -540,20 +540,6 @@
 		
 	NSArray *preExistingROIs = [NSUnarchiver unarchiveObjectWithData: _dataEncapsulated];
 	
-//	for( ROI *aROI in someROIs)
-//	{
-//		NSData *newROIData = [aROI data];
-//		
-//		BOOL newROI = YES;
-//		for( ROI *roi in preExistingROIs)
-//		{
-//			if ([newROIData isEqualToData: [roi data]])
-//			{
-//				newROI = NO;
-//				break;
-//			}
-//		}
-//	}
 	
 	NSArray *newROIs = [preExistingROIs arrayByAddingObjectsFromArray: someROIs];
 	
@@ -635,15 +621,6 @@
                     document->setSeriesDescription( (char*) [data bytes]);
             }
             
-//            if ([[study valueForKey:@"studyName"] length])
-//            {
-//                NSMutableData *data = [NSMutableData dataWithData: [[study valueForKey:@"studyName"] dataUsingEncoding:encoding allowLossyConversion: YES]];
-//                unsigned char zeroByte = 0;
-//                [data appendBytes:&zeroByte length:1];
-//                
-//                if( [data bytes])
-//                    document->setStudyDescription( (char*) [data bytes]);
-//            }
         }
     }
     if( namedFromFile == NO)

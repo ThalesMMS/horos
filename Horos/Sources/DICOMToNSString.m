@@ -52,33 +52,6 @@
 	return [[[NSString alloc] initWithCString: cString  DICOMEncoding: encoding] autorelease];
 }
 
-//+ (NSArray *)allAvailableEncodings
-//{
-//	static NSArray *cachedArray = nil;
-//	NSMutableArray *array;
-//	const NSStringEncoding *encoding;
-//	
-//	if (cachedArray != nil)
-//		return cachedArray;
-//	
-//	array = [[NSMutableArray alloc] initWithCapacity:0x40];
-//	encoding = [NSString availableStringEncodings];
-//    
-//    while (*encoding) {
-//		NSMutableArray* row = [[NSMutableArray alloc] initWithCapacity:2];
-//		
-//        [row addObject:[NSString localizedNameOfStringEncoding:*encoding]];
-//        [row addObject:[NSNumber numberWithInt:*encoding]];
-//        encoding++;
-//        
-//        [array addObject:row];
-//        [row release];
-//    }
-//    
-//	cachedArray = [array copy];
-//	[array retain];
-//    return cachedArray;
-//}
 
 + (NSStringEncoding)encodingForDICOMCharacterSet:(NSString *)characterSet
 {

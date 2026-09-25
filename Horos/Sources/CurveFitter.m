@@ -40,9 +40,6 @@
 	enum { STRAIGHT_LINE=0,POLY2=1,POLY3=2,POLY4=3, EXPONENTIAL=4,POWER=5,LOG=6,RODBARD=7,GAMMA_VARIATE=8,T1_SAT_RELAX = 9,T2_DEPHASE = 10,DIFFUSION = 11};
     static int IterFactor = 500;
 
-//    static char* fitList[] = {"Straight Line","2nd Degree Polynomial", "3rd Degree Polynomial", "4th Degree Polynomial","Exponential","Power",  "log","Rodbard", "Gamma Variate"};
-
-//    static char* fList[] = {"y = a+bx","y = a+bx+cx^2", "y = a+bx+cx^2+dx^3", "y = a+bx+cx^2+dx^3+ex^4","y = a*exp(bx)","y = ax^b", "y = a*ln(bx)","y = c*((a-x)/(x-d))^(1/b)", "y = a*(x-b)^c*exp(-(x-b)/d)", "y=a*(1-exp(-x/b))"};
 
     static double alpha = -1.0;     // reflection coefficient
     static double beta = 0.5;   // contraction coefficient
@@ -143,7 +140,6 @@
 
 		if (numIter >= maxIter) done = true;
 		else if (rtol < maxError) {
-			//System.out.print(getResultString());
 			restarts--;
 			if (restarts < 0) {
 				done = true;
@@ -175,7 +171,6 @@
 	double lastx = xData[numPoints-1];
 	double lasty = yData[numPoints-1];
 	double xmean = (firstx+lastx)/2.0;
-//	double ymean = (firsty+lasty)/2.0;
 	double slope;
 	if ((lastx - firstx) != 0.0)
 		slope = (lasty - firsty)/(lastx - firstx);
@@ -252,34 +247,7 @@
 			break;
 	}
 }
-//
-//    /** Pop up a dialog allowing control over simplex starting parameters */
-//    private void settingsDialog() {
-//        GenericDialog gd = new GenericDialog("Simplex Fitting Options", IJ.getInstance());
-//        gd.addMessage("Function name: " + fitList[fit] + "\n" +
-//        "Formula: " + fList[fit]);
-//        char pChar = 'a';
-//        for (int i = 0; i < numParams; i++) {
-//            gd.addNumericField("Initial "+(new Character(pChar)).toString()+":", simp[0][i], 2);
-//            pChar++;
-//        }
-//        gd.addNumericField("Maximum iterations:", maxIter, 0);
-//        gd.addNumericField("Number of restarts:", restarts, 0);
-//        gd.addNumericField("Error tolerance [1*10^(-x)]:", -(flog(maxError)/flog(10)), 0);
-//        gd.showDialog();
-//        if (gd.wasCanceled() || gd.invalidNumber()) {
-//            IJ.error("Parameter setting canceled.\nUsing default parameters.");
-//        }
-//        // Parametres:
-//        for (int i = 0; i < numParams; i++) {
-//            simp[0][i] = gd.getNextNumber();
-//        }
-//        maxIter = (int) gd.getNextNumber();
-//        restarts = (int) gd.getNextNumber();
-//        maxError = pow(10.0, -gd.getNextNumber());
-//    }
-//
-//    /** Restart the simplex at the nth vertex */
+// Restart the simplex at the nth vertex.
 - (void) restart: (int) n
 {
 	// Copy nth vertice of simplex to first vertice
@@ -320,19 +288,7 @@
 	free( q);
 	free( step);
 }
-//
-//    // Display simplex [Iteration: s0(p1, p2....), s1(),....] in ImageJ window
-//    void showSimplex(int iter) {
-//        ij.IJ.write("" + iter);
-//        for (int i = 0; i < numVertices; i++) {
-//            String s = "";
-//            for (int j=0; j < numVertices; j++)
-//                s += "  "+ ij.IJ.d2s(simp[i][j], 6);
-//            ij.IJ.write(s);
-//        }
-//    }
-//
-//    /** Get number of parameters for current fit function */
+// Get number of parameters for the current fit function.
 - (int) getNumParams
 {
 	switch (fit)
@@ -461,24 +417,6 @@
         return fitGoodness;
     }
 
-//    /** Get a string description of the curve fitting results
-//     * for easy output.
-//     */
-//    public String getResultString() {
-//        StringBuffer results = new StringBuffer("\nNumber of iterations: " + getIterations() +
-//        "\nMaximum number of iterations: " + getMaxIterations() +
-//        "\nSum of residuals squared: " + [self getSumResidualsSqr] +
-//        "\nStandard deviation: " + getSD() +
-//        "\nGoodness of fit: " + getFitGoodness() +
-//        "\nParameters:");
-//        char pChar = 'a';
-//        double[] pVal = [self getParams];
-//        for (int i = 0; i < numParams; i++) {
-//            results.append("\n" + pChar + " = " + pVal[i]);
-//            pChar++;
-//        }
-//        return results.toString();
-//    }
 
 - (double) sqr:(double) d { return d * d; }
 
@@ -487,7 +425,6 @@
         x[numParams] = 0.0;
         for (int i = 0; i < numPoints; i++) {
             x[numParams] = x[numParams] + [self sqr: [self f: fit :x :xData[i]]-yData[i]];
-            //        if (IJ.debugMode) ij.IJ.log(i+" "+x[n-1]+" "+f(fit,x,xData[i])+" "+yData[i]);
         }
     }
 
@@ -509,7 +446,6 @@
                 if (simp[i][numParams] > simp[nextWorst][numParams]) nextWorst = i;
             }
         }
-        //        IJ.write("B: " + simp[best][numParams] + " 2ndW: " + simp[nextWorst][numParams] + " W: " + simp[worst][numParams]);
     }
 
     /** Get number of iterations performed */

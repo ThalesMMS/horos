@@ -193,8 +193,6 @@ BOOL useQuartz() {
 		
 	[[self window] setDelegate:self];
 	[[self window] setAlphaValue:0.0];
-//	if (useQuartz())	
-//		[view setAutostartsRendering:YES];
 }
 
 - (IBAction) switchVersion:(id) sender
@@ -230,25 +228,12 @@ BOOL useQuartz() {
 
 - (IBAction)showWindow:(id)sender{
 	[super showWindow:sender];	
-//	if (useQuartz())
-//		[self startRendering];
-	//
-	//NSLog(@"show Splash screen");
 }
 
-//- (void)startRendering
-//{
-//	NSString *path = [[NSBundle mainBundle] pathForResource:@"About" ofType:@"qtz"];
-//	[view loadCompositionFromFile:path];
-//	[view setAutostartsRendering:YES];
-//	[view startRendering];
-//}
 
 - (void) affiche
 {
 	timerIn = [[NSTimer scheduledTimerWithTimeInterval:0.02 target:self selector:@selector(fadeIn:) userInfo:nil repeats:YES] retain];
-//	[[NSRunLoop currentRunLoop] addTimer:timerIn forMode:NSModalPanelRunLoopMode];
-//	[[NSRunLoop currentRunLoop] addTimer:timerIn forMode:NSEventTrackingRunLoopMode];
 }
 
 -(id) init
@@ -270,11 +255,6 @@ BOOL useQuartz() {
 	
     // Set up our timer to periodically call the fade: method.
     timerOut = [[NSTimer scheduledTimerWithTimeInterval:0.02 target:self selector:@selector(fade:) userInfo:nil repeats:YES] retain];
-//	[[NSRunLoop currentRunLoop] addTimer:timerOut forMode:NSModalPanelRunLoopMode];
-//	[[NSRunLoop currentRunLoop] addTimer:timerOut forMode:NSEventTrackingRunLoopMode];
-
-//	[timer fire];
-	
     // Don't close just yet.
     return NO;
 }

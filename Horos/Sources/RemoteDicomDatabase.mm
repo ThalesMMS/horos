@@ -473,7 +473,6 @@ static NSData *HorosSendDatabaseRequest(NSData *request, NSString *address, NSIn
 - (BOOL)prepareAuthentication {
     self.authenticationKnown = NO;
 	BOOL isPasswordProtected = [self fetchIsPasswordProtected];
-	// if (isPasswordProtected) DLog(@"RDD is password protected", version);
     
 	if (isPasswordProtected)
     {
@@ -506,12 +505,10 @@ static NSData *HorosSendDatabaseRequest(NSData *request, NSString *address, NSIn
 	if (![version isEqualToString:CurrentDatabaseVersion])
 		[NSException raise:NSDestinationInvalidException format:NSLocalizedString(@"Invalid remote database model %@. When sharing databases, make sure both ends are running the same software versions.", nil), version];
 
-//	DLog(@"RDD version: %@", version);
 
     if (![self prepareAuthentication]) return nil;
 
     NSUInteger databaseIndexSize = [self fetchDatabaseIndexSize];
-//	DLog(@"RDD index size is %d", databaseIndexSize);
 	
     if (databaseIndexSize == 0)
         [NSException raise:NSObjectInaccessibleException format:@"%@", NSLocalizedString(@"The remote database index is empty.", nil)];
@@ -676,7 +673,6 @@ static NSData *HorosSendDatabaseRequest(NSData *request, NSString *address, NSIn
 }
 
 -(NSThread*)initiateUpdate {
-//	if( DatabaseIsEdited) return;
 	
 	if ([[ViewerController getDisplayed2DViewers] count])
 		return nil;
@@ -857,7 +853,6 @@ enum RemoteDicomDatabaseStudiesAlbumAction { RemoteDicomDatabaseStudiesAlbumActi
     
     NSInteger size = 0, i = [images indexOfObject:image];
 	
-//    if( 1) // Multiple files download
     {
         while (i < images.count)
         {
@@ -876,24 +871,9 @@ enum RemoteDicomDatabaseStudiesAlbumAction { RemoteDicomDatabaseStudiesAlbumActi
                 break;
         }
     }
-//    else
-//    {
-//        DicomImage* iImage = image;
-//        NSString* iLocalPath = [self localPathForImage:iImage];
-//        
-//        if( [iLocalPath isEqualToString: localPath] == NO)
-//            NSLog( @"( [iLocalPath isEqualToString: localPath] == NO)");
-//        
-//        if ([NSFileManager.defaultManager fileExistsAtPath:iLocalPath])
-//            return localPath;
-//
-//        [localPaths addObject:iLocalPath];
-//        [remotePaths addObject:iImage.path];
-//	}
 	if (!localPaths.count)
 		return nil;
 	
-	// DLog(@"RDD requesting images: %@", localPaths.description);
 	
     return [self downloadRemotePaths:remotePaths toLocalPaths:localPaths] ? localPath : nil;
 }
@@ -941,7 +921,6 @@ enum RemoteDicomDatabaseStudiesAlbumAction { RemoteDicomDatabaseStudiesAlbumActi
 	// context[7] size of filename
 	
 	while (data.length > readSize) {
-		// DLog(@"_handleData_fetchDataForImage state %d", state.unsignedIntegerValue);
 		switch (state.unsignedIntegerValue) {
 			case 0: { // expecting number of files in response
 				if (data.length-readSize >= 4) {
@@ -952,7 +931,6 @@ enum RemoteDicomDatabaseStudiesAlbumAction { RemoteDicomDatabaseStudiesAlbumActi
                         [NSException raise:@"RemoteDownload" format:@"Unexpected file count in remote response."];
 					[values addObject:[NSNumber numberWithUnsignedInt:n]]; // [1]
 					[values addObject:[N2MutableUInteger mutableUIntegerWithUInteger:0]]; // [2]
-					//DLog(@"RDD receiving %d files", n);
 					readSize += 4;
 					state.unsignedIntegerValue = 1;
 				} else return readSize;
@@ -964,7 +942,6 @@ enum RemoteDicomDatabaseStudiesAlbumAction { RemoteDicomDatabaseStudiesAlbumActi
 					unsigned int l = NSSwapBigIntToHost(big);
                     if (!l) [NSException raise:@"RemoteDownload" format:@"Empty remote image."];
 					[values addObject:[NSNumber numberWithUnsignedInt:l]]; // [3]
-					//DLog(@"RDD next file is %d bytes", l);
 					
 					NSString* path = [NSFileManager.defaultManager tmpFilePathInDir:self.tempDirPath];
 					[values addObject:path]; // [4]
@@ -1004,7 +981,6 @@ enum RemoteDicomDatabaseStudiesAlbumAction { RemoteDicomDatabaseStudiesAlbumActi
                     if (l < 2 || l > maximum)
                         [NSException raise:@"RemoteDownload" format:@"Invalid remote filename length."];
 					[values addObject:[NSNumber numberWithUnsignedInt:l]]; // [7]
-					//DLog(@"RDD next path is %d bytes", l);
 					readSize += 4;
 					state.unsignedIntegerValue = 4;
 				} else return readSize;

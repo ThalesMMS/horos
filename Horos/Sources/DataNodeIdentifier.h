@@ -41,18 +41,9 @@
 
 @class DicomDatabase, PrettyCell;
 
-/*enum {
-	DataNodeIdentifierTypeDefault,
-	DataNodeIdentifierTypeLocal,
-	DataNodeIdentifierTypeRemote,
-	DataNodeIdentifierTypeDicom,
-	DataNodeIdentifierTypeOther
-};
-typedef NSInteger DataNodeIdentifierType;*/
 
 
 @interface DataNodeIdentifier : NSObject {
-//	DataNodeIdentifierType _type;
 	NSString* _location;
     NSString* _aetitle;
     NSUInteger _port;
@@ -62,9 +53,6 @@ typedef NSInteger DataNodeIdentifierType;*/
     BOOL _entered; // if this node is listed in the user defaults, entered by the user
 }
 
-//+(id)dataNodeIdentifierForLocation:(NSString*)location description:(NSString*)description dictionary:(NSDictionary*)dictionary;
-
-//@property(readonly) DataNodeIdentifierType type;
 @property(retain) NSString* location;
 @property(retain) NSString* aetitle;
 @property NSUInteger port;

@@ -8,6 +8,14 @@
 #import <objc/runtime.h>
 
 static char enabledKey, reslicerKey, uploadedKey, reasonKey, millisecondsKey, fusedReslicerKey, fusedUploadedKey, fusedPlaneKey;
+static char displayPlaneKey;
+
+static NSString * const HorosMPRCubicDisplayKey = @"HorosMPRCubicDisplay";
+// The MPR always draws a slab: its thinnest, the one it opens with, is the
+// slice interval up to 1 mm (-[MPRController initWithDCMPixList:...]). The
+// cubic display plane covers that one; a thicker slab is a projection the
+// user asked for, costs many samples per pixel, and stays linear (#702).
+static const float HorosMPRCubicDisplayMaximumSlab = 1.0f + 1e-3f;
 
 @interface MPRController (HorosMPRHostPrivate)
 - (HorosMPRReslicer *)horosMPRReslicerForCurrentVolume:(NSString **)reason;
@@ -42,6 +50,19 @@ static char enabledKey, reslicerKey, uploadedKey, reasonKey, millisecondsKey, fu
 }
 
 - (NSString *)horosMPRFallbackReason { return objc_getAssociatedObject(self, &reasonKey); }
+
+- (BOOL)horosMPRCubicDisplay {
+    return [[NSUserDefaults standardUserDefaults] boolForKey:HorosMPRCubicDisplayKey];
+}
+
+- (void)toggleMPRCubicDisplay:(id)sender {
+    [[NSUserDefaults standardUserDefaults] setBool:!self.horosMPRCubicDisplay forKey:HorosMPRCubicDisplayKey];
+    for (MPRDCMView *view in @[mprView1, mprView2, mprView3]) {
+        [view restoreCamera];
+        view.camera.forceUpdate = YES;
+        [view updateViewMPR];
+    }
+}
 
 - (double)horosMPRLastMilliseconds {
     NSNumber *value = objc_getAssociatedObject(self, &millisecondsKey);
@@ -180,6 +201,10 @@ static NSArray *HorosMPRPixelCentre(const float corner[3], const float cosines[9
                                        action:@selector(toggleMPRMetal:) keyEquivalent:@""];
     item.target = windowController;
     item.state = windowController.horosMPRMetalEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+    NSMenuItem *cubic = [menu addItemWithTitle:NSLocalizedString(@"Cubic Interpolation for MPR Display", nil)
+                                        action:@selector(toggleMPRCubicDisplay:) keyEquivalent:@""];
+    cubic.target = windowController;
+    cubic.state = windowController.horosMPRCubicDisplay ? NSControlStateValueOn : NSControlStateValueOff;
     return menu;
 }
 
@@ -237,6 +262,7 @@ static NSArray *HorosMPRPixelCentre(const float corner[3], const float cosines[9
     MPRController *controller = windowController;
     objc_setAssociatedObject(controller, &millisecondsKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(self, &fusedPlaneKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(self, &displayPlaneKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     if (!controller.horosMPRMetalEnabled) { [self horosSetPlanarFallbackReason:nil]; return NULL; }
     if (moveCenter) return NULL;
     NSString *reason = nil;
@@ -279,8 +305,23 @@ static NSArray *HorosMPRPixelCentre(const float corner[3], const float cosines[9
                                          width:*width height:*height thickness:[vrView getClippingRangeThicknessInMm] sampleStep:step
                                     projection:controller.clippingRangeMode background:[controller horosMPRBackground]
                                           into:image error:&error]) {
-            objc_setAssociatedObject(controller, &millisecondsKey, @(reslicer.lastMilliseconds + (fused ? fused->milliseconds : 0)),
-                                     OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            double milliseconds = reslicer.lastMilliseconds + (fused ? fused->milliseconds : 0);
+            // The cubic display plane (#702): the same thin slab, no fused
+            // series. The linear one above stays the pixels; this one is only drawn.
+            float thickness = [vrView getClippingRangeThicknessInMm];
+            if (controller.horosMPRCubicDisplay && !fused && thickness <= HorosMPRCubicDisplayMaximumSlab) {
+                float *display = malloc((size_t)*width * (size_t)*height * sizeof(float));
+                if (display && [reslicer resliceWithOrigin:origin orientation:orientation spacing:spacing
+                                                     width:*width height:*height thickness:thickness sampleStep:step
+                                                projection:controller.clippingRangeMode background:[controller horosMPRBackground]
+                                             interpolation:1 into:display error:NULL]) {
+                    milliseconds += reslicer.lastMilliseconds;
+                    NSData *plane = [NSData dataWithBytesNoCopy:display length:(NSUInteger)*width * (NSUInteger)*height * sizeof(float)
+                                                   freeWhenDone:YES];
+                    objc_setAssociatedObject(self, &displayPlaneKey, plane, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                } else free(display);
+            }
+            objc_setAssociatedObject(controller, &millisecondsKey, @(milliseconds), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
             objc_setAssociatedObject(self, &fusedPlaneKey, fused, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
             objc_setAssociatedObject(controller, &reasonKey, nil, OBJC_ASSOCIATION_COPY_NONATOMIC);
             [self horosSetPlanarFallbackReason:nil];
@@ -294,6 +335,11 @@ static NSArray *HorosMPRPixelCentre(const float corner[3], const float cosines[9
     objc_setAssociatedObject(controller, &reasonKey, reason, OBJC_ASSOCIATION_COPY_NONATOMIC);
     [self horosSetPlanarFallbackReason:reason];
     return NULL;
+}
+
+- (void)horosMPRAttachDisplayPlaneTo:(DCMPix *)pix {
+    pix.horosMPRDisplayPixels = objc_getAssociatedObject(self, &displayPlaneKey);
+    objc_setAssociatedObject(self, &displayPlaneKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
 @end

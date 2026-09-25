@@ -67,8 +67,6 @@
     dp.font = self.font;
     dp.datePickerElements = self.datePickerElements;
     dp.datePickerStyle = NSClockAndCalendarDatePickerStyle;
-    //dp.backgroundColor = [NSColor grayColor];
-    //dp.drawsBackground = YES;
     dp.bezeled = NO;
     
     NSDictionary* binding = [self infoForBinding:@"value"];
@@ -84,7 +82,6 @@
     [_helperWindow.contentView addSubview:dp];
     _helperWindow.backgroundColor = [NSColor grayColor];//[NSColor whiteColor];
     _helperWindow.hasShadow = YES;
-  //  _helperWindow.isOpaque = NO;
     
     return _helperWindow;
 }

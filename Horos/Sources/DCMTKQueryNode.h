@@ -40,6 +40,9 @@
 #import "DCMTKServiceClassUser.h"
 
 @class DCMCalendarDate, HorosRetrieveInventory;
+
+extern NSString * const HorosRetrieveInventoryDidRefreshNotification;
+
 /** \brief Base class for query nodes */
 @interface DCMTKQueryNode : DCMTKServiceClassUser
 {
@@ -66,13 +69,18 @@
     NSUInteger _countOfSuboperations, _countOfSuccessfulSuboperations;
     BOOL _lastQuerySucceeded, _imageInventoryConfirmed;
     HorosRetrieveInventory *_retrieveInventory;
+    BOOL _retrieveInventoryRefreshQueued;
 }
 
 + (BOOL)verifyDICOMServer:(NSDictionary*)server;
 
 @property(readonly) BOOL lastQuerySucceeded, imageInventoryConfirmed;
 @property(readonly) HorosRetrieveInventory *retrieveInventory;
-- (void)refreshRetrieveInventory;
+/** Returns whether the imported identities changed. */
+- (BOOL)refreshRetrieveInventory;
+/** From the main thread, refreshes in the background and posts
+    HorosRetrieveInventoryDidRefreshNotification on the main thread if anything changed. */
+- (void)refreshRetrieveInventoryWithoutWaiting;
 @property BOOL dontCatchExceptions;
 @property BOOL isAutoRetrieve;
 @property BOOL noSmartMode;

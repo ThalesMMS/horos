@@ -153,8 +153,6 @@
 - (DcmDataset *)moveDataset{
 	DcmDataset *dataset = new DcmDataset();
 	dataset-> putAndInsertString(DCM_SOPInstanceUID, [_uid UTF8String], OFTrue);
-	//dataset-> putAndInsertString(DCM_StudyInstanceUID, [_studyInstanceUID UTF8String], OFTrue);
-	//dataset-> putAndInsertString(DCM_QueryRetrieveLevel, "SERIES", OFTrue);
 	return dataset;
 }
 
@@ -165,7 +163,7 @@
 
 - (NSString*) description
 {
-    return [NSString stringWithFormat: @"DCMTKImageQueryNode: %@ %@ %@", _name, _date, _uid];
+    return [NSString stringWithFormat: @"DCMTKImageQueryNode: %@", _uid];
 }
 
 @end

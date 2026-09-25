@@ -95,8 +95,3 @@ enum OsiriXBlendingTypes {BlendingPlugin = -1, BlendingFusion = 1, BlendingSubtr
 - (float)curWL;
 @end
 
-//#ifdef redefineID
-//#define id Id
-//#undef redefineID
-//#endif
-

@@ -349,7 +349,6 @@ static NSRecursiveLock *dbModifyLock = nil;
     
     return s;
     
-    //    return [DicomStudy scrambleString: [self primitiveValueForKey: @"name"]];
 }
 
 - (BOOL) isDistant
@@ -503,10 +502,8 @@ static NSRecursiveLock *dbModifyLock = nil;
                                     [i didChangeValueForKey: @"storedIsKeyImage"];
                                 }
                             }
-                            //							else NSLog( @"----- applyAnnotationsFromDictionary : image not found : %@", [image valueForKey: @"sopInstanceUID"]);
                         }
                     }
-                    //					else NSLog( @"----- applyAnnotationsFromDictionary : series not found : %@", [series valueForKey: @"seriesInstanceUID"]);
                 }
             }
         }
@@ -1384,7 +1381,37 @@ static NSRecursiveLock *dbModifyLock = nil;
         return [NSNumber numberWithDouble: [self.date timeIntervalSinceDate: self.dateOfBirth]];
 }
 
+// The database list asks for an age on every visible row at every redraw, and
+// each answer is a calendar computation. The answer depends only on its inputs
+// and the time zone - and, for the age today, on the time - so it is kept.
+static NSCache *DicomStudyAgeCache(void)
+{
+    static NSCache *cache = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        cache = [[NSCache alloc] init];
+        cache.countLimit = 4096;
+    });
+    return cache;
+}
+
 + (NSString*) yearOldAcquisition:(NSDate*) acquisitionDate FromDateOfBirth: (NSDate*) dateOfBirth
+{
+    if( dateOfBirth && acquisitionDate)
+    {
+        NSString *key = [NSString stringWithFormat: @"acquisition|%.6f|%.6f|%@", [dateOfBirth timeIntervalSinceReferenceDate], [acquisitionDate timeIntervalSinceReferenceDate], [[NSTimeZone defaultTimeZone] name]];
+        NSString *age = [DicomStudyAgeCache() objectForKey: key];
+        if( age == nil)
+        {
+            age = [self computeYearOldAcquisition: acquisitionDate FromDateOfBirth: dateOfBirth];
+            [DicomStudyAgeCache() setObject: age forKey: key];
+        }
+        return age;
+    }
+    else return @"";
+}
+
++ (NSString*) computeYearOldAcquisition:(NSDate*) acquisitionDate FromDateOfBirth: (NSDate*) dateOfBirth
 {
     if( dateOfBirth && acquisitionDate)
     {
@@ -1419,6 +1446,25 @@ static NSRecursiveLock *dbModifyLock = nil;
 }
 
 + (NSString*) yearOldFromDateOfBirth: (NSDate*) dateOfBirth
+{
+    if( dateOfBirth)
+    {
+        // Measured against now, so the age can change at any second of the day
+        // a birth date falls on; kept for the minute, which is the most a
+        // redraw of the list could be behind.
+        NSString *key = [NSString stringWithFormat: @"today|%.6f|%.0f|%@", [dateOfBirth timeIntervalSinceReferenceDate], floor( [NSDate timeIntervalSinceReferenceDate] / 60.), [[NSTimeZone defaultTimeZone] name]];
+        NSString *age = [DicomStudyAgeCache() objectForKey: key];
+        if( age == nil)
+        {
+            age = [self computeYearOldFromDateOfBirth: dateOfBirth];
+            [DicomStudyAgeCache() setObject: age forKey: key];
+        }
+        return age;
+    }
+    else return @"";
+}
+
++ (NSString*) computeYearOldFromDateOfBirth: (NSDate*) dateOfBirth
 {
     if( dateOfBirth)
     {
@@ -1476,8 +1522,6 @@ static NSRecursiveLock *dbModifyLock = nil;
 - (void) setNumberOfImages:(NSNumber *) n
 {
     @synchronized (self) {
-        //        [cachedRawNoFiles release];
-        //        cachedRawNoFiles = nil;
         
         [cachedModalites release];
         cachedModalites = nil;
@@ -1751,6 +1795,31 @@ static NSRecursiveLock *dbModifyLock = nil;
 - (NSArray*)imageSeries
 {
     return [self imageSeriesContainingPixels: NO];
+}
+
+// What [[self imageSeries] count] says, without sorting the series first: the
+// database list shows it on every row.
+- (NSUInteger)numberOfImageSeries
+{
+    NSUInteger count = 0;
+    
+    [self.managedObjectContext lock];
+    @try {
+        for (DicomSeries* series in self.series)
+            @try {
+                if ([DicomStudy displaySeriesWithSOPClassUID:series.seriesSOPClassUID andSeriesDescription:series.name])
+                    count++;
+            } @catch (...) {
+            }
+    }
+    @catch (NSException* e) {
+        N2LogExceptionWithStackTrace(e);
+    }
+    @finally {
+        [self.managedObjectContext unlock];
+    }
+    
+    return count;
 }
 
 - (NSArray*)keyObjectSeries

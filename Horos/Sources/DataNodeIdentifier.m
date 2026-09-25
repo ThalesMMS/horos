@@ -143,12 +143,7 @@
 }
 
 -(void)willDisplayCell:(PrettyCell*)cell {    
-    /*static NSColor* gray = nil;
-    if (!gray) gray = [[NSColor colorWithDeviceWhite:0.4 alpha:1] retain];
-    
-    if (!self.available) { // TODO: this should only be enabled once we periodically verify every node's availability through DICOM ECHO or dummy TCP connections.. but is it worth it? won't that overload the network/servers for too little gain?
-        cell.textColor = gray;
-    }*/
+    // Do not gray out nodes without a reliable reachability check.
     
     if( [_dictionary valueForKey: @"icon"] && [NSImage imageNamed:[_dictionary valueForKey:@"icon"]])
         cell.image = [NSImage imageNamed:[_dictionary valueForKey:@"icon"]];
@@ -202,10 +197,6 @@
         return;
     }
     
-//    NSString* path = self.location;
-//    BOOL atMediaRoot = [[[NSWorkspace sharedWorkspace] mountedLocalVolumePaths] containsObject:path];
-//    if (!atMediaRoot)
-//        path = [path stringByDeletingLastPathComponent];
     
     NSImage* im = [[NSWorkspace sharedWorkspace] iconForFile:self.location];
     im.size = [im sizeByScalingProportionallyToSize:NSMakeSize(16,16)];
@@ -292,13 +283,6 @@
 	return *host;
 }
 
-//+(NSString*)locationWithHost:(NSHost*)host port:(NSInteger)port {
-//	return [[self class] locationWithAddress:host.address port:port];
-//}
-//
-//+(NSString*)locationWithAddress:(NSString*)address port:(NSInteger)port {
-//	return [NSString stringWithFormat:@"%@:%d", address, (int) port];
-//}
 
 @end
 
@@ -366,12 +350,5 @@
 	return *host;
 }
 
-//+(NSString*)locationWithHost:(NSHost*)host port:(NSInteger)port aet:(NSString*)aet {
-//	return [[self class] locationWithAddress:host.address port:port aet:aet];
-//}
-//
-//+(NSString*)locationWithAddress:(NSString*)host port:(NSInteger)port aet:(NSString*)aet {
-//	return [NSString stringWithFormat:@"%@@%@:%d", aet, host, (int) port];
-//}
 
 @end

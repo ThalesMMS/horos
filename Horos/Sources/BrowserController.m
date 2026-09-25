@@ -221,6 +221,10 @@ NSString* asciiString(NSString* str)
 @end
 
 @interface BrowserController ()
+{
+    NSTimeInterval _lastImportListRefresh, _lastImportAlbumsRefresh;
+    BOOL _importListRefreshPending, _importAlbumsRefreshPending;
+}
 - (NSArray*)downloadURLs:(NSArray*)URLs database:(DicomDatabase*)database report:(NSString**)report succeeded:(BOOL*)succeeded;
 - (void)importURLsThread:(NSDictionary*)parameters;
 
@@ -290,7 +294,6 @@ static NSString*	AnonymizerToolbarItemIdentifier		= @"Anonymizer.pdf";
 static NSString*	QueryToolbarItemIdentifier			= @"QueryRetrieve.pdf";
 static NSString*	SendToolbarItemIdentifier			= @"Send.pdf";
 static NSString*	ViewerToolbarItemIdentifier			= @"Viewer.pdf";
-//static NSString*	CDRomToolbarItemIdentifier			= @"cd.icns";
 static NSString*	MovieToolbarItemIdentifier			= @"Movie.pdf";
 static NSString*	TrashToolbarItemIdentifier			= @"trash.icns";
 static NSString*	ReportToolbarItemIdentifier			= @"Report.icns";
@@ -323,9 +326,6 @@ static volatile BOOL waitForRunningProcess = NO;
 {
     decimalNumberFormatter = [[NSNumberFormatter alloc] init];
     [decimalNumberFormatter setNumberStyle:NSNumberFormatterDecimalStyle];
-    //	[decimalNumberFormatter setLocale: [NSLocale currentLocale]];
-    //	[decimalNumberFormatter setFormat:@"0"];
-    //	[decimalNumberFormatter setHasThousandSeparators: YES];
 }
 
 - (void) setTableViewRowHeight
@@ -1333,7 +1333,6 @@ static NSConditionLock *threadLock = nil;
         }
         else
         {
-            //            NSMutableArray *objects = [NSMutableArray array];
             NSMutableArray *selectedStudies = [NSMutableArray array];
             
             NSIndexSet *selectedRows = [databaseOutline selectedRowIndexes];
@@ -1374,7 +1373,6 @@ static NSConditionLock *threadLock = nil;
         }
         else
         {
-            //            NSMutableArray *objects = [NSMutableArray array];
             NSMutableArray *selectedSeries = [NSMutableArray array];
             
             NSIndexSet *selectedRows = [databaseOutline selectedRowIndexes];
@@ -1782,7 +1780,7 @@ static NSConditionLock *threadLock = nil;
         [lastROIsImagesSelectedFiles release]; lastROIsImagesSelectedFiles = nil;
         [lastKeyImagesSelectedFiles release]; lastKeyImagesSelectedFiles = nil;
         
-        [self _refreshDatabaseDisplay];
+        [self _refreshDatabaseDisplayAfterImport];
         
         [self checkIfLocalStudyHasMoreOrSameNumberOfImagesOfADistantStudy: [[notification.userInfo valueForKey: OsirixAddToDBNotificationImagesArray] valueForKeyPath: @"series.study"]];
     }
@@ -1804,6 +1802,62 @@ static NSConditionLock *threadLock = nil;
     
     _refreshDeferredWhileEditing = NO;
     [self outlineViewRefresh];
+    [self refreshAlbums];
+}
+
+// An import reports every batch it indexes. Each report refetched every study on
+// the main thread and started an album count, both waiting on the importer's
+// commits (#697). During an import the list is refreshed at most every
+// HorosImportListRefreshInterval seconds and the albums every
+// HorosImportAlbumsRefreshInterval; the first report of a quiet period is shown
+// at once, and a trailing refresh shows the last batch of a burst.
+static const NSTimeInterval HorosImportListRefreshInterval = 5, HorosImportAlbumsRefreshInterval = 20;
+
+-(void)_refreshDatabaseDisplayAfterImport
+{
+    NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+    if( _importListRefreshPending == NO)
+    {
+        NSTimeInterval wait = _lastImportListRefresh + HorosImportListRefreshInterval - now;
+        if( wait <= 0)
+            [self _importListRefreshFire];
+        else
+        {
+            _importListRefreshPending = YES;
+            [self performSelector:@selector(_importListRefreshFire) withObject:nil afterDelay:wait inModes:[NSArray arrayWithObject:NSRunLoopCommonModes]];
+        }
+    }
+    if( _importAlbumsRefreshPending == NO)
+    {
+        NSTimeInterval wait = _lastImportAlbumsRefresh + HorosImportAlbumsRefreshInterval - now;
+        if( wait <= 0)
+            [self _importAlbumsRefreshFire];
+        else
+        {
+            _importAlbumsRefreshPending = YES;
+            [self performSelector:@selector(_importAlbumsRefreshFire) withObject:nil afterDelay:wait inModes:[NSArray arrayWithObject:NSRunLoopCommonModes]];
+        }
+    }
+}
+
+-(void)_importListRefreshFire
+{
+    _importListRefreshPending = NO;
+    _lastImportListRefresh = [NSDate timeIntervalSinceReferenceDate];
+    // The same deferral as -_refreshDatabaseDisplay: an edit in progress keeps
+    // its field editor, and the end of the edit shows what arrived.
+    if( databaseOutline && [databaseOutline editedRow] != -1)
+    {
+        _refreshDeferredWhileEditing = YES;
+        return;
+    }
+    [self outlineViewRefresh];
+}
+
+-(void)_importAlbumsRefreshFire
+{
+    _importAlbumsRefreshPending = NO;
+    _lastImportAlbumsRefresh = [NSDate timeIntervalSinceReferenceDate];
     [self refreshAlbums];
 }
 
@@ -2407,8 +2461,6 @@ static NSConditionLock *threadLock = nil;
     if( [options objectForKey: @"COPYDATABASEMODE"])
         COPYDATABASEMODE = [[options objectForKey: @"COPYDATABASEMODE"] integerValue];
     
-    //	if( DICOMDIRCDMODE)
-    //		COPYDATABASE = NO;
     
     NSMutableArray *newFilesToCopyList = [NSMutableArray arrayWithCapacity: [filesInput count]];
     NSString *INpath = [_database dataDirPath];
@@ -3317,6 +3369,16 @@ static OSStatus HorosNumbersAutomationStatus(void)
         [searchInEntireDBResult setHidden: YES];
 }
 
+// The studies found before the other studies of the same patients were added;
+// drawn in bold, so asked about for every visible row.
+- (void) rememberOriginalOutlineViewArray: (NSArray*) array
+{
+    [originalOutlineViewArray release];
+    originalOutlineViewArray = [array retain];
+    [originalOutlineViewStudies release];
+    originalOutlineViewStudies = array ? [[NSSet alloc] initWithArray: array] : nil;
+}
+
 - (NSString*) outlineViewRefresh		// This function creates the 'root' array for the outlineView
 {
     @synchronized (self)
@@ -3352,8 +3414,6 @@ static OSStatus HorosNumbersAutomationStatus(void)
         index = [selectedRowIndexes indexGreaterThanIndex:index];
     }
     
-    //	if( displayEmptyDatabase)
-    //		predicate = [NSPredicate predicateWithValue:NO];
     
     if( [_sourcesTableView selectedRow] >= 0)
     {
@@ -3689,8 +3749,7 @@ static OSStatus HorosNumbersAutomationStatus(void)
                     studyIndex++;
                 }
                 
-                [originalOutlineViewArray release];
-                originalOutlineViewArray = [outlineViewArray retain];
+                [self rememberOriginalOutlineViewArray: outlineViewArray];
                 outlineViewArray = copyOutlineViewArray;
             }
             else
@@ -3699,8 +3758,7 @@ static OSStatus HorosNumbersAutomationStatus(void)
                 for (id obj in outlineViewArray)
                     [patientPredicateArray addObject: [NSPredicate predicateWithFormat:@"(patientUID BEGINSWITH[cd] %@)", [obj valueForKey:@"patientUID"]]];
                 predicate = [NSCompoundPredicate orPredicateWithSubpredicates: patientPredicateArray];
-                [originalOutlineViewArray release];
-                originalOutlineViewArray = [outlineViewArray retain];
+                [self rememberOriginalOutlineViewArray: outlineViewArray];
                 outlineViewArray = [[_database objectsForEntity:_database.studyEntity predicate:predicate] sortedArrayUsingDescriptors:sortDescriptors];
             }
         }
@@ -3711,8 +3769,7 @@ static OSStatus HorosNumbersAutomationStatus(void)
     }
     else
     {
-        [originalOutlineViewArray release];
-        originalOutlineViewArray = nil;
+        [self rememberOriginalOutlineViewArray: nil];
         
         outlineViewArray = [outlineViewArray sortedArrayUsingDescriptors: sortDescriptors];
     }
@@ -3853,14 +3910,7 @@ static OSStatus HorosNumbersAutomationStatus(void)
     NSAutoreleasePool* pool = [[NSAutoreleasePool alloc] init];
     @try
     {
-        if (_computingNumberOfStudiesForAlbums)
-        {
-            [self performSelectorOnMainThread:@selector(delayedRefreshAlbums) withObject:nil waitUntilDone:NO modes:[NSArray arrayWithObject:NSRunLoopCommonModes]];
-            return;
-        }
-        
-        _computingNumberOfStudiesForAlbums = YES;
-        
+        // -refreshAlbums marked the count as running before starting this thread.
         [NSThread currentThread].name = NSLocalizedString( @"Compute Albums...", nil);
         [[ThreadsManager defaultManager] addThreadAndStart: [NSThread currentThread]];
         
@@ -4058,7 +4108,13 @@ static OSStatus HorosNumbersAutomationStatus(void)
         else
         {
             if ([[NSUserDefaults standardUserDefaults] boolForKey: @"hideListenerError"] == NO || [self.window isVisible]) // Server Mode: dont refresh albums
+            {
+                // Marked here, on the main thread, before the thread exists. The
+                // thread used to mark it itself, and several started together
+                // all found it clear: six counts ran at once during an import (#697).
+                _computingNumberOfStudiesForAlbums = YES;
                 [NSThread detachNewThreadSelector:@selector(_computeNumberOfStudiesForAlbumsThread) toTarget:self withObject: nil];
+            }
         }
     }
 }
@@ -5026,7 +5082,6 @@ static OSStatus HorosNumbersAutomationStatus(void)
     {
         NSMutableArray *mergedStudies = nil;
         
-        //[NSNotificationCenter.defaultCenter postNotificationOnMainThreadName:O2SearchForComparativeStudiesStartedNotification object:self userInfo:[NSDictionary dictionaryWithObjectsAndKeys: studySelectedID, @"study", nil]];
         
         DicomDatabase *idatabase = [NSThread isMainThread] ? self.database : self.database.independentDatabase;
         
@@ -5503,7 +5558,7 @@ static OSStatus HorosNumbersAutomationStatus(void)
             if( [item isDistant])
             {
                 // Check to see if already in retrieving mode, if not download it
-                // [self retrieveComparativeStudy: item select: YES open: NO]; -- Only when double-clicking
+                // Retrieve comparative studies only on double-click.
             }
             else
             {
@@ -5905,7 +5960,6 @@ static OSStatus HorosNumbersAutomationStatus(void)
                             
                             if( originalPatientName)
                             {
-                                //                                NSString *logLine = [NSString stringWithFormat: @"---- Patient Unify: %@ %@ -> %@ %@", study.name, study.patientID, destStudy.name, destStudy.patientID, nil];
                                 
                                 [params addObjectsFromArray: [NSArray arrayWithObjects: @"-i", [NSString stringWithFormat: @"%@=%@", @"(0010,0020)", destStudy.patientID], @"-i", [NSString stringWithFormat: @"%@=%@", @"(0010,0010)", originalPatientName], @"-i", [NSString stringWithFormat: @"%@=%@", @"(0010,0030)", originalBirthDate], nil]];
                                 [params addObjectsFromArray: [NSArray arrayWithObjects: @"-i", [NSString stringWithFormat: @"%@=%@", @"(0010,1000)", existingOtherPatientIDs], @"-i", [NSString stringWithFormat: @"%@=%@", @"(0010,1001)", existingOtherPatientNames], nil]];
@@ -5930,8 +5984,6 @@ static OSStatus HorosNumbersAutomationStatus(void)
                                     
                                     @try
                                     {
-                                        //NSStringEncoding encoding = [NSString encodingForDICOMCharacterSet: [[DicomFile getEncodingArrayForFile: [files lastObject]] objectAtIndex: 0]];
-                                        //[XMLController modifyDicom: params encoding: encoding];
                                         
                                         [XMLController modifyDicom:tagAndValues dicomFiles:files];
                                         
@@ -6095,7 +6147,6 @@ static OSStatus HorosNumbersAutomationStatus(void)
                             
                             if( originalPatientName)
                             {
-                                //                                NSString *logLine = [NSString stringWithFormat: @"---- Study Unify: %@ %@ -> %@ %@", study.name, study.patientID, destStudy.name, destStudy.patientID, nil];
                                 
                                 NSMutableArray* tagAndValues = [NSMutableArray array];
                                 
@@ -6131,8 +6182,6 @@ static OSStatus HorosNumbersAutomationStatus(void)
                                     
                                     @try
                                     {
-                                        //NSStringEncoding encoding = [NSString encodingForDICOMCharacterSet: [[DicomFile getEncodingArrayForFile: [files lastObject]] objectAtIndex: 0]];
-                                        //[XMLController modifyDicom: params encoding: encoding];
                                         
                                         [XMLController modifyDicom:tagAndValues dicomFiles:files];
                                         
@@ -6936,7 +6985,6 @@ static OSStatus HorosNumbersAutomationStatus(void)
 #endif
             if ([[item valueForKey:@"type"] isEqualToString:@"Image"]) returnVal = 0;
             else if ([[item valueForKey:@"type"] isEqualToString:@"Series"]) returnVal = [[item valueForKey:@"noFiles"] intValue];
-        //else if ([[item valueForKey:@"type"] isEqualToString:@"Study"]) returnVal = [[item valueForKey:@"series"] count];
             else if ([[item valueForKey:@"type"] isEqualToString:@"Study"]) returnVal = [[item valueForKey:@"imageSeries"] count];
     }
     
@@ -6980,13 +7028,25 @@ static OSStatus HorosNumbersAutomationStatus(void)
         {
             if( [item valueForKey:@"reportURL"])
             {
-                DicomStudy *study = (DicomStudy*) item;
-                DicomImage *report = [study reportImage];
-                
-                if( [report valueForKey: @"date"])
-                    return [report valueForKey: @"date"];
-                else
-                    return nil;
+                // The date of the latest report image (#645), found without
+                // asking the study for its report image: that merges duplicate
+                // report series and saves, which drawing a row must not do.
+                NSDate *latest = nil;
+                for( DicomSeries *series in [item valueForKey: @"series"])
+                {
+                    if( [[series valueForKey:@"id"] intValue] != 5003 ||
+                       [[series valueForKey:@"name"] isEqualToString: @"OsiriX Report SR"] == NO ||
+                       [DCMAbstractSyntaxUID isStructuredReport:[series valueForKey:@"seriesSOPClassUID"]] == NO)
+                        continue;
+                    
+                    for( DicomImage *image in [series valueForKey: @"images"])
+                    {
+                        NSDate *date = [image valueForKey: @"date"];
+                        if( date && (latest == nil || [date compare: latest] == NSOrderedDescending))
+                            latest = date;
+                    }
+                }
+                return latest;
             }
             else return nil;
         }
@@ -7028,7 +7088,7 @@ static OSStatus HorosNumbersAutomationStatus(void)
             if ([item isKindOfClass:[NSManagedObject class]] && _database)
             {
                 DicomDatabase *origin = [DicomDatabase databaseForContext:[(NSManagedObject *)item managedObjectContext]];
-                if (origin && [HorosFederatedSearch pathsEqual:origin.baseDirPath other:_database.baseDirPath] == NO)
+                if (origin && origin != _database && [origin.baseDirPath isEqualToString:_database.baseDirPath] == NO && [HorosFederatedSearch pathsEqual:origin.baseDirPath other:_database.baseDirPath] == NO)
                     return [HorosFederatedSearch displayName:name origin:[HorosFederatedSearch displayOriginWithName:origin.name path:origin.baseDirPath] currentOrigin:_database.name];
             }
             
@@ -7083,6 +7143,9 @@ static OSStatus HorosNumbersAutomationStatus(void)
     
     if( [[tableColumn identifier] isEqualToString:@"noSeries"])
     {
+        if( [item isKindOfClass: [DicomStudy class]])
+            return [NSString stringWithFormat: @"%d", (int) [(DicomStudy*) item numberOfImageSeries]];
+        
         if( [item valueForKey:@"imageSeries"])
             return [NSString stringWithFormat: @"%d", (int) [[item valueForKey:@"imageSeries"] count]];
         else
@@ -7273,11 +7336,10 @@ static OSStatus HorosNumbersAutomationStatus(void)
             if( [item isDistant])
             {
                 [cell setFont: [NSFont fontWithName: DISTANTSTUDYFONT size: [self fontSize: @"dbFont"]]];
-                //                [cell setTextColor: [NSColor grayColor]];
             }
             else if( originalOutlineViewArray)
             {
-                if( [originalOutlineViewArray containsObject: item]) [cell setFont: [NSFont boldSystemFontOfSize: [self fontSize: @"dbFont"]]];
+                if( [originalOutlineViewStudies containsObject: item]) [cell setFont: [NSFont boldSystemFontOfSize: [self fontSize: @"dbFont"]]];
                 else [cell setFont: [NSFont systemFontOfSize: [self fontSize: @"dbFont"]]];
             }
             else [cell setFont: [NSFont boldSystemFontOfSize: [self fontSize: @"dbFont"]]];
@@ -7337,27 +7399,24 @@ static OSStatus HorosNumbersAutomationStatus(void)
             
             if( [[tableColumn identifier] isEqualToString: @"reportURL"])
             {
-                if( (![_database isLocal] && [item valueForKey:@"reportURL"] != nil) || [[NSFileManager defaultManager] fileExistsAtPath: [item valueForKey:@"reportURL"]] == YES)
+                // The recorded link, as it is: a file that has gone is found
+                // when the report is opened, not by a disk access per row per
+                // redraw - nor by editing the study while drawing it.
+                NSString *reportURL = [item valueForKey:@"reportURL"];
+                if( reportURL.length)
                 {
-                    NSImage	*reportIcon = [NSImage imageNamed:@"Report.icns"];
-                    [reportIcon setSize: NSMakeSize(16, 16)];
+                    static NSImage *localReportIcon = nil, *webReportIcon = nil;
+                    static dispatch_once_t once;
+                    dispatch_once( &once, ^{
+                        localReportIcon = [[NSImage imageNamed:@"Report.icns"] copy];
+                        [localReportIcon setSize: NSMakeSize(16, 16)];
+                        webReportIcon = [[[NSWorkspace sharedWorkspace] iconForFileType: @"download"] copy];
+                        if( webReportIcon == nil) webReportIcon = [localReportIcon retain];
+                        [webReportIcon setSize: NSMakeSize(16, 16)];
+                    });
                     
-                    [(ImageAndTextCell*) cell setImage: reportIcon];
-                }
-                else if( [[item valueForKey: @"reportURL"] hasPrefix: @"http://"] || [[item valueForKey: @"reportURL"] hasPrefix: @"https://"])
-                {
-                    NSImage	*reportIcon = [[NSWorkspace sharedWorkspace] iconForFileType: @"download"];
-                    
-                    if( reportIcon == nil) reportIcon = [NSImage imageNamed:@"Report.icns"];
-                    
-                    [reportIcon setSize: NSMakeSize(16, 16)];
-                    
-                    [(ImageAndTextCell*) cell setImage: reportIcon];
-                }
-                else
-                {
-                    if( [item valueForKey:@"reportURL"] != nil)
-                        [item setValue: nil forKey: @"reportURL"];
+                    BOOL webLink = [_database isLocal] && ([reportURL hasPrefix: @"http://"] || [reportURL hasPrefix: @"https://"]);
+                    [(ImageAndTextCell*) cell setImage: webLink ? webReportIcon : localReportIcon];
                 }
             }
         }
@@ -8984,7 +9043,6 @@ static OSStatus HorosNumbersAutomationStatus(void)
                 if( [databaseOutline isItemExpanded: [curObj valueForKeyPath:@"series.study"]])
                     [databaseOutline collapseItem: [curObj valueForKeyPath:@"series.study"]];
                 
-                //	[self findAndSelectFile:nil image:[dicomFiles objectAtIndex: 0] shouldExpand:NO];
             }
             else
             {
@@ -10199,7 +10257,6 @@ static BOOL withReset = NO;
         }
         else if([[aFile valueForKey:@"type"] isEqualToString:@"Study"])
         {
-            //            id item = [matrixViewArray objectAtIndex: [cell tag]];
             
             NSArray *images = matrixViewArray.count? [self imagesArray: [matrixViewArray objectAtIndex: [cell tag]]] : nil;
             
@@ -10687,24 +10744,6 @@ static HorosPreviewFrame *HorosPreviewFrameForImage( DicomImage *image, int fram
     }
 }
 
-//- (void) test:(id) s
-//{
-//    NSLog( @"--");
-//
-//    [NSThread sleepForTimeInterval: 2];
-//}
-//
-//- (void) createThread
-//{
-//    NSAutoreleasePool *n = [NSAutoreleasePool new];
-//
-//    NSThread* t = [[[NSThread alloc] initWithTarget:self selector:@selector( test:) object: nil] autorelease];
-//    t.name = NSLocalizedString( @"Test very small thread...", nil);
-//    t.supportsCancel = YES;
-//    [[ThreadsManager defaultManager] addThreadAndStart: t];
-//
-//    [n release];
-//}
 
 - (void)previewPerformAnimation: (id)sender
 {
@@ -10917,7 +10956,6 @@ static HorosPreviewFrame *HorosPreviewFrameForImage( DicomImage *image, int fram
 
 - (void) matrixNewIcon:(long) index :(NSManagedObject*)curFile
 {
-    //	if( shouldDie == NO)
     {
         long i = index;
         NSImage *img = nil;
@@ -10985,8 +11023,6 @@ static HorosPreviewFrame *HorosPreviewFrameForImage( DicomImage *image, int fram
 
                 [cell setButtonType:NSPushOnPushOffButton];
                 [cell setBezelStyle:NSShadowlessSquareBezelStyle];
-//                [cell setShowsStateBy:NSPushInCellMask];
-//                [cell setHighlightsBy:NSContentsCellMask];
                 [cell setImageScaling:NSImageScaleProportionallyDown];
                 [cell setBordered:YES];
                 
@@ -11085,15 +11121,12 @@ static HorosPreviewFrame *HorosPreviewFrameForImage( DicomImage *image, int fram
                 {
                     case -1:
                         [cell setImage: [img imageByScalingProportionallyUsingNSImage: 0.6]];
-//                        [cell setAlternateImage: [img imageByScalingProportionallyUsingNSImage: 0.6]];
                         break;
                     case 0:
                         [cell setImage: img];
-//                        [cell setAlternateImage:img];
                         break;
                     case 1:
                         [cell setImage: [img imageByScalingProportionallyUsingNSImage: 1.3]];
-//                        [cell setAlternateImage:[img imageByScalingProportionallyUsingNSImage: 1.3]];
                         break;
                 }
                 
@@ -11135,8 +11168,6 @@ static HorosPreviewFrame *HorosPreviewFrameForImage( DicomImage *image, int fram
                 
                 [cell setButtonType:NSPushOnPushOffButton];
                 [cell setBezelStyle:NSShadowlessSquareBezelStyle];
-//                [cell setShowsStateBy:NSPushInCellMask];
-//                [cell setHighlightsBy:NSContentsCellMask];
                 [cell setImageScaling:NSImageScaleProportionallyDown];
                 [cell setBordered:YES];
                 
@@ -11289,7 +11320,6 @@ static HorosPreviewFrame *HorosPreviewFrameForImage( DicomImage *image, int fram
     NSString *recoveryPath = [[[[BrowserController currentBrowser] database] baseDirPath] stringByAppendingPathComponent:@"ThumbnailPath"];
     if( [[NSFileManager defaultManager] fileExistsAtPath: recoveryPath])
     {
-        //	displayEmptyDatabase = YES;
         [self outlineViewRefresh];
         [self refreshMatrix: self];
         NSString *uri = [NSString stringWithContentsOfFile:recoveryPath usedEncoding:NULL error:NULL];
@@ -11339,7 +11369,6 @@ static HorosPreviewFrame *HorosPreviewFrameForImage( DicomImage *image, int fram
             }
         }
         
-        //	displayEmptyDatabase = NO;
     }
     
     if( [[NSUserDefaults standardUserDefaults] boolForKey: @"hideListenerError"] == NO)
@@ -11690,8 +11719,6 @@ static HorosPreviewFrame *HorosPreviewFrameForImage( DicomImage *image, int fram
 constrainSplitPosition:(CGFloat)proposedPosition
          ofSubviewAt:(NSInteger)offset
 {
-    //    if( starting)
-    //        return proposedPosition;
     
     if (sender == splitViewVert)
     {
@@ -12712,10 +12739,6 @@ constrainSplitPosition:(CGFloat)proposedPosition
                         
                         [album setValue:name forKey:@"name"];
                         
-                        //						@synchronized( [BrowserController currentBrowser])
-                        //						{
-                        //							cachedAlbumsManagedObjectContext = nil;
-                        //						}
                         
                         [_database save:NULL];
                         
@@ -13349,12 +13372,6 @@ constrainSplitPosition:(CGFloat)proposedPosition
                 if( study && dontSelectStudyFromComparativeStudies == NO)
                 {
                     //                    #ifndef OSIRIX_LIGHT
-                    //                    if( [study isDistant]) // distant study -> download it, and select it
-                    //                    {
-                    //                        [self retrieveComparativeStudy: study select: YES open: NO]; -- Only when double-clicking
-                    //                    }
-                    //                    else // local study -> select it
-                    //                    #endif
                     {
                         if( [self selectThisStudy: study] && [[self window] firstResponder] != searchField && [[self window] firstResponder] != searchField.currentEditor)
                             [[self window] makeFirstResponder: databaseOutline];
@@ -15256,7 +15273,6 @@ static NSArray*	openSubSeriesArray = nil;
 
 - (id)initWithWindow: (NSWindow *)window
 {
-    //displayEmptyDatabase = YES;
     
     [AppController initialize];
     
@@ -15330,13 +15346,9 @@ static NSArray*	openSubSeriesArray = nil;
             NSAutoreleasePool* pool = [[NSAutoreleasePool alloc] init];
             @try
             {
-                //thread.name = NSLocalizedString(@"Opening database...", nil);
-                //ThreadModalForWindowController* tmfwc = [[ThreadModalForWindowController alloc] initWithThread:thread window:nil]; // sorry but this window is really ugly at startup...
             
                 theDatabase = [[DicomDatabase activeLocalDatabase] retain]; // explicitly released later
             
-                //[tmfwc invalidate];
-                //[tmfwc release];
             }
             @catch (NSException* e)
             {
@@ -15645,18 +15657,6 @@ static NSArray*	openSubSeriesArray = nil;
             previewRedrawCoalescer = [[HorosPreviewRedrawCoalescer alloc] initWithInterval: 0.03];
         [imageView setWindowDelegate: self];
 
-        //[self window].appearance = [NSAppearance appearanceNamed:NSAppearanceNameVibrantDark];;
-        //[[self window] invalidateShadow];
-        
-        //	dispatch_queue_t queue = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0);
-        //
-        //	dispatch_apply(count, queue,
-        //	^(size_t i)
-        //	{
-        //		printf("%u\n",i);
-        //	});
-        
-        //    NSLog( @"%@", [[NSFontManager sharedFontManager] availableFonts]);
         
         NSRect r = NSMakeRect(0, 0, 0, 0);
         
@@ -15691,8 +15691,6 @@ static NSArray*	openSubSeriesArray = nil;
         
         WaitRendering *wait = [[AppController sharedAppController] splashScreen];
         
-        //	waitCompressionWindow  = [[Wait alloc] initWithString: NSLocalizedString( @"File Conversion", nil) :NO];
-        //	[waitCompressionWindow setCancel:YES];
         
         
         [oMatrix setIntercellSpacing:NSMakeSize(-1, -1)];
@@ -15710,9 +15708,6 @@ static NSArray*	openSubSeriesArray = nil;
         
         @try
         {
-            //            [self.window safelySetUsesLightBottomGradient:YES];
-            
-            //  [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(previewMatrixFrameDidChange:) name:NSViewFrameDidChangeNotification object:oMatrix];
             [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(previewMatrixScrollViewFrameDidChange:) name:NSViewFrameDidChangeNotification object:thumbnailsScrollView];
             [self previewMatrixScrollViewFrameDidChange:nil];
             
@@ -15730,14 +15725,9 @@ static NSArray*	openSubSeriesArray = nil;
             [oMatrix setDoubleAction:@selector(matrixDoublePressed:)];
             [oMatrix setFocusRingType: NSFocusRingTypeExterior];
             [oMatrix renewRows:0 columns: 0];
-            //[oMatrix sizeToCells];
             
             [imageView setTheMatrix:oMatrix];
             
-            // Bug for segmentedControls...
-            //NSRect f = [segmentedAlbumButton frame];
-            //f.size.height = 25;
-            //[segmentedAlbumButton setFrame: f];
             
             [databaseOutline setAction:@selector(databasePressed:)];
             [databaseOutline setDoubleAction:@selector(databaseDoublePressed:)];
@@ -15753,8 +15743,6 @@ static NSArray*	openSubSeriesArray = nil;
             // Toolbar attachment changes the frame to preserve content height. Restore
             // the saved outer frame only after the toolbar is installed and visible.
             [HorosDatabaseWindowPlacement restoreWindow:self.window savedFrame:r];
-            //		[self showDatabase: self];
-            
             // NSMenu for DatabaseOutline
             NSMenu* menu = [[[NSMenu alloc] initWithTitle:@""] autorelease];
             [menu setDelegate:self];
@@ -15835,10 +15823,6 @@ static NSArray*	openSubSeriesArray = nil;
             activeReceives = [[NSMutableDictionary dictionary] retain];
             receiveLog = [[NSMutableArray array] retain];
             
-            //	sendQueue = [[NSMutableArray alloc] init];
-            //	queueLock = [[NSConditionLock alloc] initWithCondition: QueueEmpty];
-            //	[NSThread detachNewThreadSelector:@selector(runSendQueue:) toTarget:self withObject:nil];
-            
             // bonjour
             bonjourBrowser = [[BonjourBrowser alloc] initWithBrowserController:self];
             [self displayBonjourServices];
@@ -15873,11 +15857,6 @@ static NSArray*	openSubSeriesArray = nil;
                     [self drawerToggle: self];
             }
             
-            // database : gray background
-            //	[databaseOutline setUsesAlternatingRowBackgroundColors:NO];
-            //	[databaseOutline setBackgroundColor:[NSColor lightGrayColor]];
-            //	[databaseOutline setGridColor:[NSColor darkGrayColor]];
-            //	[databaseOutline setGridStyleMask:NSTableViewSolidHorizontalGridLineMask];
             
             [[albumTable tableColumnWithIdentifier:@"Source"] setDataCell: [[[PrettyCell alloc] init] autorelease]];
             
@@ -15893,7 +15872,7 @@ static NSArray*	openSubSeriesArray = nil;
             [LogManager currentLogManager];
             
             // SCAN FOR AN IPOD!
-            //[self loadDICOMFromiPod]; now we do this in AppController+Mount
+            // Mounted media are handled by the volume observers in BrowserController+Sources.
         }
         
         @catch( NSException *ne)
@@ -15947,7 +15926,6 @@ static NSArray*	openSubSeriesArray = nil;
         CGFloat position = bannerSplit.frame.size.height - (banner.image.size.height+3);
         [bannerSplit setPosition: position ofDividerAtIndex: 0];
 #else
-       // [[[bannerSplit subviews] objectAtIndex:1] setHidden:YES];
 #endif
         
         [[self window] setAnimationBehavior: NSWindowAnimationBehaviorNone];
@@ -15971,23 +15949,6 @@ static NSArray*	openSubSeriesArray = nil;
         [searchMenu release];
         [self setSearchType: [[[searchField cell] searchMenuTemplate] itemWithTag: [[NSUserDefaults standardUserDefaults] integerForKey: @"searchType"]]];
         
-        //	NSFetchRequest	*dbRequest = [[[NSFetchRequest alloc] init] autorelease];
-        //	[dbRequest setEntity: [[self.database.managedObjectModel entitiesByName] objectForKey:@"LogEntry"]];
-        //	[dbRequest setPredicate: [NSPredicate predicateWithValue:YES]];
-        //
-        //	NSError *error = nil;
-        //	NSArray *logArray = [self.database.managedObjectContext executeFetchRequest:dbRequest error: &error];
-        //
-        //	if( error)
-        //		NSLog( @"%@", error);
-        //	NSLog( @"%@", logArray);
-        //
-        //	for( id log in logArray)
-        //	{
-        //		NSLog( @"%@", [log valueForKey: @"type"]);
-        //	}
-        //
-        //	for( id log in logArray) [self.database.managedObjectContext deleteObject: log];
     }
     @catch (NSException *e) {
         N2LogException( e);
@@ -16201,7 +16162,6 @@ static NSArray*	openSubSeriesArray = nil;
 
 - (void) browserPrepareForClose
 {
-    //	[IncomingTimer invalidate];
     
     NSRect savedFrame = self.window.frame;
     if ((self.window.styleMask & NSWindowStyleMaskFullScreen) && !NSIsEmptyRect(_databaseWindowedFrame))
@@ -16225,9 +16185,6 @@ static NSArray*	openSubSeriesArray = nil;
     
     self.database = nil;
     
-    //	[self removeAllMounted];
-    
-    //	newFilesInIncoming = NO;
     
     [splitViewVert saveDefault:@"SplitVert2"];
     [splitViewHorz saveDefault:@"SplitHorz2"];
@@ -16812,13 +16769,10 @@ static NSArray*	openSubSeriesArray = nil;
     NSMenu *helpMenu = [[NSMenu allocWithZone: [NSMenu menuZone]] initWithTitle: NSLocalizedString(@"Help", nil)];
     [helpItem setSubmenu:helpMenu];
     
-    //[helpMenu addItemWithTitle: NSLocalizedString(@"TBD", nil) action: @selector(help:) keyEquivalent: @""];
     [helpMenu addItemWithTitle: NSLocalizedString(@"Professional support", nil) action: @selector(openHorosSupport:) keyEquivalent: @""];
     [helpMenu addItemWithTitle: NSLocalizedString(@"Community support", nil) action: @selector(openCommunityPage:) keyEquivalent: @""];
     [helpMenu addItem: [NSMenuItem separatorItem]];
     [helpMenu addItemWithTitle: NSLocalizedString(@"Report a bug", nil) action: @selector(openBugReportPage:) keyEquivalent: @""];
-    //[helpMenu addItem: [NSMenuItem separatorItem]];
-    //[helpMenu addItemWithTitle: NSLocalizedString(@"Send an email to Horos support", nil) action: @selector(sendEmail:) keyEquivalent: @""];
     
     [helpMenu release];
 }
@@ -17393,7 +17347,6 @@ static volatile int numberOfThreadsForJPEG = 0;
 {
     int processors =  [[NSProcessInfo processInfo] processorCount];
     
-    //	processors--;
     if( processors < 1)
         processors = 1;
     
@@ -19105,10 +19058,6 @@ restart:
                     else
                     {
                         NSMutableString *name;
-                        //				if ([[curImage valueForKeyPath: @"series.name"] length] > 8)
-                        //					name = [NSMutableString stringWithString:[[[curImage valueForKeyPath: @"series.name"] substringToIndex:7] uppercaseString]];
-                        //				else
-                        //					name = [NSMutableString stringWithString:[[curImage valueForKeyPath: @"series.name"] uppercaseString]];
                         
                         name = [NSMutableString stringWithString: [[seriesId stringValue] uppercaseString]];
                         
@@ -19299,8 +19248,6 @@ restart:
         
         if( [files2Compress count] > 0 && exportAborted == NO)
         {
-            //		[waitCompressionWindow showWindow:self];
-            //		[[waitCompressionWindow progress] setMaxValue: [files2Compress count]];
             
 #ifndef OSIRIX_LIGHT
             
@@ -19332,7 +19279,6 @@ restart:
             }
 #endif
             
-            //		[waitCompressionWindow close];
         }
         
         // ANR - I had to create this loop, otherwise, if I export a folder on the desktop, the dcmkdir will scan all files and folders available on the desktop.... not only the exported folder.
@@ -19471,7 +19417,6 @@ restart:
                 
                 [t setArguments: args];
                 [t launch];
-                //				[t waitUntilExit];
                 while( [t isRunning]) [NSThread sleepForTimeInterval: 0.01];
                 
                 free( objs);
@@ -20154,7 +20099,6 @@ restart:
         [self querySelectedStudy: self];
     else
     {
-        //		[self.window makeKeyAndOrderFront:sender];
         
         if ([sender tag] == 0 && [QueryController currentQueryController] == nil)
             [[QueryController alloc] initAutoQuery: NO];
@@ -21174,8 +21118,6 @@ restart:
     // Set up toolbar properties: Allow customization, give a default display mode, and remember state in user defaults 
     [toolbar setAllowsUserCustomization: YES];
     [toolbar setAutosavesConfiguration: YES];
-    //    [toolbar setDisplayMode: NSToolbarDisplayModeIconOnly];
-    
     if (@available(macOS 11.0, *))
         self.window.toolbarStyle = NSWindowToolbarStyleAutomatic;
     
@@ -21187,7 +21129,6 @@ restart:
     [self.window setShowsToolbarButton:NO];
     [[self.window toolbar] setVisible: YES];
     
-    //    [self.window makeKeyAndOrderFront:nil];
     
 #ifdef EXPORTTOOLBARITEM
     NSLog(@"************** WARNING EXPORTTOOLBARITEM ACTIVATED");
@@ -22881,6 +22822,154 @@ restart:
     if (![_database isLocal])
         return [_database managedObjectContext];
     return nil;
+}
+
+@end
+
+#pragma mark Patient list album (#703)
+
+// An album from a list of patients in an image: the window, the parsing and the
+// decisions are Swift (PatientListAlbumWindow.swift, PatientListImport.swift);
+// the database and the Query/Retrieve are here. No name or identifier is logged.
+@interface BrowserController (HorosPatientListAlbum) <HorosPatientListAlbumHost>
+@end
+
+@implementation BrowserController (HorosPatientListAlbum)
+
+- (IBAction)createAlbumFromPatientListImage:(id)sender
+{
+    if (_database.isLocal == NO)
+    {
+        NSBeep();
+        return;
+    }
+    [HorosPatientListAlbumWindowController beginWithHost: self parent: self.window];
+}
+
+- (NSArray *)patientListCandidatesForIdentifier:(NSString *)identifier name:(NSString *)name
+{
+    NSMutableArray *predicates = [NSMutableArray array];
+    NSString *trimmed = [identifier stringByTrimmingCharactersInSet: [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (trimmed.length)
+        [predicates addObject: [NSPredicate predicateWithFormat: @"patientID ==[c] %@", trimmed]];
+    // Every word of the name, anywhere in the stored one: the list may say
+    // "Given Family" where DICOM says "FAMILY^GIVEN". The leading * is how
+    // patientsnamePredicate: is asked for that.
+    NSArray *words = [HorosPatientListMatching searchWords: name ?: @""];
+    if (words.count)
+        [predicates addObject: [self patientsnamePredicate: [@"*" stringByAppendingString: [words componentsJoinedByString: @" "]] soundex: NO]];
+    if (predicates.count == 0)
+        return @[];
+    
+    NSMutableArray *candidates = [NSMutableArray array];
+    NSManagedObjectContext *context = _database.managedObjectContext;
+    [context lock];
+    @try
+    {
+        NSArray *found = [_database objectsForEntity: _database.studyEntity predicate: [NSCompoundPredicate orPredicateWithSubpredicates: predicates]];
+        NSMutableSet *patients = [NSMutableSet set], *studies = [NSMutableSet setWithArray: found];
+        for (DicomStudy *study in found)
+            if ([study isKindOfClass: [DicomStudy class]] && study.patientUID.length)
+                [patients addObject: study.patientUID];
+        // The patient's other studies, as the browser gathers them.
+        if (patients.count)
+            [studies addObjectsFromArray: [_database objectsForEntity: _database.studyEntity predicate: [NSPredicate predicateWithFormat: @"patientUID IN %@", patients]]];
+        for (DicomStudy *study in studies)
+        {
+            if ([study isKindOfClass: [DicomStudy class]] == NO)
+                continue;
+            [candidates addObject: @{@"objectID": study.objectID,
+                                     @"patientUID": study.patientUID ?: @"",
+                                     @"patientID": study.patientID ?: @"",
+                                     @"name": study.name ?: @"",
+                                     @"dateOfBirth": study.dateOfBirth ?: (id)[NSNull null],
+                                     @"sex": study.patientSex ?: @"",
+                                     @"date": study.date ?: (id)[NSNull null]}];
+        }
+    }
+    @catch (NSException *e)
+    {
+        N2LogExceptionWithStackTrace(e);
+    }
+    @finally
+    {
+        [context unlock];
+    }
+    return candidates;
+}
+
+- (NSString *)patientListCreateAlbumNamed:(NSString *)name studies:(NSArray *)studyIDs expected:(NSArray *)expected error:(NSError **)error
+{
+    NSString *created = nil, *problem = nil;
+    DicomAlbum *album = nil;
+    NSManagedObjectContext *context = _database.managedObjectContext;
+    [context lock];
+    @try
+    {
+        // What the user reviewed must still be what is stored: another import,
+        // a merge or an edit may have changed a study since.
+        NSMutableArray *studies = [NSMutableArray array];
+        for (NSUInteger i = 0; i < studyIDs.count && problem == nil; i++)
+        {
+            DicomStudy *study = (DicomStudy *) [context existingObjectWithID: studyIDs[i] error: NULL];
+            if (study)
+                [context refreshObject: study mergeChanges: YES];
+            NSDictionary *reviewed = i < expected.count ? expected[i] : nil;
+            if ([study isKindOfClass: [DicomStudy class]] == NO || study.isDeleted ||
+                [(study.patientID ?: @"") isEqualToString: reviewed[@"patientID"] ?: @""] == NO ||
+                [(study.name ?: @"") isEqualToString: reviewed[@"name"] ?: @""] == NO)
+                problem = NSLocalizedString(@"A study changed or was deleted after the list was reviewed. Review the list again.", nil);
+            else
+                [studies addObject: study];
+        }
+        if (problem == nil)
+        {
+            NSArray *names = [[_database objectsForEntity: _database.albumEntity] valueForKey: @"name"];
+            NSString *unique = name;
+            int n = 2;
+            while ([names containsObject: unique])
+                unique = [NSString stringWithFormat: @"%@ #%d", name, n++];
+            album = [NSEntityDescription insertNewObjectForEntityForName: @"Album" inManagedObjectContext: context];
+            album.name = unique;
+            [_database addStudies: studies toAlbum: album];
+            [_database save];
+            created = unique;
+        }
+    }
+    @catch (NSException *e)
+    {
+        N2LogExceptionWithStackTrace(e);
+        problem = e.reason ?: NSLocalizedString(@"The album could not be saved.", nil);
+    }
+    @finally
+    {
+        [context unlock];
+    }
+    if (created)
+    {
+        [self refreshAlbums];
+        NSInteger index = [self.albumArray indexOfObject: album];
+        if (index != NSNotFound)
+            [albumTable selectRowIndexes: [NSIndexSet indexSetWithIndex: index] byExtendingSelection: NO];
+        [self outlineViewRefresh];
+    }
+    else if (error)
+        *error = [NSError errorWithDomain: @"HorosPatientListAlbum" code: 1 userInfo: @{NSLocalizedDescriptionKey: problem ?: @""}];
+    return created;
+}
+
+- (void)patientListQueryPACSWithIdentifier:(NSString *)identifier name:(NSString *)name
+{
+#ifndef OSIRIX_LIGHT
+    if ([QueryController currentQueryController] == nil)
+        [[QueryController alloc] initAutoQuery: NO];
+    QueryController *query = [QueryController currentQueryController];
+    [query showWindow: self];
+    if (identifier.length)
+        [query queryPatientID: identifier];
+    else if (name.length)
+        [query queryPatientName: name];
+#endif
 }
 
 @end

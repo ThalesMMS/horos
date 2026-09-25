@@ -145,6 +145,12 @@ for signature, what in (
 if len(re.findall(r'localCompletenessForItem:', controller)) < 4:
     failures.append('the column, the tooltip, the pie and the sort do not all use one value')
 
+# The column is read on every repaint; its inventory refresh must not wait on
+# the database from the main thread (#693).
+reader = body('- (HorosLocalCompleteness*) localCompletenessForItem:')
+if 'refreshRetrieveInventoryWithoutWaiting' not in reader or re.search(r'refreshRetrieveInventory\]', reader):
+    failures.append('the completeness value refreshes the inventory synchronously')
+
 # The sort compares rows, because completeness is not a property of the node.
 sort = controller[controller.find('- (NSArray*) sortArray'):]
 sort = sort[:sort.find('\n- (')]
@@ -257,9 +263,12 @@ int main(void) { @autoreleasepool {
     [c->outlineView setSortDescriptors:@[local(YES)]];
     empty.value=@.75; selectedSeries.value=@.9;
     [c executeRefresh:nil];
-    NSCAssert(([values(c->resultArray) isEqual:@[@-1,@.5,@.75,@1,@1.2]]),@"Refresh uses new local counts");
-    NSCAssert(([values(full.children) isEqual:@[@0,@.9,@1]]),@"Refresh sorts expanded series");
+    NSCAssert(([values(c->resultArray) isEqual:@[@-1,@.75,@.5,@1,@1.2]]),@"Refresh redraws without moving rows");
     NSCAssert([c->outlineView itemAtRow:c->outlineView.selectedRow]==selectedSeries,@"Refresh preserves selected series");
+    [c outlineView:c->outlineView sortDescriptorsDidChange:@[]];
+    NSCAssert(([values(c->resultArray) isEqual:@[@-1,@.5,@.75,@1,@1.2]]),@"A header click sorts on the new local counts");
+    NSCAssert(([values(full.children) isEqual:@[@0,@.9,@1]]),@"A header click sorts expanded series");
+    NSCAssert([c->outlineView itemAtRow:c->outlineView.selectedRow]==selectedSeries,@"A header click preserves selected series");
     [c->outlineView setSortDescriptors:@[[NSSortDescriptor sortDescriptorWithKey:@"date" ascending:YES],local(YES)]];
     NSArray *dated=[c->resultArray sortedArrayUsingDescriptors:[c sortArray]];
     NSCAssert(dated[0]==full && dated[1]==half,@"Date retains time tie breaker");
@@ -291,5 +300,5 @@ for failure in failures:
 if failures:
     sys.exit(1)
 print('ok: completeness tells an unknown total from 0%, refuses to call a study complete when '
-      'the counts do not match exactly, sorts numerically with the unknowns apart, and one '
-      'value feeds the column, the tooltip, the pie and the sort')
+      'the counts do not match exactly, sorts numerically with the unknowns apart only when '
+      'asked, and one value feeds the column, the tooltip, the pie and the sort')
