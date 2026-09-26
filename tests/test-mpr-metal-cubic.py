@@ -285,6 +285,10 @@ display = dcmpix[dcmpix.find('- (float*)computefImageForDisplay'):]
 display = display[:display.find('\n}\n')]
 if 'if( result == fImage && display.length == (NSUInteger) width * (NSUInteger) height * sizeof( float))' not in display:
     failures.append('the display plane is not limited to standing in for fImage at its size')
+# Every caller, and the convolution, frees what is not fImage: handing out the
+# NSData's own bytes freed them twice and crashed the MPR on the next plane.
+if 'result = (float*) display.bytes' in display or 'memcpy( copy, display.bytes, display.length);' not in display:
+    failures.append('the display plane is handed out as the NSData bytes, which callers free')
 if 'srcf.data = [self computefImageForDisplay];' not in dcmpix:
     failures.append('the 8-bit representation that is drawn does not use the display plane')
 if dcmview.count('[self.curDCM computefImageForDisplay]') != 3:
@@ -296,10 +300,10 @@ if 'computefImageForDisplay' in source('ROI.m') or 'computefImageForDisplay' in 
     failures.append('a measurement or storage path reads the display plane')
 if 'boolForKey:HorosMPRCubicDisplayKey' not in bridge or 'HorosMPRCubicDisplay' in source('DefaultsOsiriX.m'):
     failures.append('the cubic display is not an unregistered preference, off unless set')
-for catalog in ('it-IT', 'es'):
-    text = (root / 'Horos/Resources' / (catalog + '.lproj') / 'Localizable.strings').read_text(encoding='utf-8')
-    if '"Cubic Interpolation for MPR Display" = "' not in text:
-        failures.append(catalog + ' lacks the menu title')
+for pane in ('Base', 'ja-JP'):
+    text = (root / 'Preference Panes/OSI3DPreferencePane' / (pane + '.lproj') / 'OSI3DPreferencePanePref.xib').read_text()
+    if 'title="Cubic Interpolation for MPR Display"' not in text or 'keyPath="values.HorosMPRCubicDisplay"' not in text:
+        failures.append(pane + ' 3D settings lack the cubic display option')
 for failure in failures:
     print('FAIL: %s' % failure)
 if failures:

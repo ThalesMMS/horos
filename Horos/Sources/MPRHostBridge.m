@@ -10,6 +10,7 @@
 static char enabledKey, reslicerKey, uploadedKey, reasonKey, millisecondsKey, fusedReslicerKey, fusedUploadedKey, fusedPlaneKey;
 static char displayPlaneKey;
 
+static NSString * const HorosMPRMetalKey = @"HorosMPRMetal";
 static NSString * const HorosMPRCubicDisplayKey = @"HorosMPRCubicDisplay";
 // The MPR always draws a slab: its thinnest, the one it opens with, is the
 // slice interval up to 1 mm (-[MPRController initWithDCMPixList:...]). The
@@ -25,16 +26,53 @@ static const float HorosMPRCubicDisplayMaximumSlab = 1.0f + 1e-3f;
 - (void)horosMPRWindowWillClose:(NSNotification *)note;
 @end
 
+/// Settings → 3D holds both MPR options (#702). An open MPR follows a change
+/// at once: the preference observer reconstructs its planes.
+@interface HorosMPRPreferenceObserver : NSObject
+@end
+
+@implementation HorosMPRPreferenceObserver
+
++ (void)observe {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        HorosMPRPreferenceObserver *observer = [[HorosMPRPreferenceObserver alloc] init]; // lives for the app
+        for (NSString *key in @[HorosMPRMetalKey, HorosMPRCubicDisplayKey])
+            [[NSUserDefaults standardUserDefaults] addObserver:observer forKeyPath:key options:0 context:NULL];
+    });
+}
+
+- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)change context:(void *)context {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        for (NSWindow *window in [NSApp windows]) {
+            MPRController *controller = window.windowController;
+            if (![controller isKindOfClass:[MPRController class]]) continue;
+            // The preference replaces a window's own choice.
+            if ([keyPath isEqualToString:HorosMPRMetalKey])
+                objc_setAssociatedObject(controller, &enabledKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            [controller horosMPRReconstructPlanes];
+        }
+    });
+}
+
+@end
+
 @implementation MPRController (HorosMPRHost)
 
 - (BOOL)horosMPRMetalEnabled {
+    [HorosMPRPreferenceObserver observe];
     NSNumber *enabled = objc_getAssociatedObject(self, &enabledKey);
+    if (!enabled) enabled = [[NSUserDefaults standardUserDefaults] objectForKey:HorosMPRMetalKey];
     return enabled ? enabled.boolValue : YES;
 }
 
 - (void)toggleMPRMetal:(id)sender {
-    BOOL enabled = !self.horosMPRMetalEnabled;
-    objc_setAssociatedObject(self, &enabledKey, @(enabled), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(self, &enabledKey, @(!self.horosMPRMetalEnabled), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [self horosMPRReconstructPlanes];
+}
+
+- (void)horosMPRReconstructPlanes {
+    BOOL enabled = self.horosMPRMetalEnabled;
     if (!enabled) {
         [self horosMPRReleaseVolume];
         objc_setAssociatedObject(self, &reasonKey, nil, OBJC_ASSOCIATION_COPY_NONATOMIC);
@@ -53,15 +91,6 @@ static const float HorosMPRCubicDisplayMaximumSlab = 1.0f + 1e-3f;
 
 - (BOOL)horosMPRCubicDisplay {
     return [[NSUserDefaults standardUserDefaults] boolForKey:HorosMPRCubicDisplayKey];
-}
-
-- (void)toggleMPRCubicDisplay:(id)sender {
-    [[NSUserDefaults standardUserDefaults] setBool:!self.horosMPRCubicDisplay forKey:HorosMPRCubicDisplayKey];
-    for (MPRDCMView *view in @[mprView1, mprView2, mprView3]) {
-        [view restoreCamera];
-        view.camera.forceUpdate = YES;
-        [view updateViewMPR];
-    }
 }
 
 - (double)horosMPRLastMilliseconds {
@@ -193,20 +222,6 @@ static NSArray *HorosMPRPixelCentre(const float corner[3], const float cosines[9
 @end
 
 @implementation MPRDCMView (HorosMPRHost)
-
-- (NSMenu *)menuForEvent:(NSEvent *)event {
-    NSMenu *menu = [super menuForEvent:event] ?: [[[NSMenu alloc] init] autorelease];
-    if (menu.numberOfItems) [menu addItem:[NSMenuItem separatorItem]];
-    NSMenuItem *item = [menu addItemWithTitle:NSLocalizedString(@"Use Metal in MPR", nil)
-                                       action:@selector(toggleMPRMetal:) keyEquivalent:@""];
-    item.target = windowController;
-    item.state = windowController.horosMPRMetalEnabled ? NSControlStateValueOn : NSControlStateValueOff;
-    NSMenuItem *cubic = [menu addItemWithTitle:NSLocalizedString(@"Cubic Interpolation for MPR Display", nil)
-                                        action:@selector(toggleMPRCubicDisplay:) keyEquivalent:@""];
-    cubic.target = windowController;
-    cubic.state = windowController.horosMPRCubicDisplay ? NSControlStateValueOn : NSControlStateValueOff;
-    return menu;
-}
 
 /// The series fused over this plane (#658), resliced in Metal where VTK
 /// reslices it: on the blending mapper's own grid, origin and sample distance,

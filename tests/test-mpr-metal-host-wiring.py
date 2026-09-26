@@ -63,7 +63,14 @@ assert 'volume.length < expected' in bridge and 'expected != volume.length' not 
     'the viewer buffer may exceed the slices; only a shorter buffer is refused'
 assert 'NSWindowWillCloseNotification' in bridge and 'releaseVolume' in bridge, 'closing the window must free the GPU volume'
 assert 'return enabled ? enabled.boolValue : YES;' in bridge, 'Metal defaults on with a per-window override'
-assert 'Use Metal in MPR' in bridge and 'toggleMPRMetal:' in bridge
+assert 'toggleMPRMetal:' in bridge and 'objectForKey:HorosMPRMetalKey' in bridge, \
+    'Metal follows the HorosMPRMetal preference, with a per-window override for comparisons'
+assert 'menuForEvent' not in bridge, 'the MPR options live in Settings → 3D, not in a contextual menu'
+assert 'addObserver:observer forKeyPath:key' in bridge and '[controller horosMPRReconstructPlanes]' in bridge, \
+    'an open MPR follows a preference change'
+pane = (root / 'Preference Panes/OSI3DPreferencePane/Base.lproj/OSI3DPreferencePanePref.xib').read_text()
+assert 'title="Use Metal in MPR"' in pane and 'keyPath="values.HorosMPRMetal"' in pane
+assert '[defaultValues setObject: @YES forKey: @"HorosMPRMetal"]' in (root / 'Horos/Sources/DefaultsOsiriX.m').read_text(encoding='latin1')
 assert '- (float *)horosMPRCopyImageWidth:(long *)width height:(long *)height;' in header
 assert 'horosMPRReplacePixels' not in view + bridge + header
 
@@ -89,7 +96,6 @@ assert 'computedfImage = [self computefImageForMeasurement];' in dcmpix
 # Strings and project membership.
 for catalog in ('it-IT', 'es'):
     text = (root / 'Horos/Resources' / (catalog + '.lproj') / 'Localizable.strings').read_text(encoding='utf-8')
-    assert '"Use Metal in MPR" = "' in text, catalog + ' lacks the menu title'
     assert '"Original renderer (Metal paused)" = "' in text
 for name in ('MPRHostBridge.m', 'MPRMetalReslicer.swift'):
     assert sum(name in line for line in project.splitlines()) == 4, name + " is not fully registered in the Xcode project"

@@ -4,10 +4,13 @@
 
 /// Metal reconstructs scalar 3D MPR planes by default. The host retains its
 /// camera, geometry, ROIs, tools and export. Unsupported modes and failures
-/// use the CPU renderer. The per-window option permits CPU comparisons.
+/// use the CPU renderer. The `HorosMPRMetal` preference (Settings → 3D) turns
+/// it off; -toggleMPRMetal: overrides it for one window, for CPU comparisons.
 @interface MPRController (HorosMPRHost)
 - (BOOL)horosMPRMetalEnabled;
 - (void)toggleMPRMetal:(id)sender;
+/// Reconstructs the three planes with the current options.
+- (void)horosMPRReconstructPlanes;
 /// The reason the last reconstruction kept the original pixels, or nil.
 - (NSString *)horosMPRFallbackReason;
 /// Wall milliseconds of the last synchronous Metal reslice, or -1 if none ran.
@@ -17,9 +20,8 @@
 /// Drops the GPU volume; the next reconstruction re-uploads if enabled.
 - (void)horosMPRReleaseVolume;
 /// Whether single planes are drawn with cubic interpolation (#702): the
-/// `HorosMPRCubicDisplay` preference, off by default.
+/// `HorosMPRCubicDisplay` preference (Settings → 3D), off by default.
 - (BOOL)horosMPRCubicDisplay;
-- (void)toggleMPRCubicDisplay:(id)sender;
 @end
 
 @interface MPRDCMView (HorosMPRHost)

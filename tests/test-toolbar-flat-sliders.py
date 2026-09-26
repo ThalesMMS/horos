@@ -38,6 +38,14 @@ for xib in (root / 'Horos/Resources/en.lproj/Viewer.xib', root / 'Horos/Resource
     text = xib.read_text()
     assert 'customClass="HorosImageNavigationSlider"' in text and 'id="11"' in text, f'{xib}: viewport slider is not the navigation bar'
 
+# The 3D MPR's toolbar sliders (LOD, Thick Slab, movie rate and position,
+# Fusion) would otherwise draw as the stock macOS 26 slider.
+for xib in (root / 'Horos/Resources/en.lproj/MPR.xib', root / 'Horos/Resources/ja-JP.lproj/MPR.xib'):
+    text = xib.read_text()
+    for slider in ('653', '663', '846', '847', '859'):
+        tag = next(line for line in text.splitlines() if '<slider ' in line and f'id="{slider}"' in line)
+        assert 'customClass="HorosCellSlider"' in tag, f'{xib}: toolbar slider {slider} is a stock NSSlider'
+
 code = r'''
 import AppKit
 

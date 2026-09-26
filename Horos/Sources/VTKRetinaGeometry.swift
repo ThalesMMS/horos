@@ -138,6 +138,67 @@ public final class VTKRetinaGeometry: NSObject {
         !currentlyEnabled
     }
 
+    /// The row-major 4x4 matrix that takes a crop box placed on `bounds`
+    /// (xmin, xmax, ymin, ymax, zmin, zmax) onto the box the six crop planes
+    /// enclose, in vtkBoxWidget's order: -x, +x, -y, +y, -z, +z faces, each an
+    /// origin and a normal. The box may be rotated. Empty when the planes do
+    /// not enclose a box, as a camera saved without a crop does.
+    @objc(cropBoxTransformForPlaneOrigins:normals:bounds:)
+    public static func cropBoxTransform(planeOrigins origins: [NSNumber], normals: [NSNumber],
+                                        bounds: [NSNumber]) -> [NSNumber] {
+        let values = origins + normals + bounds
+        guard origins.count == 18, normals.count == 18, bounds.count == 6,
+              values.allSatisfy({ $0.doubleValue.isFinite }) else { return [] }
+        let b = bounds.map(\.doubleValue)
+        let spans = [b[1] - b[0], b[3] - b[2], b[5] - b[4]]
+        guard spans.allSatisfy({ $0 > 0 }) else { return [] }
+
+        let planes = (0..<6).map { face -> (normal: Vector, distance: Double) in
+            let origin = vector(origins, at: face)
+            let normal = vector(normals, at: face)
+            return (normal, dot(normal, origin))
+        }
+        // The corner on the -x or +x, -y or +y and -z or +z faces.
+        func corner(_ x: Int, _ y: Int, _ z: Int) -> Vector? {
+            let (n1, d1) = planes[x], (n2, d2) = planes[2 + y], (n3, d3) = planes[4 + z]
+            let determinant = dot(n1, cross(n2, n3))
+            guard abs(determinant) > 1e-9 * length(n1) * length(n2) * length(n3) else { return nil }
+            let sum = add(add(scale(cross(n2, n3), d1), scale(cross(n3, n1), d2)), scale(cross(n1, n2), d3))
+            return scale(sum, 1 / determinant)
+        }
+        guard let origin = corner(0, 0, 0), let alongX = corner(1, 0, 0),
+              let alongY = corner(0, 1, 0), let alongZ = corner(0, 0, 1) else { return [] }
+        let axes = [alongX, alongY, alongZ].enumerated().map { axis, end in
+            scale(subtract(end, origin), 1 / spans[axis])
+        }
+        guard axes.allSatisfy({ length($0) > 0 }) else { return [] }
+        // origin = M * (xmin, ymin, zmin) + translation
+        var translation = origin
+        for axis in 0..<3 {
+            translation = subtract(translation, scale(axes[axis], b[axis * 2]))
+        }
+        let matrix: [Double] = (0..<3).flatMap { row -> [Double] in
+            [axes[0][row], axes[1][row], axes[2][row], translation[row]]
+        } + [0, 0, 0, 1]
+        guard matrix.allSatisfy({ $0.isFinite }) else { return [] }
+        return matrix.map(NSNumber.init(value:))
+    }
+
+    private typealias Vector = [Double]
+
+    private static func vector(_ numbers: [NSNumber], at index: Int) -> Vector {
+        (0..<3).map { numbers[index * 3 + $0].doubleValue }
+    }
+
+    private static func dot(_ a: Vector, _ b: Vector) -> Double { a[0] * b[0] + a[1] * b[1] + a[2] * b[2] }
+    private static func cross(_ a: Vector, _ b: Vector) -> Vector {
+        [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+    }
+    private static func add(_ a: Vector, _ b: Vector) -> Vector { zip(a, b).map { $0 + $1 } }
+    private static func subtract(_ a: Vector, _ b: Vector) -> Vector { zip(a, b).map { $0 - $1 } }
+    private static func scale(_ a: Vector, _ factor: Double) -> Vector { a.map { $0 * factor } }
+    private static func length(_ a: Vector) -> Double { dot(a, a).squareRoot() }
+
     private struct Box {
         var minX, minY, minZ, maxX, maxY, maxZ: Double
     }

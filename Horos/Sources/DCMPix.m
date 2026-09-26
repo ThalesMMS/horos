@@ -10413,9 +10413,18 @@ static _Atomic(unsigned long long) horosDecodedFrameCount = 0;
     float *result = [self computefImageForMeasurement];
     
     // The MPR's cubic plane stands in for fImage only: a stack slab is its own reduction.
+    // Callers and the convolution free any buffer that is not fImage, so the plane
+    // is handed over as a copy, never as the NSData's own bytes.
     NSData *display = self.horosMPRDisplayPixels;
     if( result == fImage && display.length == (NSUInteger) width * (NSUInteger) height * sizeof( float))
-        result = (float*) display.bytes;
+    {
+        float *copy = malloc( display.length);
+        if( copy)
+        {
+            memcpy( copy, display.bytes, display.length);
+            result = copy;
+        }
+    }
     
     if( convolution)
         result = [self applyConvolutionOnImage: result RGB: NO];

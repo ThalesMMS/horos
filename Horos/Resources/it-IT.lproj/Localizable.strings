@@ -2831,8 +2831,6 @@
 "Patient Crosshair" = "Mirino sul paziente";
 
 "Show Patient Crosshair" = "Mostra mirino sul paziente";
-"Use Metal in MPR" = "Usa Metal nell'MPR";
-"Cubic Interpolation for MPR Display" = "Interpolazione cubica per la visualizzazione MPR";
 "Compare in Metal (3D)" = "Confronta in Metal (3D)";
 "Metal comparison, %.1f ms. Use the original viewer for tools and overlays." = "Confronto Metal, %.1f ms. Usa il visualizzatore originale per strumenti e sovrapposizioni.";
 "Copy ROIs from Fused Series..." = "Copia le ROI dalla serie fusa...";

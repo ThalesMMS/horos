@@ -8080,6 +8080,43 @@ static bool HorosRenderMetalVolume(void *context, vtkHorosFixedPointVolumeRayCas
     [self setNeedsDisplay:YES];
 }
 
+// The box reappears on the crop in place, the widget's own or a saved
+// camera's. Placing it on the whole volume at every toggle undid the crop.
+- (void) placeCropBoxOnAppliedCrop
+{
+    croppingBox->PlaceWidget();
+
+    vtkPlaneCollection *crop = volume && volume->GetMapper() ? volume->GetMapper()->GetClippingPlanes() : NULL;
+    if( crop == NULL || crop->GetNumberOfItems() != 6)
+        return;
+
+    NSMutableArray *origins = [NSMutableArray array], *normals = [NSMutableArray array];
+    for( int i = 0; i < 6; i++)
+    {
+        vtkPlane *plane = crop->GetItem( i);
+        for( int axis = 0; axis < 3; axis++)
+        {
+            [origins addObject: @(plane->GetOrigin()[ axis])];
+            [normals addObject: @(plane->GetNormal()[ axis])];
+        }
+    }
+    double *b = volume->GetBounds();
+    NSArray *bounds = @[@(b[0]), @(b[1]), @(b[2]), @(b[3]), @(b[4]), @(b[5])];
+
+    NSArray *elements = [HorosVTKRetinaGeometry cropBoxTransformForPlaneOrigins: origins normals: normals bounds: bounds];
+    if( elements.count != 16)
+        return;
+
+    double matrix[ 16];
+    for( int i = 0; i < 16; i++)
+        matrix[ i] = [[elements objectAtIndex: i] doubleValue];
+
+    vtkTransform *transform = vtkTransform::New();
+    transform->SetMatrix( matrix);
+    croppingBox->SetTransform( transform);
+    transform->Delete();
+}
+
 -(void) showCropCube:(id) sender
 {
     if( croppingBox)
@@ -8087,7 +8124,7 @@ static bool HorosRenderMetalVolume(void *context, vtkHorosFixedPointVolumeRayCas
         BOOL enable = [HorosVTKRetinaGeometry cropBoxEnabledAfterToggle: croppingBox->GetEnabled()];
         if( enable)
         {
-            croppingBox->PlaceWidget();
+            [self placeCropBoxOnAppliedCrop];
             croppingBox->On();
             
             [self setCurrentTool: t3DRotate];

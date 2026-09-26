@@ -1040,6 +1040,7 @@ static NSHost *currentHost = nil;
 	[defaultValues setObject: @"2" forKey: @"REPORTSMODE"];
 	[defaultValues setObject: URL_HOROS_VIEWER@"/internet.dcm" forKey: @"LASTURL"];
 	[defaultValues setObject: @"2" forKey: @"MAPPERMODEVR"];	// 0 cpu, 1 opengl, 2 metal
+	[defaultValues setObject: @YES forKey: @"HorosMPRMetal"];	// 3D MPR planes resliced in Metal
 	[defaultValues setObject: @"1" forKey: @"STARTCOUNT"];
 	[defaultValues setObject: @"1" forKey: @"editingLevel"];
 	[defaultValues setObject: @"1" forKey: @"publishDICOMBonjour"];
