@@ -1647,6 +1647,9 @@ static NSConditionLock *threadLock = nil;
         if (result != NSModalResponseOK)
             return;
         
+        for (NSURL *url in oPanel.URLs) {
+            if (![IsisSandboxFileAccess rememberURL:url]) return;
+        }
         [self subSelectFilesAndFoldersToAdd:[oPanel.URLs valueForKeyPath:@"path"]];
     }];
 }
@@ -2022,7 +2025,12 @@ static const NSTimeInterval HorosImportListRefreshInterval = 5, HorosImportAlbum
 -(IBAction)openDatabase:(id)sender
 {
     NSOpenPanel* oPanel	= [NSOpenPanel openPanel];
+#ifdef MACAPPSTORE
+    oPanel.canChooseDirectories = YES;
+    oPanel.canChooseFiles = NO;
+#else
     oPanel.allowedContentTypes = @[[UTType typeWithFilenameExtension:@"sql"]];
+#endif
     oPanel.directoryURL = [NSURL fileURLWithPath:_database.sqlFilePath];
     
     [oPanel beginWithCompletionHandler:^(NSInteger result) {
@@ -2031,7 +2039,11 @@ static const NSTimeInterval HorosImportListRefreshInterval = 5, HorosImportAlbum
         
         if (oPanel.URL && ![_database.sqlFilePath isEqualToString:oPanel.URL.path])
         {
+#ifdef MACAPPSTORE
+            if ([IsisSandboxFileAccess rememberURL:oPanel.URL]) [self openDatabasePath:oPanel.URL.path];
+#else
             [self subSelectFilesAndFoldersToAdd:@[oPanel.URL.path]];
+#endif
         }
     }];
 }
@@ -2061,14 +2073,17 @@ static const NSTimeInterval HorosImportListRefreshInterval = 5, HorosImportAlbum
         if (result != NSModalResponseOK)
             return;
         
+        if (![IsisSandboxFileAccess rememberURL:oPanel.URL]) return;
         NSString *location = oPanel.URL.path;
         
+#ifndef MACAPPSTORE
         if( [HorosDatabaseLocation isDataDirectoryName: [location lastPathComponent]])
             location = [location stringByDeletingLastPathComponent];
         
         if( [[location lastPathComponent] isEqualToString:@"DATABASE.noindex"] && [HorosDatabaseLocation isDataDirectoryName: [[location stringByDeletingLastPathComponent] lastPathComponent]])
             location = [[location stringByDeletingLastPathComponent] stringByDeletingLastPathComponent];
         
+#endif
         [self openDatabasePath: location];
     }];
 }

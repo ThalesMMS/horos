@@ -138,10 +138,7 @@ __attribute__((used)) NSString* const O2ScreenCapturesSeriesName = NSLocalizedSt
         case 0:
             path = [[[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask] firstObject] path];
 #ifdef MACAPPSTORE
-            NSString* temp = [self baseDirPathForPath:path];
-            BOOL isDir;
-            if (![NSFileManager.defaultManager fileExistsAtPath:temp isDirectory:&isDir] || !isDir)
-                path = [NSFileManager.defaultManager userApplicationSupportFolderForApp];
+            path = [NSFileManager.defaultManager userApplicationSupportFolderForApp];
 #endif
             break;
         case 1:

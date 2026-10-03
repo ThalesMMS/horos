@@ -113,6 +113,7 @@ final class HorosApplicationInstaller: NSObject {
     }
 
     @objc static func moveToApplicationsFolderIfNecessary() {
+        #if !MACAPPSTORE
         guard !inProgress, !UserDefaults.standard.bool(forKey: suppressKey) else { return }
         let source = Bundle.main.bundleURL.standardizedFileURL
         let manager = FileManager.default
@@ -141,6 +142,7 @@ final class HorosApplicationInstaller: NSObject {
             alert.runModal()
         default: break
         }
+        #endif
     }
 }
 

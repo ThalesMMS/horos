@@ -37,6 +37,20 @@
 //
 //  Copyright (c) 2026 Thales Matheus M Santos (ThalesMMS) — modifications in this fork
 
+#if MACAPPSTORE
+import AppKit
+
+@MainActor @objc(PluginManagerController)
+public final class PluginManagerController: NSWindowController {
+    @IBOutlet @objc var filtersMenu: NSMenu?
+    @IBOutlet @objc var roisMenu: NSMenu?
+    @IBOutlet @objc var othersMenu: NSMenu?
+    @IBOutlet @objc var dbMenu: NSMenu?
+    @objc public var plugins: NSArray { [] }
+    @objc public func refreshPluginList() {}
+    public override func showWindow(_ sender: Any?) {}
+}
+#else
 import AppKit
 import WebKit
 import Synchronization
@@ -1268,3 +1282,5 @@ private final class PluginPackageDownload: NSObject, URLSessionDownloadDelegate,
         completion(self, result)
     }
 }
+
+#endif

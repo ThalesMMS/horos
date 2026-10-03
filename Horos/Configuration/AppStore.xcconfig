@@ -1,0 +1,10 @@
+// Store distribution excludes external code installation at compile time.
+ISIS_BUILD_CHANNEL = appstore
+PRODUCT_BUNDLE_IDENTIFIER_PREFIX = thalesmms.isis.Isis-DICOM-Viewer
+MARKETING_VERSION = 1.0
+HOROS_APP_SANDBOX = YES
+HOROS_APP_ENTITLEMENTS = Horos/Configuration/AppStore.entitlements
+HOROS_HELPER_ENTITLEMENTS = Horos/Configuration/AppStoreHelper.entitlements
+RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = NO
+GCC_PREPROCESSOR_DEFINITIONS = $(inherited) MACAPPSTORE=1
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) MACAPPSTORE

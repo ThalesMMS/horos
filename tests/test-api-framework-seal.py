@@ -13,6 +13,7 @@ built one, and then verifies each alias the way a notarisation check would.
 """
 from pathlib import Path
 import plistlib
+import os
 import subprocess
 import sys
 import tempfile
@@ -56,7 +57,7 @@ def build_framework(frameworks):
     return framework
 
 
-def run(script_path, directory):
+def run(script_path, directory, channel="github"):
     frameworks = Path(directory) / 'Isis DICOM Viewer.app/Contents/Frameworks'
     frameworks.mkdir(parents=True)
     build_framework(frameworks)
@@ -65,7 +66,7 @@ def run(script_path, directory):
     (derived / 'Horos-Swift.h').write_text('// generated interface stand-in\n')
     environment = {'TARGET_BUILD_DIR': directory, 'DERIVED_FILE_DIR': str(derived),
                    'FRAMEWORKS_FOLDER_PATH': 'Isis DICOM Viewer.app/Contents/Frameworks',
-                   'EXPANDED_CODE_SIGN_IDENTITY': '-',
+                   'EXPANDED_CODE_SIGN_IDENTITY': '-', 'ISIS_BUILD_CHANNEL': channel,
                    'PATH': '/usr/bin:/bin:/usr/sbin:/sbin'}
     completed = subprocess.run(['/bin/sh', str(script_path)], env=environment,
                                capture_output=True, text=True)
@@ -106,7 +107,7 @@ with tempfile.TemporaryDirectory(prefix='horos-api-seal-') as directory:
         if (framework / 'Versions/A/Headers').exists() or (framework / 'Headers').exists():
             failures.append('%s kept the headers' % alias)
         link = framework / alias
-        if not link.is_symlink() or link.resolve() != (framework / ('Versions/A/' + alias)).resolve():
+        if not link.is_symlink() or os.readlink(link) != 'Versions/Current/' + alias:
             failures.append('%s does not link to its binary' % alias)
         # And the seal records the identifier the edits left behind, not the one
         # it was copied from.
@@ -120,6 +121,17 @@ with tempfile.TemporaryDirectory(prefix='horos-api-seal-') as directory:
                   if line.startswith('Identifier=')]
         if sealed != [identifier]:
             failures.append('%s is sealed as %s but declares %s' % (alias, sealed, identifier))
+
+with tempfile.TemporaryDirectory(prefix='isis-store-api-') as directory:
+    frameworks, completed = run(script, directory, 'appstore')
+    if completed.returncode:
+        failures.append('API.sh failed for the store channel: ' + completed.stderr[-400:])
+    if any((frameworks / (alias + '.framework')).exists() for alias in ALIASES):
+        failures.append('The store channel included external plugin compatibility frameworks')
+    checked = subprocess.run(['codesign', '--verify', '--strict',
+                              str(frameworks / 'Horos.framework')], capture_output=True)
+    if checked.returncode:
+        failures.append('The store API framework signature is invalid')
 
 # Signing has to be skipped, not failed, when the build is not signing at all -
 # script/build_and_run.sh builds that way and signs the copy itself afterwards.

@@ -45,7 +45,8 @@ checkout = work / 'checkout'
 checkout.mkdir()
 subprocess.run(['/usr/bin/git', 'init', '-q', str(checkout)], check=True)
 for relative in ('script/build_release.sh', 'script/release-metadata.py', 'tools/audit-release-bundle.py',
-                 'Horos/Horos.entitlements', 'FinderPreview/FinderPreview.entitlements',
+                 'Horos/Horos.entitlements', 'Decompress/Decompress.entitlements',
+                 'Horos/Configuration/GitHub.xcconfig', 'FinderPreview/FinderPreview.entitlements',
                  'Horos/Scripts/DCMTK/PREPARATION.json'):
     (checkout / relative).parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(root / relative, checkout / relative)

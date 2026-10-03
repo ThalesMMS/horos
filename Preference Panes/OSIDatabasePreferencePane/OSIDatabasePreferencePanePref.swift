@@ -504,8 +504,10 @@ public final class OSIDatabasePreferencePanePref: NSPreferencePane {
 
         oPanel.begin { result in
             if result == .OK {
-                var location = (oPanel.url?.path ?? "") as NSString
+                guard let selected = oPanel.url, SandboxFileAccess.remember(selected) else { return }
+                var location = selected.path as NSString
 
+                #if !MACAPPSTORE
                 if DatabaseLocation.isDataDirectoryName(location.lastPathComponent) {
                     NSLog("%@", location.lastPathComponent)
                     location = location.deletingLastPathComponent as NSString
@@ -516,6 +518,7 @@ public final class OSIDatabasePreferencePanePref: NSPreferencePane {
                     location = ((location.deletingLastPathComponent as NSString).deletingLastPathComponent) as NSString
                 }
 
+                #endif
                 self.locationPathField?.url = NSURL.fileURL(withPath: location as String)
                 UserDefaults.standard.set(location, forKey: "DEFAULT_DATABASELOCATIONURL")
                 UserDefaults.standard.set(1, forKey: "DEFAULT_DATABASELOCATION")

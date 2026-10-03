@@ -10,6 +10,7 @@
 //  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
 //  A PARTICULAR PURPOSE. See the GNU Lesser General Public License for details.
 
+#if !MACAPPSTORE
 import Foundation
 
 /// One stable release as its feed describes it. The archive is present only
@@ -172,3 +173,5 @@ public final class UpdateFeedClient: NSObject {
         return NSLocalizedString("The update check could not be completed. Try again later.", comment: "Update unknown failure")
     }
 }
+
+#endif

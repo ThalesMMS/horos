@@ -515,6 +515,7 @@ public final class AppController: NSObject, NetServiceBrowserDelegate, NetServic
 
     // Plugins installation
     @objc(installPlugins:) public func installPlugins(_ pluginsArray: [Any]!) {
+        #if !MACAPPSTORE
         var pluginNames = NSMutableString()
         var replacingPlugins = NSMutableString()
 
@@ -603,6 +604,7 @@ public final class AppController: NSObject, NetServiceBrowserDelegate, NetServic
                 }
             }
         }
+        #endif
     }
 
     @objc nonisolated func computerName() -> String! {
@@ -2298,8 +2300,13 @@ public final class AppController: NSObject, NetServiceBrowserDelegate, NetServic
                         // DICOMWEB_SERVERS before anything reads SERVERS as a list of DIMSE nodes (#799).
                         DICOMwebNode.migrateLegacyServers()
 
+                        SandboxFileAccess.restore()
+                        DistributionChannel.configurePreferences()
+                        #if MACAPPSTORE
+                        let alternateDatabaseDefault = DatabaseLocation.baseDirectory(forPath: FileManager.default.userApplicationSupportFolderForApp())
+                        #else
                         let alternateDatabaseDefault: String? = nil
-                        // (MACAPPSTORE: alternateDatabaseDefault = the HorosDatabaseLocation base directory of the app's Application Support folder, not compiled)
+                        #endif
                         DatabaseFirstUse.prepare(alternateDefault: alternateDatabaseDefault)
 
                         UserDefaults.standard.set(UserDefaults.standard.integer(forKey: "DEFAULT_DATABASELOCATION"), forKey: "DATABASELOCATION")
@@ -2314,9 +2321,11 @@ public final class AppController: NSObject, NetServiceBrowserDelegate, NetServic
                             UserDefaults.standard.set(UserDefaults.standard.bool(forKey: "copyHideListenerError"), forKey: "hideListenerError")
                         }
 
-                        // (MACAPPSTORE: MACAPPSTORE YES, AUTHENTICATION NO and the App Store DefaultDatabasePath, not compiled)
-                        UserDefaults.standard.set(false, forKey: "MACAPPSTORE") // Also modify in DefaultsOsiriX.m
+                        #if MACAPPSTORE
+                        UserDefaults.standard.set(NSLocalizedString("(Application storage)", comment: ""), forKey: "DefaultDatabasePath")
+                        #else
                         UserDefaults.standard.set(NSLocalizedString("(Current User Documents folder)", comment: ""), forKey: "DefaultDatabasePath")
+                        #endif
 
                         // __LP64__: both architectures are 64-bit (the 32-bit branch set LP64bit to NO)
                         UserDefaults.standard.set(true, forKey: "LP64bit")
@@ -2753,7 +2762,7 @@ public final class AppController: NSObject, NetServiceBrowserDelegate, NetServic
 //    [[NSUserDefaults standardUserDefaults] setBool: NO  forKey: @"AUTOHIDEMATRIX"];
 
 
-        // #ifndef MACAPPSTORE / #ifndef OSIRIX_LIGHT (compiled)
+        #if !MACAPPSTORE
         if UserDefaults.standard.bool(forKey: "checkForUpdatesPlugins") {
             if let pluginManager = State.pluginManager {
                 pluginManager.checkForUpdates(nil)
@@ -2777,10 +2786,8 @@ public final class AppController: NSObject, NetServiceBrowserDelegate, NetServic
         }
         else { Thread.detachNewThreadSelector(#selector(AppController.checkForUpdates(_:)), toTarget: self, with: self) }
 
-        // #endif / #endif
-
-        // Remove PluginManager items...
-        // (MACAPPSTORE: removal of the last two items of the plugins menu, not compiled)
+        #endif
+        DistributionChannel.configureMenu(NSApp.mainMenu)
 
         if UserDefaults.standard.bool(forKey: "hideListenerError") { // Server mode
             BrowserController.currentBrowser()?.window?.orderOut(self)
@@ -3463,6 +3470,7 @@ public final class AppController: NSObject, NetServiceBrowserDelegate, NetServic
             _ = HorosAlertPanel.run(title: NSLocalizedString("DICOM Listener Error", comment: ""), message: NSLocalizedString("Isis DICOM Viewer listener cannot start. Is the Port valid? Is there another process using this Port?\r\rSee Listener - Preferences.", comment: ""), defaultButton: NSLocalizedString("OK", comment: ""), alternateButton: nil, otherButton: nil)
         }
 
+        #if !MACAPPSTORE
         if msg == "UPTODATE"
         {
             _ = HorosAlertPanel.run(title: NSLocalizedString("Isis DICOM Viewer is up-to-date", comment: ""), message: NSLocalizedString("You have the most recent version of Isis DICOM Viewer.", comment: ""), defaultButton: NSLocalizedString("OK", comment: ""), alternateButton: nil, otherButton: nil)
@@ -3488,6 +3496,7 @@ public final class AppController: NSObject, NetServiceBrowserDelegate, NetServic
                 NSWorkspace.shared.open(URL(string: "https://github.com/ThalesMMS/horos/releases")!) // URL_HOROS_UPDATE
             }
         }
+        #endif
     }
 
     @objc public func splashScreen() -> Any! {
@@ -3507,6 +3516,7 @@ public final class AppController: NSObject, NetServiceBrowserDelegate, NetServic
     // #ifndef OSIRIX_LIGHT / #ifndef MACAPPSTORE (compiled)
 
     @IBAction @objc(checkForUpdatesDisabled:) nonisolated func checkForUpdatesDisabled(_ sender: Any!) {
+        #if !MACAPPSTORE
         if UserDefaults.standard.bool(forKey: "CheckHorosUpdates") != false
         {
             DispatchQueue.global(qos: .default).async {
@@ -3524,9 +3534,11 @@ public final class AppController: NSObject, NetServiceBrowserDelegate, NetServic
                 }
             }
         }
+        #endif
     }
 
     @IBAction @objc(checkForUpdates:) nonisolated public func checkForUpdates(_ sender: Any!) {
+        #if !MACAPPSTORE
         // Capture per-request intent: automatic checks must not overwrite a manual check.
         let manualCheck = (sender as AnyObject?) !== self
         let afterCrash = (sender as? NSString)?.isEqual(to: "crash") == true
@@ -3607,6 +3619,7 @@ public final class AppController: NSObject, NetServiceBrowserDelegate, NetServic
                 }
             }
         }
+        #endif
     }
     // #endif / #endif
 
@@ -4162,6 +4175,9 @@ public final class AppController: NSObject, NetServiceBrowserDelegate, NetServic
     }
 
     @objc(validateMenuItem:) public func validateMenuItem(_ item: NSMenuItem!) -> Bool {
+        if !DistributionChannel.supportsGitHubUpdates && item?.action == NSSelectorFromString("checkForUpdates:") {
+            return false
+        }
         if item?.action == #selector(AppController.printFromMenu(_:)) {
             return self.validatePrintFromMenu(item)
         }

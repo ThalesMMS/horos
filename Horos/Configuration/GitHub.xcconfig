@@ -1,0 +1,5 @@
+// Direct distribution, with external plugins and the GitHub updater.
+ISIS_BUILD_CHANNEL = github
+HOROS_APP_SANDBOX = NO
+HOROS_APP_ENTITLEMENTS = Horos/Horos.entitlements
+HOROS_HELPER_ENTITLEMENTS = Decompress/Decompress.entitlements

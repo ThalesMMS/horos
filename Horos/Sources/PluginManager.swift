@@ -631,11 +631,13 @@ public final class PluginManager: NSObject {
         // array itself, as before, and not a bridged copy.
         _ = (ViewerController.self as AnyObject).perform(NSSelectorFromString("setDefaultROINames:"), with: defaultROINames)
 
+        #if !MACAPPSTORE
         PluginManager.discoverPlugins()
 
         NotificationCenter.default.addObserver(self, selector: #selector(downloadNext(_:)),
                                                name: .AppPluginDownloadInstallDidFinish,
                                                object: nil)
+        #endif
     }
 
     @available(*, deprecated)
@@ -665,6 +667,7 @@ public final class PluginManager: NSObject {
 
     @objc(loadPluginBundle:)
     class func loadPluginBundle(_ path: String!) {
+        #if !MACAPPSTORE
         let diagnosticPath = (path as NSString?)?.resolvingAlias()
         PluginManagerCAPIRecordLoad(diagnosticPath, NSLocalizedString("Blocked", comment: ""), NSLocalizedString("Loading is disabled by protected mode or the plugin signature policy. Check protected mode and obtain a compatible plugin from its author.", comment: ""))
         if DCMPix.isRunOsiriXInProtectedModeActivated() == false && PluginManager.isPluginBundleSignatureValid(path) {
@@ -779,6 +782,7 @@ public final class PluginManager: NSObject {
             // The former @finally: also after the ARGS registration returned.
             PluginManager.endProtectForCrash()
         }
+        #endif
     }
 
     @objc(loadHorosPluginAtPath:)
@@ -793,6 +797,7 @@ public final class PluginManager: NSObject {
 
     @objc(loadPluginAtPath:)
     public class func loadPlugin(atPath path: String!) {
+        #if !MACAPPSTORE
         let name = (path as NSString).lastPathComponent
 
         if Registry.pluginsNames?.value(forKey: ((name as NSString).lastPathComponent as NSString).deletingPathExtension) != nil {
@@ -820,9 +825,11 @@ public final class PluginManager: NSObject {
         if ObjC.isEqualToString(outcome["loadState"], NSLocalizedString("Loaded", comment: "")) {
             PluginUpdateRecovery.discardPrevious(forDestination: path)
         }
+        #endif
     }
 
     @objc public class func discoverPlugins() {
+        #if !MACAPPSTORE
         do {
             try HorosObjCException.perform {
                 var appSupport = "Library/Application Support/Horos/" as NSString
@@ -1009,6 +1016,7 @@ public final class PluginManager: NSObject {
                 _N2LogExceptionImpl(e, true, "+[PluginManager discoverPlugins]")
             }
         }
+        #endif
     }
 
     /// The action of the "No plugins available for this menu" items, whose
@@ -1110,17 +1118,26 @@ public final class PluginManager: NSObject {
     }
 
     @objc public class func activeDirectories() -> [Any]! {
+        #if MACAPPSTORE
+        return []
+        #else
         return ObjC.array(upToFirstNil: [PluginManager.userActivePluginsDirectoryPath(), PluginManager.systemActivePluginsDirectoryPath(), PluginManager.appActivePluginsDirectoryPath()]) as? [Any]
+        #endif
     }
 
     @objc public class func inactiveDirectories() -> [Any]! {
+        #if MACAPPSTORE
+        return []
+        #else
         return ObjC.array(upToFirstNil: [PluginManager.userInactivePluginsDirectoryPath(), PluginManager.systemInactivePluginsDirectoryPath(), PluginManager.appInactivePluginsDirectoryPath()]) as? [Any]
+        #endif
     }
 
     // MARK: activation
 
     @objc(movePluginFromPath:toPath:)
     public class func movePlugin(fromPath sourcePath: String!, toPath destinationPath: String!) {
+        #if !MACAPPSTORE
         if ObjC.isEqualToString(sourcePath, destinationPath) { return }
 
         let destinationDirectory = (destinationPath as NSString?)?.deletingLastPathComponent
@@ -1164,10 +1181,12 @@ public final class PluginManager: NSObject {
                                         message: NSLocalizedString("The plugin could not be moved. Its activation or location change was not completed. Check folder permissions and try again.", comment: ""),
                                         defaultButton: NSLocalizedString("OK", comment: ""), alternateButton: nil, otherButton: nil)
         }
+        #endif
     }
 
     @objc(activatePluginWithName:)
     public class func activatePlugin(withName pluginName: String!) {
+        #if !MACAPPSTORE
         let activePaths = PluginManager.activeDirectories() ?? []
         let inactivePaths = PluginManager.inactiveDirectories() ?? []
 
@@ -1191,10 +1210,12 @@ public final class PluginManager: NSObject {
             }
             gPluginsAlertAlreadyDisplayed = true
         }
+        #endif
     }
 
     @objc(deactivatePluginWithName:)
     public class func deactivatePlugin(withName pluginName: String!) {
+        #if !MACAPPSTORE
         //    [PluginManager unloadPluginWithName: pluginName];
 
         let activePaths = PluginManager.activeDirectories() ?? []
@@ -1225,10 +1246,12 @@ public final class PluginManager: NSObject {
             }
             gPluginsAlertAlreadyDisplayed = true
         }
+        #endif
     }
 
     @objc(changeAvailabilityOfPluginWithName:to:)
     public class func changeAvailabilityOfPlugin(withName pluginName: String!, to availability: String!) {
+        #if !MACAPPSTORE
         let availabilities = PluginManager.availabilities()!
 
         let paths = NSMutableArray()
@@ -1266,10 +1289,12 @@ public final class PluginManager: NSObject {
         newPluginPath.setString(ObjC.appendingPathComponent(newDirectory, (completePluginPath as NSString?)?.lastPathComponent) ?? "")
 
         PluginManager.movePlugin(fromPath: completePluginPath, toPath: newPluginPath as String)
+        #endif
     }
 
     @objc(createDirectory:)
     public class func createDirectory(_ directoryPath: String!) {
+        #if !MACAPPSTORE
         var isDir: ObjCBool = true
         var directoryCreated = false
         if !FileManager.default.fileExists(atPath: directoryPath ?? "", isDirectory: &isDir) && isDir.boolValue {
@@ -1281,12 +1306,14 @@ public final class PluginManager: NSObject {
             ObjC.add(args, directoryPath)
             _ = PluginManager.authentication()?.executeCommand("/bin/mkdir", withArgs: args as? [Any])
         }
+        #endif
     }
 
     // MARK: Instalation
 
     @objc(installPluginFromPath:)
     public class func installPlugin(fromPath path: String!) {
+        #if !MACAPPSTORE
         // Validate the candidate before touching an existing installation.
         let archReason = HorosArchitectureAudit.pluginDiagnosis(at: path)
         if let archReason = archReason, !archReason.isEmpty {
@@ -1382,6 +1409,7 @@ public final class PluginManager: NSObject {
                                         message: ObjC.format(NSLocalizedString("The plugin update could not be completed. The existing installation was preserved. Check destination permissions and available space. %@", comment: ""), installError?.localizedDescription ?? ""),
                                         defaultButton: NSLocalizedString("OK", comment: ""), alternateButton: nil, otherButton: nil)
         }
+        #endif
     }
 
     // MARK: Deletion
@@ -1395,6 +1423,9 @@ public final class PluginManager: NSObject {
     @discardableResult
     @objc(deletePluginWithName:availability:isActive:)
     public class func deletePlugin(withName pluginName: String!, availability: String!, isActive: Bool) -> String! {
+        #if MACAPPSTORE
+        return nil
+        #else
         let pluginName = (pluginName as NSString?)?.deletingPathExtension
 
         // First unload the plugin, if currently running
@@ -1456,11 +1487,15 @@ public final class PluginManager: NSObject {
         } }
 
         return returnPath
+        #endif
     }
 
     // MARK: plugins
 
     @objc public class func pluginsList() -> [Any]! {
+        #if MACAPPSTORE
+        return []
+        #else
         let userActivePath = PluginManager.userActivePluginsDirectoryPath() as NSString
         let userInactivePath = PluginManager.userInactivePluginsDirectoryPath() as NSString
         let sysActivePath = PluginManager.systemActivePluginsDirectoryPath() as NSString
@@ -1553,6 +1588,7 @@ public final class PluginManager: NSObject {
         let sortedPlugins = plugins.sortedArray(sortPluginArray, context: nil)
 
         return sortedPlugins
+        #endif
     }
 
     @objc public class func availabilities() -> [Any]! {
@@ -1566,6 +1602,9 @@ public final class PluginManager: NSObject {
 
     @objc(checkForHorosPluginsUpdates:)
     func checkForHorosPluginsUpdates(_ sender: Any!) -> [Any]! {
+        #if MACAPPSTORE
+        return []
+        #else
         let pluginsToUpdate = NSMutableArray()
 
         var catalog: [Any]? = nil
@@ -1615,10 +1654,14 @@ public final class PluginManager: NSObject {
         }
 
         return pluginsToUpdate as? [Any]
+        #endif
     }
 
     @objc(checkForOsiriXPluginsUpdates:)
     func checkForOsiriXPluginsUpdates(_ sender: Any!) -> [Any]! {
+        #if MACAPPSTORE
+        return []
+        #else
         let pluginsToUpdate = NSMutableArray()
 
         var catalog: [Any]? = nil
@@ -1668,15 +1711,19 @@ public final class PluginManager: NSObject {
         }
 
         return pluginsToUpdate as? [Any]
+        #endif
     }
 
     @IBAction @objc(checkForUpdates:)
     public func checkForUpdates(_ sender: Any!) {
+        #if !MACAPPSTORE
         Thread.detachNewThreadSelector(#selector(checkForUpdatesInBackground(_:)), toTarget: self, with: nil)
+        #endif
     }
 
     @objc(checkForUpdatesInBackground:)
     nonisolated func checkForUpdatesInBackground(_ sender: Any!) {
+        #if !MACAPPSTORE
         autoreleasepool {
             Thread.current.name = "Check for plugins updates"
 
@@ -1707,10 +1754,12 @@ public final class PluginManager: NSObject {
                 self.performSelector(onMainThread: #selector(displayUpdateMessage(_:)), with: messageDictionary, waitUntilDone: false)
             }
         }
+        #endif
     }
 
     @objc(displayUpdateMessage:)
     public func displayUpdateMessage(_ messageDictionary: NSDictionary!) {
+        #if !MACAPPSTORE
         autoreleasepool {
             let button = HorosAlertPanel.run(title: messageDictionary?.object(forKey: "title") as? String,
                                              message: ObjC.format("%@", messageDictionary?.object(forKey: "body")),
@@ -1744,6 +1793,7 @@ public final class PluginManager: NSObject {
                 startedUpdateProcess = false
             }
         }
+        #endif
     }
 
     /// [BLAuthentication sharedInstance], which the former header typed id.
@@ -1759,6 +1809,7 @@ public final class PluginManager: NSObject {
 
     @objc(downloadNext:)
     func downloadNext(_ notification: Notification!) {
+        #if !MACAPPSTORE
         if !startedUpdateProcess {
             return
         }
@@ -1792,5 +1843,6 @@ public final class PluginManager: NSObject {
 
             startedUpdateProcess = false
         }
+        #endif
     }
 }

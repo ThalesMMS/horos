@@ -34,6 +34,13 @@ fi
 # many plugins are hard-linked to the API framework, and its name changed over time
 
 alts=( HorosAPI OsiriXAPI 'OsiriX Headers' HorosDCM)
+if [ "${ISIS_BUILD_CHANNEL:-github}" = "appstore" ]; then
+    # Compatibility aliases are only used by external plugins.
+    for alt in "${alts[@]}"; do
+        rm -Rf "$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH/$alt.framework"
+    done
+    exit 0
+fi
 for alt in "${alts[@]}"; do
     alt_framework_path="$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH/$alt.framework"
     rm -Rf "$alt_framework_path"
@@ -51,7 +58,7 @@ for alt in "${alts[@]}"; do
     rm -f "$alt_framework_path/Horos"
     rm -f "$alt_framework_path/Headers"
     rm -Rf "$alt_framework_path/Versions/A/Headers"
-    ( cd "$alt_framework_path" && ln -s "Versions/A/$alt" )
+    ( cd "$alt_framework_path" && ln -s "Versions/Current/$alt" )
     sed -i '' "s/Horos/$alt/" "$alt_framework_path/Versions/A/Resources/Info.plist"
     sed -i '' "s/thalesmms.isis.workstation.api/thalesmms.isis.workstation.$alt/" "$alt_framework_path/Versions/A/Resources/Info.plist"
 done

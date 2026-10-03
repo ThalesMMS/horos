@@ -10,6 +10,7 @@
 //  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
 //  A PARTICULAR PURPOSE. See the GNU Lesser General Public License for details.
 
+#if !MACAPPSTORE
 import AppKit
 
 /// The window shown while a release is downloaded, verified and installed.
@@ -263,3 +264,5 @@ final class UpdateInstaller: NSObject {
         Self.report(error)
     }
 }
+
+#endif

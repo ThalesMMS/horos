@@ -12,12 +12,37 @@ if [[ $# -gt 0 ]]; then
     exit 2
 fi
 
-OUTPUT_DIR="$ROOT_DIR/build/Release"
+CHANNEL="${ISIS_BUILD_CHANNEL:-github}"
+case "$CHANNEL" in
+    github) OUTPUT_DIR="$ROOT_DIR/build/Release"; CHANNEL_CONFIG="GitHub"; HELPER_SOURCE="Decompress/Decompress.entitlements" ;;
+    appstore) OUTPUT_DIR="$ROOT_DIR/build/AppStore"; CHANNEL_CONFIG="AppStore"; HELPER_SOURCE="Horos/Configuration/AppStoreHelper.entitlements" ;;
+    *) echo "ISIS_BUILD_CHANNEL deve ser github ou appstore." >&2; exit 2 ;;
+esac
+XCCONFIG="$ROOT_DIR/Horos/Configuration/$CHANNEL_CONFIG.xcconfig"
+PRODUCTS_DIR="$ROOT_DIR/build/Build/Products"
+if [[ "$CHANNEL" == appstore ]]; then PRODUCTS_DIR="$ROOT_DIR/build/Channels/AppStore/Products"; fi
 OUTPUT_APP="$OUTPUT_DIR/Isis DICOM Viewer.app"
-BUILD_LOG="$ROOT_DIR/build/logs/build-release.log"
-SIGNING_LOG="$ROOT_DIR/build/logs/release-signing.log"
+BUILD_LOG="$ROOT_DIR/build/logs/build-$CHANNEL.log"
+SIGNING_LOG="$ROOT_DIR/build/logs/$CHANNEL-signing.log"
+if [[ "$CHANNEL" == github ]]; then
+    BUILD_LOG="$ROOT_DIR/build/logs/build-release.log"
+    SIGNING_LOG="$ROOT_DIR/build/logs/release-signing.log"
+fi
 mkdir -p "$OUTPUT_DIR" "$ROOT_DIR/build/logs"
 cd "$ROOT_DIR"
+# Both channels use the same dependency cache and Xcode build database.
+BUILD_LOCK="$ROOT_DIR/build/.distribution-build-lock"
+if ! mkdir "$BUILD_LOCK" 2>/dev/null; then
+    echo "Outro build de distribuição está em execução. Lock: $BUILD_LOCK" >&2
+    exit 1
+fi
+printf '%s\n' "$$" > "$BUILD_LOCK/pid"
+STAGING_DIR=""
+cleanup() {
+    [[ -z "$STAGING_DIR" ]] || rm -rf "$STAGING_DIR"
+    rm -rf "$BUILD_LOCK"
+}
+trap cleanup EXIT
 
 # Resolution is deliberate: a build must not rewrite the reviewed package pins.
 PACKAGE_LOCK="$ROOT_DIR/Horos.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
@@ -87,16 +112,25 @@ if ! [[ "$RELEASE_SEQUENCE" =~ ^[0-9]{1,2}$ ]]; then
     exit 2
 fi
 RELEASE_BUILD="${HOROS_RELEASE_BUILD:-$(date +%Y%m%d)$(printf '%02d' "$((10#$RELEASE_SEQUENCE))")}"
-if ! [[ "$RELEASE_BUILD" =~ ^[1-9][0-9]{9}$ ]]; then
+CHANNEL_SETTINGS=()
+if [[ "$CHANNEL" == appstore ]]; then
+    RELEASE_BUILD="${ISIS_APPSTORE_BUILD:-$(date +%y%m).$((10#$(date +%d))).$((10#$RELEASE_SEQUENCE))}"
+    if ! [[ "$RELEASE_BUILD" =~ ^[1-9][0-9]{0,3}(\.[0-9]{1,2}){0,2}$ ]]; then
+        echo "ISIS_APPSTORE_BUILD deve ter até três componentes: 1–9999[.0–99[.0–99]]." >&2
+        exit 2
+    fi
+    CHANNEL_SETTINGS=("PRODUCT_BUNDLE_IDENTIFIER_PREFIX=${ISIS_APPSTORE_BUNDLE_ID:-thalesmms.isis.Isis-DICOM-Viewer}"
+                      "MARKETING_VERSION=${ISIS_APPSTORE_VERSION:-1.0}")
+elif ! [[ "$RELEASE_BUILD" =~ ^[1-9][0-9]{9}$ ]]; then
     echo "HOROS_RELEASE_BUILD deve ter dez dígitos, AAAAMMDDNN." >&2
     exit 2
 fi
 echo "Compilando Isis DICOM Viewer Release, build $RELEASE_BUILD. Log: $BUILD_LOG"
-if ! xcodebuild -project Horos.xcodeproj -scheme Horos -configuration Release \
+if ! xcodebuild -project Horos.xcodeproj -scheme Horos -configuration Release -xcconfig "$XCCONFIG" \
     -derivedDataPath build -clonedSourcePackagesDirPath "$SOURCE_PACKAGES" \
-    -disableAutomaticPackageResolution -onlyUsePackageVersionsFromResolvedFile SYMROOT="$ROOT_DIR/build/Build/Products" \
-    COMPILATION_CACHE_CAS_PATH="$ROOT_DIR/build/CompilationCache.noindex" CODE_SIGNING_ALLOWED=NO \
-    HOROS_RELEASE_BUILD="$RELEASE_BUILD" > "$BUILD_LOG" 2>&1; then
+    -disableAutomaticPackageResolution -onlyUsePackageVersionsFromResolvedFile SYMROOT="$PRODUCTS_DIR" \
+    COMPILATION_CACHE_CAS_PATH="$ROOT_DIR/build/CompilationCache.noindex" CODE_SIGNING_ALLOWED=NO ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+    HOROS_RELEASE_BUILD="$RELEASE_BUILD" ${CHANNEL_SETTINGS[@]+"${CHANNEL_SETTINGS[@]}"} > "$BUILD_LOG" 2>&1; then
     awk '/error:|fatal:|fatal error:|CMake Error|Traceback \(most recent call last\)/ {
         print NR ":" $0
         count++
@@ -115,10 +149,9 @@ python3 "$ROOT_DIR/script/release-metadata.py" --verify-packages "$ROOT_DIR" "$S
 
 # Finish and verify the new bundle before replacing the previous output.
 STAGING_DIR="$(mktemp -d "$OUTPUT_DIR/.staging.XXXXXX")"
-trap 'rm -rf "$STAGING_DIR"' EXIT
 STAGED_APP="$STAGING_DIR/Isis DICOM Viewer.app"
 ENTITLEMENTS="$STAGING_DIR/entitlements.plist"
-/usr/bin/ditto "$ROOT_DIR/build/Build/Products/Release/Isis DICOM Viewer.app" "$STAGED_APP"
+/usr/bin/ditto "$PRODUCTS_DIR/Release/Isis DICOM Viewer.app" "$STAGED_APP"
 
 # Ad hoc signatures carry no Team ID, so under the hardened runtime's library
 # validation the app and its helpers could load neither the frameworks and
@@ -126,13 +159,25 @@ ENTITLEMENTS="$STAGING_DIR/entitlements.plist"
 # for this local signature only: it is not in Horos.entitlements, and a
 # Developer ID signature, which this script does not make, would not need it
 # for the embedded code. Debugger access and DYLD variables stay off.
-python3 - "$ROOT_DIR/Horos/Horos.entitlements" "$ENTITLEMENTS" <<'PYTHON'
+APP_ENTITLEMENTS="$ROOT_DIR/Horos/Horos.entitlements"
+if [[ "$CHANNEL" == appstore ]]; then APP_ENTITLEMENTS="$ROOT_DIR/Horos/Configuration/AppStore.entitlements"; fi
+HELPER_ENTITLEMENTS="$STAGING_DIR/helper-entitlements.plist"
+python3 - "$APP_ENTITLEMENTS" "$ENTITLEMENTS" <<'PYTHON'
 import plistlib, sys
 with open(sys.argv[1], 'rb') as source:
     entitlements = plistlib.load(source)
 entitlements['com.apple.security.cs.disable-library-validation'] = True
 entitlements.pop('com.apple.security.get-task-allow', None)
 entitlements.pop('com.apple.security.cs.allow-dyld-environment-variables', None)
+with open(sys.argv[2], 'wb') as destination:
+    plistlib.dump(entitlements, destination)
+PYTHON
+
+python3 - "$ROOT_DIR/$HELPER_SOURCE" "$HELPER_ENTITLEMENTS" <<'PYTHON'
+import plistlib, sys
+with open(sys.argv[1], 'rb') as source:
+    entitlements = plistlib.load(source)
+entitlements['com.apple.security.cs.disable-library-validation'] = True
 with open(sys.argv[2], 'wb') as destination:
     plistlib.dump(entitlements, destination)
 PYTHON
@@ -172,7 +217,7 @@ done
             *Mach-O*) /usr/bin/codesign --force --sign - --options runtime --entitlements "$entitlements" "$file" || exit 1 ;;
         esac
     done
-' _ "$ENTITLEMENTS" {} + >> "$SIGNING_LOG" 2>&1
+' _ "$HELPER_ENTITLEMENTS" {} + >> "$SIGNING_LOG" 2>&1
 # 5. The application.
 sign --options runtime --entitlements "$ENTITLEMENTS" "$STAGED_APP"
 /usr/bin/codesign --verify --deep --strict "$STAGED_APP" >> "$SIGNING_LOG" 2>&1
@@ -180,9 +225,10 @@ sign --options runtime --entitlements "$ENTITLEMENTS" "$STAGED_APP"
 # The package must hold everything it loads: every Mach-O arm64 and signed,
 # every library from the macOS or from inside the bundle. A failure here leaves
 # the previous output where it was.
-AUDIT_LOG="$ROOT_DIR/build/logs/release-audit.json"
+AUDIT_LOG="$ROOT_DIR/build/logs/$CHANNEL-audit.json"
+if [[ "$CHANNEL" == github ]]; then AUDIT_LOG="$ROOT_DIR/build/logs/release-audit.json"; fi
 echo "Auditando o pacote. Relatório: $AUDIT_LOG"
-if ! python3 "$ROOT_DIR/tools/audit-release-bundle.py" "$STAGED_APP" --strict --notices --json "$AUDIT_LOG" > /dev/null; then
+if ! python3 "$ROOT_DIR/tools/audit-release-bundle.py" "$STAGED_APP" --strict --notices --channel "$CHANNEL" --json "$AUDIT_LOG" > /dev/null; then
     echo "O pacote não passou na auditoria; a versão anterior foi mantida." >&2
     exit 1
 fi
@@ -229,6 +275,6 @@ done
 if [[ ${#MOVED[@]} -gt 0 ]]; then
     echo "Versão anterior preservada em: $OUTPUT_DIR/$(previous_name "$APP_NAME.app")"
 fi
-echo "Release pronto para copiar para Applications:"
+echo "Build local $CHANNEL pronto, assinado ad hoc:"
 echo "$OUTPUT_APP"
 echo "Identificação: $OUTPUT_DIR/BUILD-INFO.txt; somas: (cd \"$OUTPUT_DIR\" && shasum -a 256 -c SHA256SUMS.txt)"

@@ -116,6 +116,9 @@ parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.R
 parser.add_argument('bundle', type=Path)
 parser.add_argument('--json', type=Path, default=None)
 parser.add_argument('--expect-arch', default='arm64')
+parser.add_argument('--channel', choices=('github', 'appstore'))
+parser.add_argument('--store-distribution', action='store_true',
+                    help='require App Store distribution entitlements and provisioning')
 parser.add_argument('--strict', action='store_true',
                     help='exit 1 when the bundle is not self-contained, signed and of the expected architecture')
 parser.add_argument('--notices', action='store_true',
@@ -123,6 +126,8 @@ parser.add_argument('--notices', action='store_true',
 parser.add_argument('--notices-only', action='store_true',
                     help='check required notices before signing; do not inspect binaries or signatures')
 args = parser.parse_args()
+if args.store_distribution and args.channel != 'appstore':
+    parser.error('--store-distribution requires --channel appstore')
 if not (args.bundle / 'Contents').is_dir():
     parser.error('not an application bundle: ' + str(args.bundle))
 bundle = args.bundle.resolve()
@@ -155,7 +160,7 @@ def archs(path):
 
 
 def signature(path):
-    result = subprocess.run(['codesign', '-dv', str(path)], capture_output=True, text=True)
+    result = subprocess.run(['codesign', '-dvv', str(path)], capture_output=True, text=True)
     text = result.stdout + result.stderr
     if 'code object is not signed' in text:
         return {'signed': False, 'authority': '', 'flags': '', 'entitlements': []}
@@ -309,6 +314,90 @@ report['signatureValid'] = verify.returncode == 0
 if verify.returncode:
     problems.append('codesign --verify --deep --strict: ' + (verify.stderr.strip() or 'failed'))
 report['bundleSignature'] = signature(bundle)
+
+if args.channel:
+    def entitlement_values(path):
+        result = subprocess.run(['codesign', '-d', '--entitlements', ':-', str(path)], capture_output=True)
+        start = result.stdout.find(b'<?xml')
+        return plistlib.loads(result.stdout[start:]) if start >= 0 else {}
+
+    app_entitlements = entitlement_values(bundle)
+    store = args.channel == 'appstore'
+    if bool(app_entitlements.get('com.apple.security.app-sandbox')) != store:
+        problems.append('the main app sandbox does not match the distribution channel')
+    if store:
+        for key in ('com.apple.security.network.client', 'com.apple.security.network.server',
+                    'com.apple.security.files.user-selected.read-write',
+                    'com.apple.security.files.bookmarks.app-scope'):
+            if app_entitlements.get(key) is not True:
+                problems.append('the store app lacks ' + key)
+        for entry in report['binaries']:
+            if entry['type'] != 'EXECUTE' or not entry['path'].startswith('Contents/Resources/'):
+                continue
+            values = entitlement_values(bundle / entry['path'])
+            if not values.get('com.apple.security.app-sandbox') or not values.get('com.apple.security.inherit'):
+                problems.append(entry['path'] + ' does not inherit the app sandbox')
+        with (bundle / 'Contents/Info.plist').open('rb') as source:
+            executable = plistlib.load(source)['CFBundleExecutable']
+        symbols = subprocess.check_output(['nm', '-g', str(bundle / 'Contents/MacOS' / executable)], text=True)
+        for name in ('_OBJC_CLASS_$_HorosUpdateInstaller', '_OBJC_CLASS_$_HorosUpdateFeedClient',
+                     'PluginPackageDownload'):
+            if name in symbols:
+                problems.append('the store executable still contains ' + name)
+    if args.store_distribution:
+        if not store:
+            problems.append('store distribution validation requires the appstore channel')
+        for entry in report['binaries'] + [report['bundleSignature']]:
+            for key in ('com.apple.security.cs.disable-library-validation', 'com.apple.security.get-task-allow',
+                        'com.apple.security.cs.allow-dyld-environment-variables'):
+                if key in entry['entitlements']:
+                    problems.append('store distribution contains the local entitlement ' + key)
+        if report['bundleSignature']['authority'] in ('', 'adhoc'):
+            problems.append('store distribution requires a certificate signature')
+        if not (bundle / 'Contents/embedded.provisionprofile').is_file():
+            problems.append('store distribution requires an embedded provisioning profile')
+
+        # Embedded metadata must agree with the expanded bundle plist.
+        layout = subprocess.check_output(['otool', '-l', str(main_executable)], text=True)
+        section = re.search(r'sectname __info_plist\s+segname __TEXT.*?size (0x[0-9a-f]+)\s+offset (\d+)',
+                            layout, re.S)
+        if section:
+            size, offset = int(section.group(1), 16), int(section.group(2))
+            with main_executable.open('rb') as executable_file:
+                executable_file.seek(offset)
+                metadata = executable_file.read(size).rstrip(b'\0')
+            try:
+                embedded_info = plistlib.loads(metadata)
+                for key in ('CFBundleIdentifier', 'CFBundleShortVersionString', 'CFBundleVersion'):
+                    if embedded_info.get(key) != info.get(key):
+                        problems.append('the executable has inconsistent embedded ' + key)
+            except Exception:
+                problems.append('the executable has an invalid embedded Info.plist')
+
+        for framework in (bundle / 'Contents/Frameworks').glob('*.framework'):
+            current = framework / 'Versions/Current'
+            if not current.is_dir():
+                continue
+            framework_info = plistlib.loads((current / 'Resources/Info.plist').read_bytes())
+            name = framework_info.get('CFBundleExecutable')
+            if name:
+                link = framework / name
+                if not link.is_symlink() or os.readlink(link) != 'Versions/Current/' + name:
+                    problems.append(framework.name + ' lacks the canonical executable symlink')
+
+        # Resource bundles may remain unsigned, but a retained development
+        # signature is not a distribution signature and is rejected by Apple.
+        for resource in (bundle / 'Contents/Resources').rglob('*.bundle'):
+            resource_info = resource / 'Contents/Info.plist'
+            if not resource_info.is_file():
+                continue
+            if plistlib.loads(resource_info.read_bytes()).get('CFBundleExecutable'):
+                continue
+            resource_signature = signature(resource)
+            if (resource_signature['signed'] and
+                    resource_signature['authority'] != report['bundleSignature']['authority']):
+                problems.append(resource.name + ' retains a different signing authority')
+    report['channel'] = args.channel
 
 report['binaryCount'] = len(report['binaries'])
 report['withExpectedArch'] = sum(item['hasExpected'] for item in report['binaries'])

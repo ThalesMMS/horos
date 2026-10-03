@@ -33,3 +33,8 @@ HUMAN_READABLE_COPYRIGHT = © 2026 Thales Matheus M Santos (ThalesMMS) — modif
 /// Horos and Decompress targets, which have those search paths, add this to
 /// OTHER_CFLAGS; Swift does not receive OTHER_CFLAGS.
 HOROS_SYSTEM_HEADER_DEPENDENCIES = -Xclang -sys-header-deps
+
+// The direct channel is the default for Xcode and existing development scripts.
+HOROS_APP_SANDBOX = NO
+HOROS_APP_ENTITLEMENTS = Horos/Horos.entitlements
+HOROS_HELPER_ENTITLEMENTS = Decompress/Decompress.entitlements

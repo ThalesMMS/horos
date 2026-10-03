@@ -120,10 +120,18 @@ NSComparisonResult PluginManagerCAPICompareVersions(id left, id right)
 
 BOOL PluginManagerCAPILoadBundle(NSBundle *bundle, NSError **error)
 {
+    #ifdef MACAPPSTORE
+    return NO;
+#else
     return [bundle loadAndReturnError:error];
+#endif
 }
 
 BOOL PluginManagerCAPIPreflightBundle(NSBundle *bundle, NSError **error)
 {
+    #ifdef MACAPPSTORE
+    return NO;
+#else
     return [bundle preflightAndReturnError:error];
+#endif
 }

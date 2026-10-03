@@ -68,11 +68,7 @@
 #import <FeedbackReporter/FRFeedbackReporter.h>
 #endif
 
-#ifndef OSIRIX_LIGHT
-#ifndef MACAPPSTORE
 #import "VRView.h"
-#endif
-#endif
 
 #include <OpenJPEG/opj_config.h>
 #include <libproc.h>

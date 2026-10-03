@@ -46,12 +46,16 @@ public final class DatabaseFirstUse: NSObject {
 
     @objc(prepareWithAlternateDefault:)
     public static func prepare(alternateDefault: String?) {
+        #if MACAPPSTORE
+        return
+        #else
         guard alternateDefault.map({ !FileManager.default.fileExists(atPath: $0) }) ?? true,
               let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first,
               needsChoice(defaults: .standard, documents: documents) else { return }
         UserDefaults.standard.set(true, forKey: pendingKey)
         pendingDocuments.withLock { $0 = documents }
         pendingChoice.store(true, ordering: .releasing)
+        #endif
     }
 
     @objc public static var hasPendingChoice: Bool { pendingChoice.load(ordering: .acquiring) }
